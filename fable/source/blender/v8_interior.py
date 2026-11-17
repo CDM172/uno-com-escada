@@ -56,11 +56,11 @@ def build_interior(fast=False):
 
     # ---- floor, toe board, sills, tunnel (half; mirrored)
     sym.mat('carpet')
-    sym.quad((0.95, FLOOR, 0), (-0.92, FLOOR, 0), (-0.92, FLOOR, 0.80), (0.95, FLOOR, 0.80))
-    sym.quad((0.95, FLOOR, 0), (0.95, FLOOR, 0.80), (0.70, 0.82, 0.80), (0.70, 0.82, 0))               # toe board up to the scuttle
+    sym.quad((0.84, FLOOR, 0), (-0.92, FLOOR, 0), (-0.92, FLOOR, 0.80), (0.84, FLOOR, 0.80))
+    sym.quad((0.84, FLOOR, 0), (0.84, FLOOR, 0.80), (0.64, 0.82, 0.80), (0.64, 0.82, 0))               # toe board up to the scuttle
     sym.quad((-0.92, FLOOR, 0.80), (-0.92, FLOOR, 0), (-0.98, 0.40, 0), (-0.98, 0.40, 0.52))            # step up to the rear seat pan
     sym.quad((-0.98, 0.40, 0), (-1.58, 0.40, 0), (-1.58, 0.40, 0.52), (-0.98, 0.40, 0.52))              # rear seat pan
-    sym.box((-0.05, FLOOR + 0.03, 0.79), (1.95, 0.07, 0.05), bevel=0.015)                               # sill
+    sym.box((-0.03, FLOOR + 0.03, 0.79), (1.72, 0.07, 0.05), bevel=0.015)                               # sill (between the wheel wells)
     sym.box((0.18, FLOOR + 0.11, 0.0), (1.60, 0.22, 0.22), bevel=0.05, seg=3)                           # transmission tunnel (mirrored half)
     sym.box((-0.82, FLOOR + 0.07, 0.0), (0.44, 0.14, 0.18), bevel=0.04)
     # rear wheel-arch boxes inside the cabin
@@ -314,11 +314,12 @@ def build_gadgets(fast=False):
     # rear plate on its hinge (taken from the static plate of the exterior) and the rocket behind it
     pl = Part('plateR', target='plateR')
     y0, y1 = 0.352, 0.463
-    pl.pivot = (rx(0.0, y0) - 0.006, y0, 0.0)
-    pl.mat('decal_plate')
-    decal(pl, 'plate_r', (rx(-0.26, y0) - 0.012, y0, -0.26), (rx(0.26, y0) - 0.012, y0, 0.26), (rx(0.26, y1) - 0.012, y1, 0.26), (rx(-0.26, y1) - 0.012, y1, -0.26))   # seen from behind: image left = -z
+    xb = min(rx(z, y) for z in (0.0, 0.13, 0.27) for y in (y0, (y0 + y1) / 2, y1)) - 0.006     # just proud of the valance
+    pl.pivot = (xb, y0 - 0.006, 0.0)
     pl.mat('black')
-    pl.box((rx(0.0, 0.41) - 0.004, 0.408, 0.0), (0.010, 0.128, 0.548))
+    pl.box((xb + 0.005, (y0 + y1) / 2, 0.0), (0.010, y1 - y0 + 0.012, 0.548))
+    pl.mat('decal_plate')
+    decal(pl, 'plate_r', (xb - 0.0015, y0, -0.26), (xb - 0.0015, y0, 0.26), (xb - 0.0015, y1, 0.26), (xb - 0.0015, y1, -0.26))   # seen from behind: image left = -z
     out.append(pl)
     rk = Part('rocket', target='rocket')
     xe = rx(0.0, 0.41) + 0.05
@@ -336,16 +337,7 @@ def build_gadgets(fast=False):
     out.append(fl)
     hud = Part('hud', target='hud')
     hud.mat('decal_radar')
-    s0, s1 = 0.10, 0.30                                               # up the glass from its base
-    zz0, zz1 = DRV_Z - 0.17, DRV_Z + 0.17
-
-    def wsp(zz, ss):
-        az = abs(zz)
-        xb, xh = 0.570 - 0.195 * (az / 0.767) ** 2.0, -0.100 + 0.010 * (az / 0.716) ** 2
-        yb, yh = 0.952 - 0.034 * (az / 0.767) ** 2, 1.306 - 0.026 * (az / 0.716) ** 2
-        ln = math.hypot(xb - xh, yh - yb)
-        xx = xb - (ss / ln) * (xb - xh)
-        return (xx - 0.010, float(S.windscreen(xx, np.array([az]))[0]) - 0.012, zz)
-    decal(hud, 'hud', wsp(zz0, s0), wsp(zz1, s0), wsp(zz1, s1), wsp(zz0, s1))                  # seen by the driver: image left = -z
+    xh, yh0, yh1 = 0.105, 1.035, 1.175          # behind the glass at every height (the screen is at x 0.13-0.37 here)
+    decal(hud, 'hud', (xh, yh0, DRV_Z - 0.15), (xh, yh0, DRV_Z + 0.15), (xh, yh1, DRV_Z + 0.15), (xh, yh1, DRV_Z - 0.15))   # seen by the driver: image left = -z
     out.append(hud)
     return out
