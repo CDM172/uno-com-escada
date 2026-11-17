@@ -84,6 +84,7 @@ const BCD = {
   piv: new Float32Array(48),         // pivots and directions of the moving parts (the car table's pivots() fills it)
   tris: 0, dialK: 1,                 // dialK: sideways squeeze of the dials region in the atlas (1 = none)
   hidden: false,                     // the car was hidden on the last frame (V8 self-destruct)
+  fixed: [],                         // decals the loader had to turn round or unmirror (see bcarDecalFix)
 };
 // base64 → zlib stream → bytes
 async function bcInflate(b64) {
@@ -108,6 +109,7 @@ function bcarDecode(buf) {
     const nrm = new Int8Array(buf, off, nv * 4); off += nv * 4;
     let uv = null; if (ch.uv) { uv = new Float32Array(buf, off, nv * 2); off += nv * 8; }
     const idx = ch.i32 ? new Uint32Array(buf, off, ni) : new Uint16Array(buf, off, ni); off = (off + ni * (ch.i32 ? 4 : 2) + 3) & ~3;
+    if (ch.id === 12 && uv) { const f = bcarDecalFix(pos, nrm, uv, idx, nv, ni, sc); if (f) BCD.fixed.push(ch.t + '/' + ch.a + (f & 1 ? ' turned' : '') + (f & 2 ? ' unmirrored' : '')); }
     let name = ch.t, glass = false;
     if (name === 'glass') { name = 'body'; glass = true; } else if (name.endsWith('_glass')) { name = name.slice(0, -6); glass = true; }
     const tg = BC.targets[name] || BC.targets.body, opt = tg[2] || {};
@@ -152,9 +154,46 @@ function bcarDecode(buf) {
     const P = o => a.p[o].map(x => x / a.n[o]), p0 = P(0), pu = P(1), pv = P(2), w = Math.hypot(pu[0] - p0[0], pu[1] - p0[1], pu[2] - p0[2]), h = Math.hypot(pv[0] - p0[0], pv[1] - p0[1], pv[2] - p0[2]);
     if (w > 1e-4 && h > 1e-4) BCD.aspect[k] = w / h;
   }
+  if (BCD.fixed.length) console.warn('car mesh: decals modelled from the wrong side, fixed at load: ' + BCD.fixed.join(', '));
   BC.pivots(buf);
 }
 
+// Decals are quads someone will look at from one side: the cabin's (dials, radio, head-up display...) from the driver's
+// eyes, the others (number plates, badges) from outside the car. A decal modelled from the wrong side faces away (it would
+// be culled) and its picture reads mirrored: such a decal is turned round and its picture flipped back within its atlas
+// region. A decal that is right is left exactly as it is. pos, nrm, uv, idx: the chunk's arrays (changed in place).
+function bcarDecalFix(pos, nrm, uv, idx, nv, ni, sc) {
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < nv; i++) { cx += pos[i * 3]; cy += pos[i * 3 + 1]; cz += pos[i * 3 + 2]; }
+  cx *= sc / nv; cy *= sc / nv; cz *= sc / nv;
+  const inside = Math.abs(cx) < 1.3 && Math.abs(cz) < BCG.halfW - 0.05 && cy > 0.3, e = BCG.eye;
+  // where the viewer is: the driver's eyes, or outside the body (away from its vertical middle line)
+  const dx = inside ? e[0] - cx : cx, dy = inside ? e[1] - cy : 0, dz = inside ? e[2] - cz : cz;
+  let face = 0, hand = 0;
+  for (let t = 0; t < ni; t += 3) {
+    const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+    const ex = pos[b] - pos[a], ey = pos[b + 1] - pos[a + 1], ez = pos[b + 2] - pos[a + 2], fx = pos[c] - pos[a], fy = pos[c + 1] - pos[a + 1], fz = pos[c + 2] - pos[a + 2];
+    const nx = ey * fz - ez * fy, ny = ez * fx - ex * fz, nz = ex * fy - ey * fx;
+    face += nx * dx + ny * dy + nz * dz;
+    // the picture's right (dP/du) and up (-dP/dv: v runs down the atlas): right × up must point at the viewer
+    const ua = idx[t] * 2, ub = idx[t + 1] * 2, uc = idx[t + 2] * 2, du1 = uv[ub] - uv[ua], dv1 = uv[ub + 1] - uv[ua + 1], du2 = uv[uc] - uv[ua], dv2 = uv[uc + 1] - uv[ua + 1], det = du1 * dv2 - du2 * dv1;
+    if (Math.abs(det) < 1e-12) continue;
+    const rx = (ex * dv2 - fx * dv1) / det, ry = (ey * dv2 - fy * dv1) / det, rz = (ez * dv2 - fz * dv1) / det;
+    const ux = -(fx * du1 - ex * du2) / det, uy = -(fy * du1 - ey * du2) / det, uz = -(fz * du1 - ez * du2) / det;
+    hand += (ry * uz - rz * uy) * dx + (rz * ux - rx * uz) * dy + (rx * uy - ry * ux) * dz;
+  }
+  if (face < 0) {   // turned away: reverse the triangles and the normals
+    for (let t = 0; t < ni; t += 3) { const k = idx[t + 1]; idx[t + 1] = idx[t + 2]; idx[t + 2] = k; }
+    for (let i = 0; i < nv; i++) { nrm[i * 4] = -nrm[i * 4]; nrm[i * 4 + 1] = -nrm[i * 4 + 1]; nrm[i * 4 + 2] = -nrm[i * 4 + 2]; }
+  }
+  if (hand < 0) {   // mirrored: flip the picture across its atlas region
+    let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9; for (let i = 0; i < nv; i++) { const u = uv[i * 2], v = uv[i * 2 + 1]; if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v; }
+    const um = (u0 + u1) / 2, vm = (v0 + v1) / 2; let r = null;
+    for (const k in BC.AT) { const q = BC.AT[k]; if (um >= q[0] && um <= q[2] && vm >= q[1] && vm <= q[3]) { r = q; break; } }
+    const a = r ? r[0] + r[2] : u0 + u1; for (let i = 0; i < nv; i++) uv[i * 2] = a - uv[i * 2];
+  }
+  return (face < 0 ? 1 : 0) | (hand < 0 ? 2 : 0);
+}
 // ---- matrices of the moving parts (no numbers through arguments: the register BCQ) ----
 const BCQ = new Float64Array(4);
 // rotation of BCQ[0] radians about the Z axis through the point (BCQ[1], BCQ[2])
