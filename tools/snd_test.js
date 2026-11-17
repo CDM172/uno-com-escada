@@ -676,18 +676,21 @@ test('v8-firing', () => {
     ['for (let i = 0; i < m; i++) { YDL[dw] = pL[i]; const r = pR[i], l = YDL[(dw - YD) & (YDN - 1)]; dw = (dw + 1) & (YDN - 1); eg[i] = (r + l) * 0.5; eS[i] = (l - r) * 0.5 * wd; }', 'for (let i = 0; i < m; i++) { eg[i] = ' + b + '[i]; eS[i] = 0; }'], ['const lk = dg * GY,', 'const lk = 0,'], ['YWA[g5] * dg * 0.02', 'YWA[g5] * dg * 0']]));
   const rpm = 1200, slot = 60 / rpm / 4, pulses = [];
   for (const [b, nm] of [['yR', 'R'], ['yL', 'L']]) {
-    // onsets: the first sample over 2 % of the largest pulse after a quiet stretch (the pulse width depends on the gap, by design, so peaks would move)
-    const x = mono(render(raw(b), steady(3, V8({ rpm, thr: 0.3, gear: 2, speed: 12 })), 1)), mx = pk(x, sec(1), sec(3)); let quiet = 0;
-    for (let i = sec(1); i < sec(3); i++) { const v = Math.abs(x[i]); if (v < 0.005 * mx) quiet++; else { if (v > 0.02 * mx && quiet > 0.15 * slot * SR) pulses.push({ t: i / SR, b: nm }); quiet = 0; } }
+    // onsets: the first sample over 0.2 % of the largest pulse after a quiet stretch (the pulse width depends on the gap, by
+    // design, so the peaks would move; the onsets do not)
+    const x = mono(render(raw(b), steady(3, V8({ rpm, thr: 0.3, gear: 2, speed: 12 })), 1)), mx = pk(x, sec(1), sec(3)); let armed = false, last = -1e9;
+    for (let i = sec(1); i < sec(3); i++) { const v = Math.abs(x[i]); if (v > 0.002 * mx) { if (armed) { pulses.push({ t: i / SR, b: nm }); armed = false; } last = i; } else if (v < 0.0005 * mx && i - last > 0.15 * slot * SR) armed = true; }
   }
   pulses.sort((p, q) => p.t - q.t);
   const seq = pulses.slice(0, 16).map(p => p.b).join(''), gaps = pulses.slice(1, 17).map((p, i) => (p.t - pulses[i].t) / slot);
   const bankGaps = nm => { const a = pulses.filter(p => p.b === nm).slice(0, 9); return a.slice(1).map((p, i) => Math.round((p.t - a[i].t) / slot)); };
   say('  firings in time order: ' + seq + '; spacing in 90° steps: ' + gaps.slice(0, 8).map(f2).join(' ') + '; right bank gaps (×90°): ' + bankGaps('R').join(' ') + ', left: ' + bankGaps('L').join(' '));
   const rot = (s, t) => (t + t).includes(s);
-  check(rot(seq.slice(0, 8), 'RLRRLRLL') && seq.slice(0, 8) === seq.slice(8, 16), 'banks fire in the order of 1-5-4-2-6-3-7-8 (cylinders 1-4 right, 5-8 left): R L R R L R L L', seq.slice(0, 8));
-  check(gaps.every(g => Math.abs(g - 1) < 0.01), 'one firing every 90° of crank (pulse onsets)', 'spacing ' + f3(Math.min(...gaps)) + ' .. ' + f3(Math.max(...gaps)) + ' × 90°');
-  check(rot(bankGaps('R').slice(0, 4).join(''), '2123') && rot(bankGaps('L').slice(0, 4).join(''), '2123'), 'each bank fires unevenly, at gaps of 180, 90, 180, 270° (the cross-plane crank)');
+  check(pulses.length >= 140 && seq.length === 16 && rot(seq.slice(0, 8), 'RLRRLRLL') && seq.slice(0, 8) === seq.slice(8, 16), 'banks fire in the order of 1-5-4-2-6-3-7-8 (cylinders 1-4 right, 5-8 left): R L R R L R L L', pulses.length + ' firings found in 2 s (160 expected); sequence ' + seq.slice(0, 8));
+  check(gaps.length === 16 && gaps.every(g => Math.abs(g - 1) < 0.01), 'one firing every 90° of crank (pulse onsets)', 'spacing ' + f3(Math.min(...gaps)) + ' .. ' + f3(Math.max(...gaps)) + ' × 90°');
+  check(bankGaps('R').length === 8 && rot(bankGaps('R').slice(0, 4).join(''), '2123') && rot(bankGaps('L').slice(0, 4).join(''), '2123') && bankGaps('R').join('') === bankGaps('R').slice(0, 4).join('').repeat(2), 'each bank fires unevenly, at gaps of 180, 90, 180, 270° (the cross-plane crank)');
+  { const R0 = pulses.filter(p => p.b === 'R').map(p => p.t), L0 = pulses.filter(p => p.b === 'L').map(p => p.t); let ok = 0, n = 0; for (const t of R0) { const u = t + 2 * 2 * slot * 2; if (u > R0[R0.length - 1]) break; n++; if (L0.some(l => Math.abs(l - (t + 4 * slot)) < 0.01 * slot)) ok++; }
+    check(n > 20 && ok === n, 'the left bank\'s pattern is the right bank\'s a revolution (360°) later', ok + ' of ' + n + ' right-bank firings have their left-bank twin 360° later'); }
   // strongest line = the firing line, rpm / 15, everywhere
   const rows = [];
   for (const thr of [1, 0.3]) for (const r of [780, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500]) {

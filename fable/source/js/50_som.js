@@ -129,8 +129,12 @@ function sndCore(sr) {
   // A pulse that comes 90° after its neighbour blows into a manifold still full of the last one: weaker and broader (YGA,
   // YGW, by gap); one after 270° is the strongest and sharpest. Identical rules on both banks give the sum the integer
   // orders 1, 2, 3 under the firing line — the beat once a revolution of a V8. The odd half orders (0.5, 1.5, 2.5, 3.5)
-  // come from what differs between the banks: pipes of different lengths (the left bank's resonances sit 9 % lower), the
-  // balance of the carburettors, and the cycle-to-cycle spread of the big cams; each pipe is also heard on its own side.
+  // come from what differs between the banks: pipes of different lengths (the left one is longer: its resonances sit 12 %
+  // lower, it is a little quieter and its pulses arrive 0.8 ms later, YD), the balance of the carburettors, and the cycle-
+  // to-cycle spread of the big cams; each pipe is also heard on its own side. (Sources for the firing order and bank
+  // numbering: an Aston Martin V8 firing-order reference and owners' forum posts that give 4-then-2 and 7-then-8 as the
+  // consecutive same-bank pairs. Whatever the exact order, a cross-plane bank always fires at 90-180-270-180°, so the
+  // spectrum below does not hang on it; only which bank leads does.)
   const yR = mk(), yL = mk(), zR = mk(), zL = mk(), nR = mk(), nL = mk(), pR = mk(), pL = mk(), kR = mk(), kL = mk(), yI = mk(), yA = mk(), yT = mk();
   const Y = new Float64Array(128), YI = new Int32Array(24), YDN = 256, YD = Math.round(0.0008 * sr), YDL = new Float32Array(YDN);   // YDL: the left pipe's extra 0.8 ms
   const YB = new Int32Array([0, 1, 0, 0, 1, 0, 1, 1]), YG = new Int32Array([3, 2, 2, 1, 3, 2, 2, 1]);
@@ -140,7 +144,7 @@ function sndCore(sr) {
   // engine revolution, and level of its whine
   const YWO = new Float64Array([17.9, 9.3, 13.1, 16.7, 25.3, 21.7]), YWA = new Float64Array([2, 1, 0.9, 0.8, 0.3, 0.7]);
   // engine gains per camera (rows: chase, bonnet, TV, cockpit): [0 exhaust pulses direct, 1-6 pipe resonances (right bank
-  // 46/104/190/360/700/1400 Hz, left 9 % lower), 7 edge and crackle, 8 induction tone, 9 induction air, 10 valve gear and
+  // 46/104/190/360/700/1400 Hz, left 12 % lower), 7 edge and crackle, 8 induction tone, 9 induction air, 10 valve gear and
   // chains, 11 gearbox and axle whine, 12 width of the two pipes, 13 gear lever and starter, 14 low-order body]
   const NY = 15, YV = new Float64Array([
     0.45, 1.12, 1.12, 1.05, 1.0, 1.0, 1.1, 1.6, 0.12, 0.1, 0.04, 0.3, 0.45, 0.5, 0.55,
@@ -166,13 +170,13 @@ function sndCore(sr) {
   fset(128, 128, 3, 1); fset(129, 640, 10, 1); fset(130, 1530, 14, 1); fset(131, 2780, 17, 1);   // end-stop clunk: thud and metal
   fset(132, 150, 0.7, 1); fset(133, 2300, 2, 1); fset(134, 3300, 3, 1);   // horn: DC, resonances of the discs
   fset(135, 900, 2.2, 1); fset(136, 1000, 0.9, 1); fset(137, 70, 2, 1); fset(138, 4000, 0.7, 1);   // missile: whoosh, motor (both move), thump, its air
-  fset(139, 38, 2.2, 1); fset(140, 75, 2, 1); fset(141, 140, 0.7, 1); fset(142, 1500, 0.7, 1); fset(143, 2100, 20, 1); fset(144, 320, 1.5, 1); fset(145, 90, 0.7, 1);   // explosion: boom, rumble, crack, debris (metal, earth), echo
+  fset(139, 38, 2.2, 1); fset(140, 75, 2, 1); fset(141, 140, 0.7, 1); fset(142, 1500, 0.7, 1); fset(143, 2100, 20, 1); fset(144, 320, 1.5, 1);   // explosion: boom, rumble, crack, debris (metal, earth)
   // state: Y (numbers) and YI (integers)
   const YFP = 0, YAM = 1, YPW = 2, YAI = 3, YOV = 4, YOS = 5, YHU = 6, YLP = 7, YLR = 8, YLS = 9, YWT = 10, YWA_ = 11, YW1 = 12, YW2 = 13, YW3 = 14, YST = 15, YFL = 16, YSR = 17,
     YSA = 18, YSP = 19, YKR = 20, YKL = 21, YBO = 22, YVS = 24, QLE = 40, QLB = 41, QL1 = 42, QL2 = 43, QLV = 44, QLZ = 45, QRE = 46, QRT = 47, QRG = 48, QVE8 = 49,
     QVP8 = 50, QVW8 = 51, QCE8 = 52, QCT8 = 53, QCA8 = 54, QHE8 = 55, QH18 = 56, QH28 = 57, QMT = 58, QMW = 59, QMB = 60, QXT = 61, QXW = 62, QXB = 63, QXK = 64, QXM = 65, QXE = 66,
     ZJ = 0, ZBK = 1, ZST = 2, ZLA = 3, ZMS = 4, ZES = 5, ZEX = 6, ZMQ = 7, ZSQ = 8, ZXQ = 9, ZMA = 10, ZXA = 11, ZON = 12, ZBS = 13, ZDW = 14;
-  const YKD = dcy(0.0016), YPD = dcy(0.004), MDC = dcy(0.006), XDB = dcy(0.012), XDT = dcy(0.35), XDR = dcy(0.8);
+  const YKD = dcy(0.0016), MDC = dcy(0.006), XDB = dcy(0.012);   // decays: crackle burst, missile thump and rocket ignition, explosion push
   // estado inicial (também usado para zerar o sintetizador depois do aquecimento)
   function reset() {
     st.fill(0, 0, PH0); Z.fill(0); BI.fill(0); ctl.fill(0); RS[0] = 0x2F6E2B1; RS[1] = 0x1B873593; st[RP] = 900; st[DG] = 1; st[DP] = 1; st[GP] = 1; st[NEXT] = sr * 0.7; for (let k = 0; k < 8; k++) st[VGS + k] = VG[k];
