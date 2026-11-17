@@ -6,7 +6,7 @@ const AI = { line: null, vt: null, kline: null, enabled: false, script: null, pw
 // (DB5 only — aTot: braking and cornering share one grip budget in the speed profile; margin, slide, brakeLat: see aiFeather)
 // (V8 Vantage: radial tyres, more grip than the DB5's, and 400 bhp to feather on the way out of corners)
 const AIP = CARSEL === 'v8' ? { aLat: 8.2, aBrk: 7.0, vMax: 70, over: 0.6, look0: 4.5, lookV: 0.3, aTot: 8.2, margin: 1.2, slide: 1.5, brakeLat: 0.3 }
-  : CARSEL === 'db5' ? { aLat: 7.2, aBrk: 5.6, vMax: 62, over: 0.6, look0: 4.5, lookV: 0.3, aTot: 7.2, margin: 1.25, slide: 1.5, brakeLat: 0.3 } : { aLat: 11.4, aBrk: 7.6, vMax: 62, over: 1.2, look0: 4.5, lookV: 0.3, aTot: 0 };
+  : CARSEL === 'db5' ? { aLat: 7.2, aBrk: 5.6, vMax: 62, over: 0.6, look0: 4.5, lookV: 0.3, aTot: 7.2, margin: 1.25, slide: 1.5, brakeLat: 0.3 } : CARSEL === 'oxa' ? OXA.aip : { aLat: 11.4, aBrk: 7.6, vMax: 62, over: 1.2, look0: 4.5, lookV: 0.3, aTot: 0 };
 // Script of the Aston Martins' scripted lap (benchmark, demo lap, lap poses), by time: [from (s), to (s), keys pressed, keys
 // released]. The autopilot drives; the script changes cameras as the Uno's recorded lap does and shows each gadget where it
 // is seen best. (The V8 reads the gadget bits its own way: 41_gadgets_v8.js.)
@@ -114,7 +114,7 @@ function aiKeys(t) {
   const sc = AI.script;
   if (speed < vT - 0.3) keys |= K_W; else if (speed > vT + AIP.over) keys |= K_S;
   else if (speed < vT + 0.3 && (V.steps & 1)) keys |= K_W;
-  if (VP.rwd) keys = aiFeather(keys);
+  if (VP.rwd || VP.awd) keys = aiFeather(keys);   // (garage cars with four-wheel drive feather too)
   // roteiro: eventos por tempo (freio de mão, trocas de câmera)
   if (sc) for (let i = 0; i < sc.length; i++) { const e = sc[i]; if (t >= e[0] && t < e[1]) { keys |= e[2]; if (e[3]) keys &= ~e[3]; } }
   return keys;

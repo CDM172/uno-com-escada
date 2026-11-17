@@ -48,8 +48,12 @@ function assistSteer(keys) {
 // (the share of grip the cornering leaves it, from the lateral acceleration)
 function assistTraction() {
   const V = VEH, P = VP, i = P.rwd ? 2 : 0, mu = P.mu * ASSIST.muK;
-  const cl = mu * ZMU[V.wzone[i]] * V.fz[i], cr = mu * ZMU[V.wzone[i + 1]] * V.fz[i + 1], cap = 2 * (cl < cr ? cl : cr);
-  const lat = P.m * Math.abs(V.ay) * (P.rwd ? P.a : P.b) / P.L, lon = cap * cap - lat * lat, lo = cap * cap * 0.05;
+  let cl = mu * ZMU[V.wzone[i]] * V.fz[i], cr = mu * ZMU[V.wzone[i + 1]] * V.fz[i + 1], cap = 2 * (cl < cr ? cl : cr), lat = P.m * Math.abs(V.ay) * (P.rwd ? P.a : P.b) / P.L;
+  if (P.awd) {   // four-wheel drive (garage cars): the weakest of the four tyres, the whole car's cornering
+    for (let k = 2; k < 4; k++) { const c = mu * ZMU[V.wzone[k]] * V.fz[k]; if (c < cl) cl = c; if (c < cr) cr = c; }
+    cap = 4 * (cl < cr ? cl : cr); lat = P.m * Math.abs(V.ay);
+  }
+  const lon = cap * cap - lat * lat, lo = cap * cap * 0.05;
   const lim = Math.sqrt(lon > lo ? lon : lo) * 0.93 * P.R;
   if (ASQ[0] > lim && ASSIST.tc) ASQ[0] = lim;
 }

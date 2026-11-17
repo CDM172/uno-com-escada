@@ -39,7 +39,7 @@ const VP = CARSEL === 'v8' ? {
   shiftUp: 5800, shiftDn: 4900, rpmIdle: 750, rpmMax: 6100, rpmCut: 6000, launch0: 900, launchK: 1700, engBrake: 0.06,
   brakeG: 0.9, spinLat: 0.58, rollF: 0.54, rollR: 0.46,
   kR: 52, cR: 6.6, rollK: 0.0086, rollMax: 0.1, diveK: 0.0052, squatK: 0.0046, pitchMax: 0.048,
-} : {
+} : CARSEL === 'oxa' ? OXA.vp : {   // (a garage car: its numbers are worked out from its data in 30_car_f_oxa.js)
   m: 900, Izz: 1250, L: 2.362, a: 0.96, b: 1.402, tw: 1.33, h: 0.5, R: 0.281,
   mu: 1.42, B: 9.5, C: 1.42,
   gears: [3.91, 2.16, 1.48, 1.12, 0.9], final: 4.07, rev: 3.9, eff: 0.9,
@@ -75,6 +75,7 @@ const _vl = new Float64Array(4), _vp = new Float64Array(5);
 const WLX = [VP.a, VP.a, -VP.b, -VP.b], WLZ = [-VP.tw / 2, VP.tw / 2, -VP.tw / 2, VP.tw / 2];
 
 function engineTorque(rpm) { // curva de torque (N·m): um Mille bem mais disposto que o de fábrica
+  if (VP.eng >= 3) return oxaTorque(rpm);   // garage cars
   const x = rpm / 1000;
   // V8: 540 N·m at 5,000 rpm, 480 N·m (404 bhp) at 6,000 rpm, falling away above that
   if (VP.eng === 2) { const d = x - 5; return Math.max(0, 540 - (d < 0 ? 13.5 : 60) * d * d - Math.max(0, x - 6) * 80); }
@@ -164,11 +165,11 @@ function vehicleStep(keys) {
     reverse = true; throttle = brk; brake = thr;
     if (thr && V.vx > -0.5) { V.gear = 1; reverse = false; throttle = thr; brake = brk; }
   } else if (brk && !thr && V.vx < 0.6) { V.gear = 0; reverse = true; throttle = brk; brake = 0; }
-  const rwd = P.rwd, wheelSpd = rwd ? (V.omega[2] + V.omega[3]) * 0.5 : (V.omega[0] + V.omega[1]) * 0.5;   // speed of the driven axle
+  const rwd = P.rwd, wheelSpd = P.awd ? (V.omega[0] + V.omega[1] + V.omega[2] + V.omega[3]) * 0.25 : rwd ? (V.omega[2] + V.omega[3]) * 0.5 : (V.omega[0] + V.omega[1]) * 0.5;   // speed of the driven axle (both: four-wheel drive)
   let ratio = reverse ? -P.rev * P.final : P.gears[V.gear - 1] * P.final;
   let rpm = Math.abs(wheelSpd * ratio) * 9.5493;
   if (!reverse && !(rwd && hand)) {   // (rear-wheel drive: the handbrake locks the driven wheels; the gearbox holds its gear meanwhile)
-    if (rpm > P.shiftUp && V.gear < 5) { V.gear++; }
+    if (rpm > P.shiftUp && V.gear < P.gears.length) { V.gear++; }
     else if (V.gear > 1 && Math.abs(wheelSpd * P.gears[V.gear - 2] * P.final) * 9.5493 < P.shiftDn) V.gear--;
     ratio = P.gears[V.gear - 1] * P.final; rpm = Math.abs(wheelSpd * ratio) * 9.5493;
   }
@@ -176,10 +177,13 @@ function vehicleStep(keys) {
   V.rpm += (rpmE - V.rpm) * 0.25;
   let eT;
   if (P.eng === 2) { const ex = rpmE / 1000, ed = ex - 5; eT = 540 - (ed < 0 ? 13.5 : 60) * ed * ed - (ex > 6 ? (ex - 6) * 80 : 0); }   // = engineTorque(rpmE) of the V8, inlined
+  else if (P.eng === 3) { eT = rpmE < P.rpmT ? P.tq * (P.tq0 + (1 - P.tq0) * Math.sin((rpmE > P.rpmIdle ? (rpmE - P.rpmIdle) / (P.rpmT - P.rpmIdle) : 0) * 1.5707963267948966)) : P.tq * (1 - (1 - P.tqE) * ((rpmE - P.rpmT) / (P.rpmMax - P.rpmT)) * ((rpmE - P.rpmT) / (P.rpmMax - P.rpmT))); }   // garage cars: = oxaTorque(rpmE)
+  else if (P.eng === 4) { eT = rpmE < P.rpmT ? P.tq : P.tq * P.rpmT / rpmE; }   // electric garage cars: full torque, then full power
   else if (rwd) { const ex = rpmE / 1000, ed = ex - 3.85; eT = 390 - (ed < 0 ? 13.5 : 9.15) * ed * ed - (ex > 5.5 ? (ex - 5.5) * 70 : 0); }   // = engineTorque(rpmE) of the DB5, inlined
   else { const ex = rpmE / 1000, ek = (ex - 0.6) / 5.4; eT = 180 + 118 * Math.sin((ek < 0 ? 0 : ek > 1 ? 1 : ek) * PI) - (ex > 6 ? (ex - 6) * 110 : 0); }   // = engineTorque(rpmE), embutido
   let Tdrive = throttle * (eT > 0 ? eT : 0) * ratio * P.eff;                  // torque total nas rodas motrizes
   if (rpm > P.rpmCut) Tdrive = 0;
+  if (P.eng >= 3 && V.vx > P.vLim && Tdrive > 0) Tdrive = 0;   // (garage cars: the top-speed limiter)
   if (reverse && V.vx < -11) Tdrive = 0;
   Tdrive -= (1 - throttle) * P.engBrake * rpmE * Math.sign(wheelSpd) * Math.abs(ratio) * 0.1;   // freio-motor
   // --- carga vertical por roda
@@ -193,7 +197,7 @@ function vehicleStep(keys) {
   const lw0 = Math.min(1, Math.max(0, (speed - 0.4) / 1.8));
   const lowW = (lw0 * lw0 * (3 - 2 * lw0));
   for (let i = 0; i < 4; i++) {
-    const front = i < 2, driven = front !== rwd, zone = V.wzone[i];
+    const front = i < 2, driven = P.awd || front !== rwd, zone = V.wzone[i];
     let mu = P.mu * ZMU[zone]; if (GAD.gripOn) mu *= gadGrip(i);   // (oil slick laid by the DB5, spiked tyres and skis of the V8: see 41_gadgets.js)
     if (ez) mu *= ASSIST.muK;
     const cap = mu * V.fz[i];
@@ -203,7 +207,7 @@ function vehicleStep(keys) {
     const vl = front ? vxw * cs + vyw * sn : vxw, vt = front ? -vxw * sn + vyw * cs : vyw;
     // longitudinal: demanda de tração/freio limitada pelo atrito
     let fxd = 0, locked = false, spinning = false;
-    if (driven) fxd += Tdrive * 0.5 / P.R;
+    if (driven) fxd += Tdrive * (P.awd ? 0.25 : 0.5) / P.R;
     const bdem = brake * P.m * g * P.brakeG * (front ? P.brakeF : 1 - P.brakeF) * 0.5;
     const dirL = Math.abs(vl) > 0.25 ? Math.sign(vl) : (Math.abs(fxd) > 1 ? 0 : Math.sign(vl) * Math.abs(vl) / 0.25);
     fxd -= bdem * dirL;

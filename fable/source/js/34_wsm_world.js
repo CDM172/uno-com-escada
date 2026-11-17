@@ -682,7 +682,7 @@ function townSpiresBuild(mb, rs) {
     for (let k = 0; k < 8; k++) { const t = ang + (k + 0.5) * PI / 4; O.push(qx + Math.cos(t) * 1.0, qz + Math.sin(t) * 1.0); }
     mb.color(0.35, 0.34, 0.31, rnd()); townStoneWalls(mb, O, g + 0.7, tt + 0.9, 9, 0.7, false);
     mb.push(m4mul(m4(), m4translate(m4(), qx, 0, qz), m4rotY(m4(), -ang - PI / 8)));
-    mb.mat(15).color(0.37, 0.36, 0.33, 1); mb.cyl(0, tt + 0.9, 0, 1.06, Math.max(tt + 3.2, top + 0.6), 0.04, 8, true, false);
+    mb.mat(15).color(0.37, 0.36, 0.33, 1); mb.cyl(0, tt + 0.9, 0, 1.06, tt + 2.4, 0.04, 8, true, false);
     mb.pop();
   }
   if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 600); }
@@ -723,10 +723,10 @@ function townTollBuild(mb, rs) {
     const tx = (bx - ax) / L, tz = (bz - az) / L, mx = (ax + bx) / 2, mz = (az + bz) / 2;
     let nx = -tz, nz = tx; if (hfAt(mx + nx * 3, mz + nz * 3) > hfAt(mx - nx * 3, mz - nz * 3)) { nx = -nx; nz = -nz; }   // n: towards the road
     const u0 = ax * tx + az * tz;
-    mb.mat(10, 9, (2 << 6) | 30, 255).color(0.27, 0.27, 0.24, 0.6).weight(0);
+    mb.mat(10, 9, (2 << 6) | 30, 255).color(0.19, 0.2, 0.16, 0.6).weight(0);
     const a = mb.v(ax, foot, az, nx, 0, nz, u0, 0), b = mb.v(bx, foot, bz, nx, 0, nz, u0 + L, 0), c = mb.v(bx, top, bz, nx, 0, nz, u0 + L, top - foot), d = mb.v(ax, top, az, nx, 0, nz, u0, top - foot);
     townQuad(mb, a, b, c, d, nx, 0, nz);
-    mb.mat(15).color(0.3, 0.31, 0.26, 1);
+    mb.mat(15).color(0.16, 0.19, 0.11, 1);
     const e = mb.v(ax, top, az, 0, 1, 0, 0, 0), f = mb.v(bx, top, bz, 0, 1, 0, 0, 0), g = mb.v(bx - nx * 0.5, top, bz - nz * 0.5, 0, 1, 0, 0, 0), hh = mb.v(ax - nx * 0.5, top, az - nz * 0.5, 0, 1, 0, 0, 0);
     townQuad(mb, e, f, g, hh, 0, 1, 0);
   }
@@ -734,9 +734,12 @@ function townTollBuild(mb, rs) {
   for (let i = 0; i < B.length; i += 5) {
     const ax = B[i], az = B[i + 1], bx = B[i + 2], bz = B[i + 3], y = B[i + 4], L = Math.hypot(bx - ax, bz - az); if (L < 0.2) continue;
     const tx = (bx - ax) / L, tz = (bz - az) / L, ang = Math.atan2(tz, tx);
-    mb.mat(13, 100).color(0.5, 0.52, 0.53, 1);
-    mb.push(m4mul(m4(), m4translate(m4(), (ax + bx) / 2, 0, (az + bz) / 2), m4rotY(m4(), -ang))); mb.box(0, y + 0.55, 0, L + 0.05, 0.32, 0.08); mb.pop();
-    mb.mat(13, 150).color(0.32, 0.33, 0.33, 1); mb.box(ax, y + 0.35, az, 0.1, 0.8, 0.1);
+    // (the W profile: two ridges either side of a groove, on a spacer, on steel posts)
+    mb.push(m4mul(m4(), m4translate(m4(), (ax + bx) / 2, 0, (az + bz) / 2), m4rotY(m4(), -ang)));
+    mb.mat(15).color(0.25, 0.26, 0.27, 1); mb.box(0, y + 0.66, 0, L + 0.05, 0.13, 0.09); mb.box(0, y + 0.47, 0, L + 0.05, 0.13, 0.09);
+    mb.color(0.15, 0.155, 0.16, 1); mb.box(0, y + 0.565, 0, L + 0.05, 0.08, 0.05);
+    mb.pop();
+    mb.color(0.17, 0.175, 0.18, 1); mb.box(ax, y + 0.36, az, 0.12, 0.82, 0.08);
   }
   // black-and-white marker posts every 40 m on both sides, and the 25 mph limit signs at both ends
   const R = T.rd, ri = T.rinfo;
@@ -911,7 +914,14 @@ function townVegPlace(push) {
       tree(x, z, clamp(h / (dims[arch * 4 + 1] || 12), 0.35, 1.7), arch);
     }
     // the Toll Road's verges: ivy, bramble and holly scrub up to the edge lines, ferns in the shade (the photographs)
-    const RD = T.rd, ri = T.rinfo;
+    const RD = T.rd, ri = T.rinfo, ends = []; let bx0 = 1e9, bz0 = 1e9, bx1 = -1e9, bz1 = -1e9;
+    for (let r = 0; r < RD.n; r++) if (ri[r * 4 + 2] & 128) {
+      const a = RD.off[r], b = RD.off[r + 1] - 1; ends.push(RD.p[a * 2], RD.p[a * 2 + 1], RD.p[b * 2], RD.p[b * 2 + 1]);
+      for (let k = a; k <= b; k++) { bx0 = Math.min(bx0, RD.p[k * 2]); bx1 = Math.max(bx1, RD.p[k * 2]); bz0 = Math.min(bz0, RD.p[k * 2 + 1]); bz1 = Math.max(bz1, RD.p[k * 2 + 1]); }
+    }
+    const LT = [];   // the crowns around the Toll Road
+    for (let q = 0; q < L.length; q += 3) if (L[q] > bx0 - 40 && L[q] < bx1 + 40 && L[q + 1] > bz0 - 40 && L[q + 1] < bz1 + 40) LT.push(L[q], L[q + 1], L[q + 2]);
+    const nearEnd = (x, z) => { for (let q = 0; q < ends.length; q += 2) if (Math.hypot(ends[q] - x, ends[q + 1] - z) < 16) return true; return false; };
     for (let r = 0; r < RD.n; r++) {
       if (!(ri[r * 4 + 2] & 128)) continue;
       const hw = ri[r * 4 + 1] * 0.05;
@@ -920,8 +930,18 @@ function townVegPlace(push) {
         const nx = -(bz - az) / L, nz = (bx - ax) / L;
         for (let s = rnd() * 1.4; s < L; s += 1.4) for (let sd = -1; sd <= 1; sd += 2) {
           const o = hw + 1.0 + rnd() * rnd() * 5, x = ax + (bx - ax) * s / L + nx * sd * o, z = az + (bz - az) * s / L + nz * sd * o, c = zoneAt(x, z), r1 = rnd(), r2 = rnd();
-          if (c === TZ.ROAD || c === TZ.WALL || c === TZ.BLD || c === TZ.WATER || c === TZ.OUT || c === TZ.KERB || r1 > 0.8) continue;
+          if (c === TZ.ROAD || c === TZ.WALL || c === TZ.BLD || c === TZ.WATER || c === TZ.OUT || c === TZ.KERB || r1 > 0.8 || nearEnd(x, z)) continue;
           push(x, hfAt(x, z) - 0.1, z, lerp(0.55, 1.1, r2), rnd() * TAU, rnd(), r1 < 0.4 ? 5 : r1 < 0.65 ? 6 : 7);
+        }
+        // canopy trees every 8 m or so on both sides, 2.5 to 6 m from the edge, as tall as the crowns the LIDAR found
+        // around them: their crowns meet over the lane
+        for (let s = rnd() * 8; s < L; s += 6 + rnd() * 5) for (let sd = -1; sd <= 1; sd += 2) {
+          const o = hw + 2.5 + rnd() * 3.5, x = ax + (bx - ax) * s / L + nx * sd * o, z = az + (bz - az) * s / L + nz * sd * o, c = zoneAt(x, z);
+          if (c !== TZ.WOOD && c !== TZ.NONE && c !== TZ.GRASS && c !== TZ.FIELD) continue;
+          let hs = 0, hn = 0; for (let q = 0; q < LT.length; q += 3) { const dx = LT[q] - x, dz = LT[q + 1] - z; if (dx * dx + dz * dz < 400 && LT[q + 2] > 8) { hs += LT[q + 2]; hn++; } }
+          if (!hn) continue;                                                   // (no trees there in the survey)
+          const ht = clamp(hs / hn, 9, 24), arch = rnd() < 0.6 ? 0 : 2;
+          tree(x, z, clamp(ht / (dims[arch * 4 + 1] || 12), 0.5, 1.6), arch);
         }
       }
     }
@@ -954,10 +974,10 @@ function townVegPlace(push) {
     push(x, hfAt(x, z) - 0.12, z, lerp(0.45, 1.05, r2), rnd() * TAU, rnd(), 5);
   }
   // marram grass on Sand Bay's dunes (tussocks: the near-only clump archetype)
-  const gm = 1.7;
+  const gm = 1.3;
   for (let z0 = T.z0 + 14; z0 < T.z1 - 14; z0 += gm) for (let x0 = T.x0 + 14; x0 < T.x1 - 14; x0 += gm) {
     const x = x0 + rnd() * gm, z = z0 + rnd() * gm, r1 = rnd(), r2 = rnd();
-    if (zoneAt(x, z) !== TZ.DUNE || r1 > 0.55) continue;
+    if (zoneAt(x, z) !== TZ.DUNE || r1 > 0.4) continue;
     push(x, hfAt(x, z) - 0.05, z, lerp(0.7, 1.25, r2), rnd() * TAU, rnd(), 8);
   }
   // cabbage palms on the seafront lawns near the pier

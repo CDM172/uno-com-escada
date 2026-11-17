@@ -170,21 +170,22 @@ class Lidar:
             out[m] = t[j, i]
         return out
 
-    def footprint(self, ring, erode=True):
+    def footprint(self, ring, erode=True, coords=False):
         """DSM and DTM samples (1 m) inside a local-frame polygon, eroded by a pixel when it is big enough"""
         from PIL import ImageDraw, ImageFilter
         E, N = self.en([p[0] for p in ring], [p[1] for p in ring])
         e0, n1 = math.floor(min(E)) - 1, math.ceil(max(N)) + 1; w = int(math.ceil(max(E)) + 1 - e0); h = int(n1 - math.floor(min(N)) + 1)
         if w * h > 400 * 400 or w < 1 or h < 1:
-            return None, None
+            return (None, None, None, None) if coords else (None, None)
         img = Image.new('L', (w, h), 0); ImageDraw.Draw(img).polygon([(e - e0, n1 - n) for e, n in zip(E, N)], fill=255)
         if erode and ring_area(ring) > 40:
             img = img.filter(ImageFilter.MinFilter(3))
         m = np.asarray(img) > 127
         jj, ii = np.nonzero(m)
         if len(ii) < 4:
-            return None, None
+            return (None, None, None, None) if coords else (None, None)
         pe = e0 + ii + 0.5; pn = n1 - jj - 0.5
+        if coords: return self.sample('dsm', pe, pn), self.sample('dtm', pe, pn), pe, pn
         return self.sample('dsm', pe, pn), self.sample('dtm', pe, pn)
 
 
@@ -383,6 +384,8 @@ def landcover_class(t):
         return LC['grass']
     if lu in ('meadow', 'farmland', 'allotments', 'orchard', 'farmyard', 'animal_keeping', 'greenfield') :
         return LC['field']
+    if g('tourism') in ('caravan_site', 'camp_site'):
+        return LC['grass']
     if g('amenity') == 'parking' or g('area:highway') or (g('highway') in ('pedestrian',) and g('area') == 'yes') or g('place') == 'square' or lu in ('retail', 'commercial', 'industrial', 'construction', 'railway') or le in ('schoolyard', 'marina'):
         return LC['paved']
     if lu == 'residential':
@@ -452,6 +455,63 @@ def read_osm(pbf):
     roads.sort(key=lambda r: r[0]); areas.sort(key=lambda a: a[0]); buildings.sort(key=lambda b: b[0])
     trees.sort(); tree_rows.sort(key=lambda r: r[0]); piers.sort(key=lambda r: r[0])
     return roads, areas, buildings, trees, tree_rows, piers
+
+
+# ---------------------------------------------------------------- static caravans
+def bake_caravans(areas, bl, lidar, lu_lookup, log):
+    """The holiday parks of Sand Bay: OSM maps the caravan sites but not the caravans. The LIDAR sees them: rectangles
+    6.5-13.5 m by 2.8-4.8 m standing 2-4.5 m above the ground (DSM - DTM), away from the mapped buildings. Each one found
+    becomes a white building with a shallow roof, at its measured place, size, heading and height."""
+    from PIL import ImageDraw, ImageFilter
+    inv = __import__('pyproj').Transformer.from_crs('EPSG:27700', 'EPSG:4326', always_xy=True)
+    out = []; nsite = 0
+    for oid, c, t, polys in areas:
+        if t.get('tourism') != 'caravan_site': continue
+        for ring, _ in polys:
+            if not in_town(*ring[0]): continue
+            E, N = lidar.en([p[0] for p in ring], [p[1] for p in ring])
+            e0, n1 = math.floor(min(E)) - 2, math.ceil(max(N)) + 2; w = int(math.ceil(max(E)) + 2 - e0); h = int(n1 - math.floor(min(N)) + 2)
+            if w * h > 1500 * 1500: continue
+            nsite += 1
+            ee, nn = np.meshgrid(e0 + np.arange(w) + 0.5, n1 - np.arange(h) - 0.5)
+            chm = (lidar.sample('dsm', ee.ravel(), nn.ravel()) - lidar.sample('dtm', ee.ravel(), nn.ravel())).reshape(h, w)
+            img = Image.new('L', (w, h), 0); ImageDraw.Draw(img).polygon([(e - e0, n1 - n) for e, n in zip(E, N)], fill=255)
+            bimg = Image.new('L', (w, h), 0); bd = ImageDraw.Draw(bimg)
+            for b in bl:
+                if abs(b[0] - ring[0][0]) > 2500 or abs(b[1] - ring[0][1]) > 2500: continue
+                BE, BN = lidar.en([p[0] for p in b[2]], [p[1] for p in b[2]])
+                if max(BE) < e0 or min(BE) > e0 + w or max(BN) < n1 - h or min(BN) > n1: continue
+                bd.polygon([(e - e0, n1 - n) for e, n in zip(BE, BN)], fill=255)
+            near_b = np.asarray(bimg.filter(ImageFilter.MaxFilter(3))) > 0
+            m = (np.asarray(img) > 127) & np.isfinite(chm) & (chm > 2.0) & (chm < 4.5) & ~near_b
+            lab = np.zeros((h, w), np.int32); nl = 0
+            for j0, i0 in zip(*np.nonzero(m)):
+                if lab[j0, i0]: continue
+                nl += 1; lab[j0, i0] = nl; st = [(j0, i0)]; cells = []
+                while st:
+                    a0, b0 = st.pop(); cells.append((a0, b0))
+                    for a1, b1 in ((a0 + 1, b0), (a0 - 1, b0), (a0, b0 + 1), (a0, b0 - 1)):
+                        if 0 <= a1 < h and 0 <= b1 < w and m[a1, b1] and not lab[a1, b1]:
+                            lab[a1, b1] = nl; st.append((a1, b1))
+                if not (14 <= len(cells) <= 75): continue
+                cj = np.array([p[0] for p in cells], np.float64); ci = np.array([p[1] for p in cells], np.float64)
+                lon, lat = inv.transform(e0 + ci + 0.5, n1 - cj - 0.5); x, z = proj(np.asarray(lon), np.asarray(lat))
+                mx, mz = float(x.mean()), float(z.mean()); C = np.cov(np.vstack([x - mx, z - mz]))
+                ev, evec = np.linalg.eigh(C); ux, uz = evec[0, 1], evec[1, 1]
+                u = (x - mx) * ux + (z - mz) * uz; v = -(x - mx) * uz + (z - mz) * ux
+                L = float(u.max() - u.min() + 1.0); W = float(v.max() - v.min() + 1.0)
+                if not (6.5 <= L <= 13.5 and 2.8 <= W <= 4.8) or len(cells) < 0.7 * L * W: continue
+                uc = float(u.max() + u.min()) / 2; vc = float(v.max() + v.min()) / 2
+                cx, cz = mx + uc * ux - vc * uz, mz + uc * uz + vc * ux
+                ring2 = [(cx + su * L / 2 * ux - sv * W / 2 * uz, cz + su * L / 2 * uz + sv * W / 2 * ux) for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+                if ring_area(ring2) < 0: ring2 = ring2[::-1]
+                hc = crc(f'caravan{cx:.1f},{cz:.1f}')
+                ht = float(min(3.6, max(2.4, np.percentile(chm[cj.astype(int), ci.astype(int)], 70) - 0.35)))
+                ang = math.remainder(math.atan2(uz, ux), math.pi)
+                if ang < 0: ang += math.pi
+                out.append((cx, cz, ring2, 0, ht, 1, ang, hc, lu_lookup(cx, cz), 0.35, 1))
+    log(f'static caravans from the LIDAR: {len(out)} on {nsite} caravan sites')
+    return out
 
 
 # ---------------------------------------------------------------- roads
@@ -785,6 +845,18 @@ def bake_buildings(buildings, roadgrid, lu_lookup, log, lidar=None, decks=()):
                         tw = float(min(8.0, max(3.5, max(tu.max() - tu.min(), tv.max() - tv.min()) + 1.0)))
                         uc, vc = float(tu.max() + tu.min()) / 2, float(tv.max() + tv.min()) / 2
                         spires.append((uc * tca - vc * tsa, uc * tsa + vc * tca, tmax, tw, tang))
+                        if rise is not None:
+                            # the nave's eaves and ridge again, without the tower's cells (they were lifting the ridge)
+                            tset = {(e0 + b0 + db, n1 - a0 - 1 + da) for a0, b0 in seen for da in range(-2, 3) for db in range(-2, 3)}
+                            fd, ft, fe, fn = lidar.footprint(r, coords=True)
+                            if fd is not None:
+                                keep = np.array([(int(math.floor(a1)), int(math.floor(b1))) not in tset for a1, b1 in zip(fe, fn)])
+                                v2 = (fd - ft)[keep & np.isfinite(fd) & np.isfinite(ft)]
+                                if v2.size >= 6:
+                                    q15, q90, q95 = np.percentile(v2, [15, 90, 95])
+                                    if rise == 0: h = float(max(2.4, q90))
+                                    elif q95 - q15 >= 0.9: h = float(max(2.4, q15 + 0.3)); rise = float(min(12.0, q95 - q15))
+                        log(f'  church ({cx:.0f},{cz:.0f}): eaves {h:.1f} m, ridge +{(rise or 0):.1f} m, tower {tmax:.1f} m, {tw:.1f} m wide')
             if kind == 8 and dsm is not None and deck is not None:
                 # the pavilion: its roof as a grid of heights above the deck (in the frame of its long axis), and the
                 # four corner towers as the slender peaks that stand above the roof around them
@@ -1004,6 +1076,7 @@ def main():
             v = dsm[np.isfinite(dsm)] if dsm is not None else np.zeros(0)
             if v.size > 20: decks.append((ring, float(np.percentile(v, 35)))); log(f'pier deck {t.get("name", oid)}: {decks[-1][1]:.2f} m')
     bl, towers, spires, pav = bake_buildings(buildings, roadgrid, lu_lookup, log, lidar, decks)
+    if lidar is not None: bl += bake_caravans(areas, bl, lidar, lu_lookup, log)
     bgrid = SegGrid(24.0)
     for cx, cz, r, *_ in bl:
         for (ax, az), (bx, bz) in zip(r, r[1:] + r[:1]): bgrid.add(ax, az, bx, bz, 0)

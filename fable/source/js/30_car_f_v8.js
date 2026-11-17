@@ -114,7 +114,7 @@ const BC_V8 = {
     half: { w: 0.905, front: 2.212, rear: 2.392 }, bumper: 0.09,
   },
   // shader defines: the V8's materials (#ifdef V8) and its paint, Cumberland Grey metallic (V8_META.car.paint replaces it)
-  defs: { V8: '', PAINT_ALB: typeof V8_META !== 'undefined' && V8_META.car && V8_META.car.paint ? 'vec3f(' + V8_META.car.paint.map(x => +x).join(', ') + ')' : 'vec3f(0.06, 0.068, 0.07)', PAINT_MET: '0.75' },
+  defs: { V8: '', RADIAL: '', PAINT_ALB: typeof V8_META !== 'undefined' && V8_META.car && V8_META.car.paint ? 'vec3f(' + V8_META.car.paint.map(x => +x).join(', ') + ')' : 'vec3f(0.06, 0.068, 0.07)', PAINT_MET: '0.75' },
   AT: V8_AT, PAINT: V8_PAINT, DIAL: V8_DIAL, cutout: ['badge', 'script'],
   // which object each target of the export belongs to and in which passes it is drawn (1 main, 2 shadow), with options:
   // glass (transparent), glow (light in the transparent pass, with that material id), split (mirrored, the halves move apart)

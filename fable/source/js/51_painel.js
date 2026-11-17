@@ -9,7 +9,9 @@ const HUD = {
   V: new Int32Array(6),   // o que o painel mostra: km/h × 10, rpm, marcha, volta atual, última e melhor (centésimos de segundo; -1 = sem tempo)
   // Scale of the speedometer: the Uno's reads to 200 km/h, the DB5's to 260, the V8's to 300 (the rev counters have the red
   // line at 6,250, 6,000 and 6,500). kmh10 = full scale in tenths of km/h, kS = degrees of needle per tenth of km/h.
-  kmh10: CARSEL === 'v8' ? 3000 : GAD.on ? 2600 : 2000, kS: CARSEL === 'v8' ? 250 / 3000 : GAD.on ? 250 / 2600 : 250 / 2000,
+  kmh10: CARSEL === 'oxa' ? OXA.hud[0] * 10 : CARSEL === 'v8' ? 3000 : GAD.on ? 2600 : 2000, kS: CARSEL === 'oxa' ? 250 / (OXA.hud[0] * 10) : CARSEL === 'v8' ? 250 / 3000 : GAD.on ? 250 / 2600 : 250 / 2000,
+  // rev counter: full scale (rpm) and degrees of needle per 10 rpm (the garage cars' own, OXA.hud: 30_car_f_oxa.js)
+  rpmMax: CARSEL === 'oxa' ? OXA.hud[1] * 1000 : 7000, kR: CARSEL === 'oxa' ? 250 / (OXA.hud[1] * 100) : 250 / 700,
   gd: null, gdS: null, gadK: -1,   // gadget status line of the Aston Martins: element, its labels, what is shown
 };
 // Labels of the gadget status line, one per bit of GAD.act (41_gadgets.js, 41_gadgets_v8.js), and the bits that hide
@@ -68,7 +70,8 @@ function hudLayout() {
     }
     f.fillStyle = 'rgba(255,255,255,.6)'; f.font = '600 ' + Math.round(r * 0.115) + 'px "Helvetica Neue",Helvetica,Arial,sans-serif'; f.fillText(unit, cx, cy + r * 0.84);
   };
-  if (CARSEL === 'v8') { dial(cx1, 300, 20, 10, 0, 'km/h', 2); dial(cx2, 7, 1, 0.5, 6.5, 'rpm × 1000'); }
+  if (CARSEL === 'oxa') { const h = OXA.hud; dial(cx1, h[0], 20, 10, 0, 'km/h', h[0] > 200 ? 2 : 0); dial(cx2, h[1], h[1] > 10 ? 2 : 1, h[1] > 10 ? 1 : 0.5, h[2], h[3]); }
+  else if (CARSEL === 'v8') { dial(cx1, 300, 20, 10, 0, 'km/h', 2); dial(cx2, 7, 1, 0.5, 6.5, 'rpm × 1000'); }
   else if (GAD.on) { dial(cx1, 260, 20, 10, 0, 'km/h', 2); dial(cx2, 7, 1, 0.5, 6, 'rpm × 1000'); }
   else { dial(cx1, 200, 20, 10, 0, 'km/h'); dial(cx2, 7, 1, 0.5, 6.25, 'rpm × 1000'); }
   const hb = H.hub = document.createElement('canvas'), hr = Math.round(r * 0.085); hb.width = hb.height = hr * 2; const hg = hb.getContext('2d'); hg.beginPath(); hg.arc(hr, hr, hr, 0, TAU); hg.fillStyle = '#16181b'; hg.fill(); hg.lineWidth = hr * 0.25; hg.strokeStyle = '#ff5a36'; hg.stroke();
@@ -108,7 +111,7 @@ function hudGad() {
   for (let i = 0; i < sp.length; i++) sp[i].className = (a >> i) & 1 ? 'on' : '';
 }
 function hudRead() {
-  const V = HUD.V, v = VEH; let kmh = GS.speed * 36; if (kmh > HUD.kmh10) kmh = HUD.kmh10; let rpm = v.rpm; if (rpm > 7000) rpm = 7000;
+  const V = HUD.V, v = VEH; let kmh = GS.speed * 36; if (kmh > HUD.kmh10) kmh = HUD.kmh10; let rpm = v.rpm; if (rpm > HUD.rpmMax) rpm = HUD.rpmMax;
   V[0] = kmh; V[1] = rpm; V[2] = v.gear; V[3] = LAP[3] === 1 ? (v.time - LAP[0]) * 100 : 0; V[4] = LAP[1] > 0 ? LAP[1] * 100 : -1; V[5] = LAP[2] > 0 ? LAP[2] * 100 : -1;
 }
 function hudDraw() {
@@ -120,7 +123,7 @@ function hudDraw() {
     hudInt(g, A, ki, 3, L[0] - ((w * 3) >> 1), L[7], 16); hudCh(g, A, gear === 0 ? 14 : gear, L[2] - (A.w[gear === 0 ? 14 : gear] >> 1), L[7], 16);
     g.beginPath();
     for (let d = 0; d < 2; d++) {
-      const a = (145 + (d ? ar * (250 / 700) : an * H.kS)) * 0.017453292519943295, co = Math.cos(a), si = Math.sin(a), cx = L[d * 2] * 16, cY = cy * 16, len = r * 16;
+      const a = (145 + (d ? ar * H.kR : an * H.kS)) * 0.017453292519943295, co = Math.cos(a), si = Math.sin(a), cx = L[d * 2] * 16, cY = cy * 16, len = r * 16;
       g.moveTo((cx - co * len * 0.16) | 0, (cY - si * len * 0.16) | 0); g.lineTo((cx + co * len * 0.86) | 0, (cY + si * len * 0.86) | 0);
     }
     g.stroke();

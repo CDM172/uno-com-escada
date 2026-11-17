@@ -184,7 +184,8 @@ function townHeightsBuild() {
     const R = T.rd, ri = T.rinfo, RH = T.rh, wb = new Float32Array(w * h), ht = new Float32Array(w * h);
     for (let r = 0; r < R.n; r++) {
       const cls = ri[r * 4]; if (cls > 9 || (ri[r * 4 + 2] & 1)) continue;
-      const hw = ri[r * 4 + 1] * 0.05 + 0.7, fall = cls <= 7 ? 3.5 : 2.5;
+      // (the pavements too: they stay level across instead of tilting with the hillside)
+      const hw = ri[r * 4 + 1] * 0.05 + 0.7 + ((ri[r * 4 + 2] & 32) ? 0 : ROAD_PAVE[cls] || 0), fall = cls <= 7 ? 3.5 : 2.5;
       for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) {
         const ha = RH[k], hb = RH[k + 1]; if (ha === -32768 || hb === -32768) continue;
         const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez + 1e-9, rad = hw + fall;
@@ -271,6 +272,16 @@ function townRasterBuild() {
     const c = ai[i * 2], nr = ai[i * 2 + 1];
     if (TOWN_LC[c] !== TZ.NONE) townFill(A, r, r + nr, TOWN_LC[c], null);
     r += nr;
+  }
+  // unmapped ground under the LIDAR's tree crowns is woodland floor (scrub under the small ones): Weston Woods below the
+  // Toll Road
+  if (T.ltrees) {
+    const L = T.ltrees;
+    for (let q = 0; q < L.length; q += 3) {
+      const rr = Math.min(6, Math.max(2.5, L[q + 2] * 0.4)), ci = (L[q] - T.x0) | 0, cj = (L[q + 1] - T.z0) | 0, n = Math.ceil(rr);
+      for (let j = Math.max(0, cj - n); j <= Math.min(zh - 1, cj + n); j++) for (let i = Math.max(0, ci - n); i <= Math.min(zw - 1, ci + n); i++)
+        if ((i - ci) * (i - ci) + (j - cj) * (j - cj) <= rr * rr && Z[j * zw + i] === TZ.NONE) Z[j * zw + i] = TZ.WOOD;
+    }
   }
   // sea: below mid tide on the shore side (mud flats, beach and unmapped ground)
   const D = HF.d, hw = HF.w;

@@ -9,6 +9,8 @@
 // The Aston Martins (the cars modelled in Blender) use this family with the BCAR define and their own (DB5, V8): ids 20 to 28
 // are their materials and ids 6, 7 and 12 have variants for them; ids 2, 3 and 13 are shared as they are. The paint colour
 // is PAINT_ALB / PAINT_MET (30_car_e_db5.js, 30_car_f_v8.js). Without BCAR the source that reaches the GPU is the Uno's, to the letter.
+// The garage cars (30_car_f_oxa.js) add OXA (plain-coloured trim: id 2) and RADIAL (the radial tread, as the V8's), with
+// PAINT_ALB = the vertex colour; the Weston-super-Mare traffic (43_traffic.js) adds TRAFFIC (wheels baked into the car).
 //   20 paint (a=1 unpainted edges) | 21 tyre | 22 lamp lenses (a: 0 headlamp, 1 stop/tail, 2 indicator, 3 reflector,
 //   4 reversing lamp) | 23 headlamp bowl | 24 leather (a=0 pleated) | 25 cloth and figure | 26 dashboard (a=1 wood)
 //   27 blur disc of the wire wheels | 28 muzzle flash
@@ -102,9 +104,14 @@ fn surf(in: V2F, ff: bool) -> Surface {
       }
     }
     case 2u: {   // plástico preto: granulado finíssimo (quase liso a 3 m), arestas vivas, um pouco de difuso para ler na sombra
+#ifdef OXA
+      // the garage cars: the model's own colour (trim, plates, grilles, interior), satin
+      s.albedo = in.col.rgb; s.rough = 0.62; s.metal = 0.0;
+#else
       let g = textureSample(tNoise, sLin, lp.xz * 57.0 + lp.yy * 43.0).b;
       let g2 = textureSample(tNoise, sLin, lp.zy * 131.0 + lp.xx * 97.0).a;
       s.albedo = in.col.rgb * vec3f(0.96, 1.0, 1.05) * (0.2 + 0.13 * g + 0.09 * g2); s.rough = select(0.94 + 0.05 * g2, 0.4, pa > 0.5); s.ao = 0.38 + 0.2 * g2; s.metal = select(0.0, 0.55, pa > 0.5);
+#endif
     }
     case 3u: { s.albedo = in.col.rgb * vec3f(0.96, 1.0, 1.05) * 1.0; s.rough = 0.84; s.ao = 0.6; s.metal = 0.5; }
     case 4u: {   // pneu de passeio
@@ -307,12 +314,16 @@ fn surf(in: V2F, ff: bool) -> Surface {
       }
     }
     case 21u: {   // cross-ply tyre, in the wheel frame (axle along Z). O.p0 = (|angular speed|, outer radius)
+#ifdef TRAFFIC
+      // the town's traffic: wheels baked into the car (no wheel frame), plain rubber
+      s.albedo = in.col.rgb * 0.5; s.rough = 0.92; s.metal = 0.0; s.ao = 0.55;
+#else
       let R = max(O.p0.y, 0.1); let r = length(lp.xy); let rn = r / R; let ang = atan2(lp.y, lp.x);
       let blur = sat(O.p0.x / 25.0);
       let base = in.col.rgb * vec3f(0.96, 1.0, 1.05) * 0.5;
       if (rn > 0.962) {
-#ifdef V8
-        // tread of the V8's 255/60 VR15 radials: two circumferential grooves and angled sipes across the ribs, slots in the shoulders
+#ifdef RADIAL
+        // tread of the V8's 255/60 VR15 radials (and of the garage cars' radials): two circumferential grooves and angled sipes across the ribs, slots in the shoulders
         let u = ang / 6.2831853 * 76.0; let fade = sat(1.0 - fwidth(u) * 1.3) * (1.0 - blur); let zz = lp.z / 0.12;
         let sipe = (1.0 - smoothstep(0.05, 0.11, abs(fract(u + abs(zz) * 0.7) - 0.5))) * (1.0 - smoothstep(0.82, 0.92, abs(zz)));
         let groove = 1.0 - smoothstep(0.02, 0.045, abs(abs(zz) - 0.38));
@@ -338,6 +349,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
         let letters = tb * win * st * (1.0 - blur);
         s.albedo = base * (1.0 + 1.3 * letters + 0.7 * ring * (1.0 - blur)); s.rough = 0.9 - 0.2 * letters; s.ao = 0.5 + 0.2 * letters; s.metal = 0.0;
       }
+#endif
     }
     case 22u: {   // lamp lenses
       let upW = normalize((O.model * vec4f(0.0, 1.0, 0.0, 0.0)).xyz); let rightW = normalize((O.model * vec4f(0.0, 0.0, 1.0, 0.0)).xyz);

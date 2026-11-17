@@ -40,8 +40,8 @@ function townMapBuild() {
   WM.height = mkTex(w, h, 'r32float', TU.TB | TU.CD);
   dev.queue.writeTexture({ texture: WM.height }, HF.d, { bytesPerRow: w * 4 }, [w, h]);
   //            NONE ROAD PAVE HARD GRASS SAND MUD WOOD WATER KERB PATH TRACK GARDEN FIELD BLD OUT WALL DUNE
-  const cR = [150, 0, 0, 0, 255, 0, 0, 40, 0, 0, 0, 30, 215, 245, 0, 0, 0, 120], cG = [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 40, 0, 0, 0, 0, 0, 135];
-  const cB = [0, 0, 0, 0, 0, 0, 255, 0, 255, 0, 0, 0, 0, 0, 0, 255, 0, 0], cA = [128, 0, 0, 0, 0, 0, 40, 255, 0, 0, 0, 60, 30, 128, 0, 0, 0, 110];
+  const cR = [150, 0, 0, 0, 255, 0, 0, 40, 0, 0, 0, 30, 215, 245, 0, 0, 0, 210], cG = [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 40, 0, 0, 0, 0, 0, 45];
+  const cB = [0, 0, 0, 0, 0, 0, 255, 0, 255, 0, 0, 0, 0, 0, 0, 255, 0, 0], cA = [128, 0, 0, 0, 0, 0, 40, 255, 0, 0, 0, 60, 30, 128, 0, 0, 0, 120];
   const z = WM.zdata = new Uint8Array(w * h * 4);
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
     let r = 0, g = 0, b = 0, a = 0;

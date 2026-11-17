@@ -4,7 +4,7 @@
 const ST = { INICIO: 0, JOGO: 1, PAUSA: 2, BENCH: 3, FITA: 4, RESULT: 5, POSE: 6 };
 const UI = { st: ST.INICIO, back: ST.JOGO, el: null, tag: null, res: null, b0: null, b1: null, cars: null, gfx: null, bench: null, benchN: 0, padPrev: 0, padN: 0, pose: -1, stats: false, warm: false };
 // the best lap is kept per car (the Aston Martins and the Uno are not in the same league)
-const BEST_KEY = CARSEL + (MAPSEL === 'wsm' ? '-wsm' : '') + '-melhor';   // (and per map)
+const BEST_KEY = (CARSEL === 'oxa' ? 'oxa-' + OXA.id : CARSEL) + (MAPSEL === 'wsm' ? '-wsm' : '') + '-melhor';   // (and per map; each garage car its own)
 const $ = id => document.getElementById(id);
 function uiInit() {
   UI.el = $('ui'); UI.tag = $('tag'); UI.res = $('res'); UI.b0 = $('b0'); UI.b1 = $('b1'); UI.cars = $('cars'); UI.gfx = $('gfx');
@@ -20,10 +20,25 @@ function uiInit() {
     b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('map', m); location.search = q.toString(); };
   }
   if (TOWN.on) { const c = $('credit'); c.textContent = WSM_META.credits.join(' · '); c.style.display = 'block'; document.title = document.title.replace('Serra da Mata circuit', 'Weston-super-Mare'); }
+  if (CARSEL === 'oxa') { const c = $('credit'); c.textContent = (TOWN.on ? c.textContent + ' · ' : '') + OXA.credits; c.style.display = 'block'; }   // (a garage car: its model's credits)
   for (const b of document.querySelectorAll('#cars .car')) {
     const c = b.dataset.car, sel = c === CARSEL; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
     if (c === 'v8' && !BC_V8.meta) b.style.display = 'none';   // (a build without the V8's mesh)
     b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('car', c); location.search = q.toString(); };
+  }
+  // "More cars": the garage (28_oxa_data.js), a compact list under the three cars of the game; open when one of them is driven
+  UI.garage = $('garage');
+  if (UI.garage && typeof OXA_CARS !== 'undefined') {
+    const list = $('glist'), cats = { car: '', van: ' · van', truck: ' · truck' };
+    UI.garage.querySelector('summary').textContent = 'More cars: ' + OXA_CARS.length + ' cars, vans and trucks';
+    for (const e of OXA_CARS) {
+      const k = e.meta.car, c = 'oxa:' + k.id, sel = c === 'oxa:' + OXA.id && CARSEL === 'oxa', b = document.createElement('button');
+      b.className = 'car'; b.dataset.car = c; b.textContent = k.name + ' · ' + oxaYear(k.id) + (cats[k.category] || '');
+      b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+      b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('car', c); location.search = q.toString(); };
+      list.appendChild(b);
+    }
+    if (CARSEL === 'oxa') UI.garage.open = true;
   }
   // Graphics chooser (start screen and pause menu): picking the other mode reloads the page with ?gfx=..., which is saved.
   const gfxNow = GFX === 'fast' ? 'fast' : 'full';
@@ -54,6 +69,7 @@ function uiSet(st) {
   UI.b1.style.display = st === ST.INICIO ? 'none' : ''; UI.b1.textContent = st === ST.RESULT ? 'Run the benchmark again' : 'Benchmark';
   UI.res.style.display = st === ST.RESULT ? 'block' : 'none'; UI.cars.style.display = st === ST.INICIO ? 'flex' : 'none';
   if (UI.maps) UI.maps.style.display = UI.cars.style.display;
+  if (UI.garage) UI.garage.style.display = st === ST.INICIO ? 'block' : 'none';
   if (UI.gfx) UI.gfx.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
   if (UI.hand) UI.hand.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
   UI.tag.textContent = st === ST.BENCH ? 'Benchmark: 60 s demo lap · Esc cancels' : st === ST.FITA ? 'Demo lap · R takes the wheel · Esc menu' : st === ST.POSE ? 'Pose ' + (UI.pose + 1) + ' · ' + (POSES[UI.pose].label || POSES[UI.pose].nome) + ' · 1 to ' + POSES.length + ' switch · Esc back to driving' : '';

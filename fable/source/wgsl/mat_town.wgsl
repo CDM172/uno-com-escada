@@ -35,7 +35,7 @@ fn tarmac(in: V2F, N: vec3f, dist: f32) -> Surface {
   a = mix(a, vec3f(0.052, 0.052, 0.054), patchM * 0.8);
   a *= 1.0 + (n3.b - 0.5) * 0.12 + (n4.b - 0.5) * 0.1 * near2;
   s.albedo = a; s.rough = 0.86 - 0.08 * patchM;
-  let g = (n3.rg - 0.5) * 0.25 * near + (n4.rg - 0.5) * 0.5 * near2;
+  let g = (n3.rg - 0.5) * 0.1 * near + (n4.rg - 0.5) * 0.2 * near2;
   s.normal = bumpXZ(N, g);
   return s;
 }
@@ -63,7 +63,7 @@ fn roadSurf(in: V2F, N: vec3f) -> Surface {
     let ln = textureSample(tNoise, sLin, xz * 0.9 + 0.3); let lf = textureSample(tNoise, sLin, xz * 3.7 + 0.71);
     let edgeW = 1.0 - smoothstep(0.0, 0.55 + 0.4 * ln.r, e);
     s.albedo = mix(s.albedo, vec3f(0.06, 0.07, 0.035) * (0.7 + 0.6 * ln.g), edgeW * 0.75);              // moss and earth
-    let leaves = smoothstep(0.6, 0.72, lf.b) * (0.35 + 0.65 * (1.0 - smoothstep(0.5, 2.0, e)));
+    let leaves = smoothstep(0.62, 0.74, lf.b) * (0.06 + 0.94 * (1.0 - smoothstep(0.35, 1.3, e)));
     let lc = mix(vec3f(0.22, 0.12, 0.04), vec3f(0.3, 0.2, 0.06), lf.r) * (0.7 + 0.5 * lf.g);
     s.albedo = mix(s.albedo, lc, leaves * 0.85); s.rough = mix(s.rough, 0.92, max(leaves, edgeW));
     s.albedo *= 0.88 + 0.12 * ln.b;                                                                  // damp under the canopy

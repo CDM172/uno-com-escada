@@ -1,11 +1,12 @@
-// The cars modelled in Blender — the Aston Martin DB5 and the V8 Vantage — share this loader and this CAR contract. Each
+// The cars modelled in Blender — the Aston Martin DB5 and the V8 Vantage — share this loader and this CAR contract, and so
+// do the garage cars (BC_OXA, 30_car_f_oxa.js: the same mesh format, no moving parts). Each
 // car is a table (BC_DB5 in 30_car_e_db5.js, BC_V8 in 30_car_f_v8.js) that says where its data are (DB5_META/DB5_B64 or
 // V8_META/V8_B64, format in source/blender/README.md), which object each target of the export belongs to, how its decal
 // atlas is painted, where the pivots of its moving parts are and how they move. Everything else is here: decoding the
 // export, the object slots, the atlas texture, the matrices of the body, wheels and steering wheel, the car viewer.
 // When one of them is the selected car (CARSEL, 01_gpu.js) it takes the place of the Uno in CAR (30_car_d_main.js).
 
-const BC = CARSEL === 'v8' ? BC_V8 : CARSEL === 'db5' ? BC_DB5 : null;   // the selected car's table (null: the Uno)
+const BC = CARSEL === 'v8' ? BC_V8 : CARSEL === 'db5' ? BC_DB5 : CARSEL === 'oxa' ? BC_OXA : null;   // the selected car's table (null: the Uno; BC_OXA: a garage car, 30_car_f_oxa.js)
 // ---- geometry of the car: DB5_META.car / V8_META.car of the export, the table's values when the export has none
 const BCG = BC ? (() => {
   const d = BC.geom, c = BC.meta.car || {}, h = c.half || d.half, st = c.steer || {};
@@ -117,7 +118,7 @@ function bcarDecode(buf) {
     const glow = !glass && opt.glow ? opt.glow : 0, kind = glass ? 'g' : glow ? 'w' : '' + tg[1];
     let side = -1, side2 = -1;
     if (opt.split) { let zs = 0; for (let i = 0; i < nv; i++) zs += pos[i * 3 + 2]; side = zs >= 0 ? 1 : 0; if (ch.m) side2 = 1 - side; }
-    const gr = group(tg, kind, side, glass, !!glow), mb = gr.mb, v0 = mb.nv, i0 = mb.ni, c = ch.c || [1, 1, 1];
+    const gr = group(tg, kind, side, glass, !!glow), mb = gr.mb, v0 = mb.nv, i0 = mb.ni, c = ch.id === 20 && BC.paint ? BC.paint : ch.c || [1, 1, 1];   // (garage cars: the paint colour goes into the vertex colour)
     if (glow) mb.mat(glow, 0); else mb.mat(ch.id, ch.a || 0);
     mb.color(c[0], c[1], c[2]);
     const b = bb[ch.t] || (bb[ch.t] = [1e9, -1e9, 1e9, -1e9, 1e9, -1e9, 1e9, -1e9]);

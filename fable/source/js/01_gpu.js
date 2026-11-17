@@ -1,9 +1,10 @@
 // Dispositivo WebGPU, utilitários de recurso e pré-processador de WGSL.
 const Q = new URLSearchParams(location.search);
 // Which car is driven: ?car=db5 (Aston Martin DB5, the default), ?car=v8 (Aston Martin V8 Vantage) or ?car=uno (the
-// original Fiat Uno with the ladder). The choice is remembered between sessions. (A let: a build without the V8's mesh
-// falls back to the DB5, see 30_car_f_v8.js.)
-let CARSEL = (() => { let c = Q.get('car'); try { if (c) localStorage.setItem('car', c); else c = localStorage.getItem('car'); } catch (e) { } return c === 'uno' ? 'uno' : c === 'v8' ? 'v8' : 'db5'; })();
+// original Fiat Uno with the ladder), or ?car=oxa:<id> for one of the garage cars ('oxa': which one is in 30_car_f_oxa.js).
+// The choice is remembered between sessions. (A let: a build without the V8's mesh, or an unknown garage car, falls back
+// to the DB5, see 30_car_f_v8.js and 30_car_f_oxa.js.)
+let CARSEL = (() => { let c = Q.get('car'); try { if (c) localStorage.setItem('car', c); else c = localStorage.getItem('car'); } catch (e) { } return c === 'uno' ? 'uno' : c === 'v8' ? 'v8' : c && c.slice(0, 4) === 'oxa:' ? 'oxa' : 'db5'; })();
 // Which map: ?map=serra (the Serra da Mata circuit, the default) or ?map=wsm (Weston-super-Mare, built from OpenStreetMap:
 // see 12_wsm_data.js). Remembered between sessions like the car.
 const MAPSEL = (() => { let m = Q.get('map'); try { if (m) localStorage.setItem('map', m); else m = localStorage.getItem('map'); } catch (e) { } return m === 'wsm' ? 'wsm' : 'serra'; })();
