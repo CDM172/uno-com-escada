@@ -152,6 +152,10 @@ struct LOut { @location(0) col: vec4f }
   var env = textureSampleLevel(tEnv, sClamp, R, envMip(rough)).rgb;
   env = mix(env, vec3f(lum(env)), sat(rough * 1.2 - 0.25) * 0.7);   // superfícies ásperas não devolvem o azul saturado do céu
   var envC = textureSampleLevel(tEnv, sClamp, R, 0.9).rgb;
+#ifdef WSM
+  // open water (the sea, the Marine Lake: wet = 1) reflects the sky, not the cubemap taken at the car among the buildings
+  if (wet > 0.95) { env = skyColor(vec3f(R.x, max(R.y, 0.02), R.z)) * 0.92; envC = env; }
+#endif
 #ifdef SSR
   if (wet > 0.03 && dist < 160.0) {
     let r = ssr(wp, R, in.pos.xy, dist);

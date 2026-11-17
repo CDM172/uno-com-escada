@@ -73,8 +73,10 @@ function v8Reset() {
 }
 // Ground under the point (MQ[0], MQ[1]), with the track sample MQ[9] as search hint: MQ[8] = height of the road or the
 // terrain, MQ[7] = how far the point is beyond the barrier on its side (> 0: it hit it), MQ[9] = the new hint.
+// On the town map (?map=wsm) the ground is the terrain (the roads lie on it) and the buildings are the walls.
 function v8GroundQ() {
   const q = MQ;
+  if (TOWN.on) { hfAtQ(q); q[8] = q[6]; q[7] = townBuildingQ(q[0], q[1]) ? 1 : -1; return; }
   trackLocateQ(q[9] | 0, q); if (q[3] > 90 || q[3] < -90) trackLocateQ(-1, q);
   const i0 = q[4] | 0, f = q[5], d = q[3], ad = d < 0 ? -d : d, i1 = (i0 + 1) % TRK.N, lim = TRK.hw + APRON, bar = d < 0 ? TRK.barL : TRK.barR;
   q[9] = i0; q[7] = ad - (bar[i0] + (bar[i1] - bar[i0]) * f - 0.25);
@@ -134,7 +136,11 @@ function v8Beams() {
     let len = GAME.mode === 'car' ? V8T.beamView : V8T.beamMax;
     gadPoint(4 + s);
     const hx = e[0], hy = e[1], hz = e[2], bx = s ? -sn : sn, bz = s ? c : -c;   // beam direction: the car's left or right
-    if (GAME.mode !== 'car' && V.hint >= 0) {
+    if (GAME.mode !== 'car' && TOWN.on) {   // town map: as far as the first building on that side (1 m steps, then halving)
+      let a = 0, b = 0;
+      for (let r = 1; r <= V8T.beamMax; r++) { if (townBuildingQ(hx + bx * r, hz + bz * r)) { b = r; break; } a = r; }
+      if (b > 0) { for (let k = 0; k < 4; k++) { const m = (a + b) * 0.5; if (townBuildingQ(hx + bx * m, hz + bz * m)) b = m; else a = m; } len = a < 0.3 ? 0.3 : a; }
+    } else if (GAME.mode !== 'car' && V.hint >= 0) {
       const i = V.hint, tx = TRK.tx[i], tz = TRK.tz[i], k = bx * -tz + bz * tx, dh = V.d + (hx - V.x) * -tz + (hz - V.z) * tx;
       if (k > 0.15) len = (TRK.barR[i] - 0.25 - dh) / k; else if (k < -0.15) len = (TRK.barL[i] - 0.25 + dh) / -k;
       if (len < 0.3) len = 0.3; else if (len > V8T.beamMax) len = V8T.beamMax;

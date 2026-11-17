@@ -519,7 +519,7 @@ def build_circuit(roads, road_polys, bld_grid, log):
             t = 0.0
             while t < 14 and on_road(px + dx * t, pz + dz * t): t += 0.25
             edge[i, sd] = t
-            lim = min(t, 7.0) - 1.0
+            lim = min(t, 7.0) - 1.35
             for ax, az, bx, bz, _ in bld_grid.near(px, pz, 12):
                 ex, ez = bx - ax, bz - az; den = dx * ez - dz * ex
                 if abs(den) < 1e-9: continue
@@ -541,13 +541,15 @@ def build_circuit(roads, road_polys, bld_grid, log):
 
 # ---------------------------------------------------------------- buildings
 KIND = {'house': 0, 'terrace': 1, 'flats': 2, 'shop': 3, 'church': 4, 'industrial': 5, 'civic': 6, 'garage': 7,
-        'pavilion': 8, 'ruins': 9, 'hotel': 10}
+        'pavilion': 8, 'ruins': 9, 'hotel': 10, 'shelter': 11}
 
 
 def building_kind(t, area, lu):
     b = t.get('building')
     if t.get('name', '').startswith('Grand Pier'):
         return KIND['pavilion']
+    if t.get('amenity') == 'shelter' or b in ('kiosk_roof', 'grandstand', 'bandstand'):
+        return KIND['shelter']
     if b in ('ruins',) or t.get('ruins') == 'yes':
         return KIND['ruins']
     if b in ('terrace',):
@@ -611,14 +613,14 @@ def bake_buildings(buildings, roadgrid, lu_lookup, log):
             if lv is not None:
                 h = lv * 3.0 + (0.6 if lv <= 3 else 0.0)
             else:
-                levels = {0: 2, 1: 2, 2: 4, 3: 3, 4: 0, 5: 0, 6: 3, 7: 0, 8: 0, 9: 0, 10: 4}[kind]
+                levels = {0: 2, 1: 2, 2: 4, 3: 3, 4: 0, 5: 0, 6: 3, 7: 0, 8: 0, 9: 0, 10: 4, 11: 1}[kind]
                 if kind in (0, 1):                       # Victorian/Edwardian centre: taller houses (3 storeys)
                     central = math.hypot((cx - 250) / 1300, (cz + 150) / 1000) < 1.0
                     if central and nz > 0.45: levels = 3
                     if area < 45: levels = 2
                 if kind == 2 and nz > 0.6: levels = 5
                 if kind == 3 and nz < 0.35: levels = 2
-                h = {4: 13.0, 5: 7.0 + 3 * nz, 7: 2.6, 8: 11.0, 9: 5.0}.get(kind, levels * 3.0 + 0.3)
+                h = {4: 13.0, 5: 7.0 + 3 * nz, 7: 2.6, 8: 11.0, 9: 5.0, 11: 3.0}.get(kind, levels * 3.0 + 0.3)
                 if kind == 6: h = 9.0 + 4 * nz if area > 800 else 7.0
         h = max(2.4, min(63.0, h))
         # roof
@@ -632,6 +634,7 @@ def bake_buildings(buildings, roadgrid, lu_lookup, log):
             elif kind in (2, 3, 6) and Wd < 11: roof = 1
             elif kind == 4: roof = 1
             elif kind == 9: roof = 3
+            elif kind == 8: roof = 1
             else: roof = 0
         # ridge: along the street for houses and terraces (a terrace roof runs along the row), else the long axis
         ridge = ang

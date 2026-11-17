@@ -251,7 +251,7 @@ function townRasterBuild() {
     if (y < T.sea) Z[o] = TZ.WATER;
   }
   // buildings
-  const B = T.bd; for (let b = 0; b < B.n; b++) townFill(B, b, b + 1, TZ.BLD, null);
+  const B = T.bd; for (let b = 0; b < B.n; b++) if (T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11) townFill(B, b, b + 1, TZ.BLD, null);
   // roads: pavements, then carriageways over them (junctions), paths and tracks only over soft ground
   const R = T.rd, ri = T.rinfo, soft = new Uint8Array(16), all = new Uint8Array(16).fill(1), pv = new Uint8Array(16);
   for (const c of [TZ.NONE, TZ.GRASS, TZ.GARDEN, TZ.FIELD, TZ.WOOD, TZ.MUD, TZ.SAND, TZ.HARD]) soft[c] = 1;
@@ -279,10 +279,11 @@ function townBuildingGrid() {
   const T = TOWN, c = T.bcell, gw = T.bgw = Math.ceil((T.x1 - T.x0) / c), gh = T.bgh = Math.ceil((T.z1 - T.z0) / c), bb = T.bbox, n = T.bd.n;
   const cnt = new Int32Array(gw * gh + 1);
   const each = (b, f) => { const i0 = Math.max(0, Math.floor((bb[b * 4] - T.x0) / c)), i1 = Math.min(gw - 1, Math.floor((bb[b * 4 + 2] - T.x0) / c)), j0 = Math.max(0, Math.floor((bb[b * 4 + 1] - T.z0) / c)), j1 = Math.min(gh - 1, Math.floor((bb[b * 4 + 3] - T.z0) / c)); for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) f(j * gw + i); };
-  for (let b = 0; b < n; b++) if (T.binfo[b * 8] !== 8) each(b, k => cnt[k + 1]++);   // (the pier pavilion stands on the deck, above the beach)
+  const solid = b => T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11;   // (the pier pavilion stands on the deck above the beach; shelters are open)
+  for (let b = 0; b < n; b++) if (solid(b)) each(b, k => cnt[k + 1]++);
   for (let k = 0; k < gw * gh; k++) cnt[k + 1] += cnt[k];
   const items = T.bitems = new Int32Array(cnt[gw * gh]), fill = cnt.slice(); T.bstart = cnt;
-  for (let b = 0; b < n; b++) if (T.binfo[b * 8] !== 8) each(b, k => { items[fill[k]++] = b; });
+  for (let b = 0; b < n; b++) if (solid(b)) each(b, k => { items[fill[k]++] = b; });
 }
 // depth into water / out of bounds on the 2 m grid (chamfer distance from the free cells), in quarter metres
 function townSdfBuild() {

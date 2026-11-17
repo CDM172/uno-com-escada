@@ -81,6 +81,14 @@ function townTerrainBuild(rs) {
     }
     return townH(px, pz);
   };
+  // 128 m cells that hold roads or pavements (their ground must be fine enough to stay under the ribbons)
+  const rc = 128, rgw = Math.ceil((T.x1 - T.x0) / rc), rgh = Math.ceil((T.z1 - T.z0) / rc), roadCell = new Uint8Array(rgw * rgh);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (push[j * w + i]) roadCell[Math.min(rgh - 1, (j * HF.res / rc) | 0) * rgw + Math.min(rgw - 1, (i * HF.res / rc) | 0)] = 1;
+  const hasRoads = (x, z, size) => {
+    const i0 = Math.max(0, Math.floor((x - T.x0) / rc)), i1 = Math.min(rgw - 1, Math.floor((x + size - 1 - T.x0) / rc)), j0 = Math.max(0, Math.floor((z - T.z0) / rc)), j1 = Math.min(rgh - 1, Math.floor((z + size - 1 - T.z0) / rc));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (roadCell[j * rgw + i]) return true;
+    return false;
+  };
   const boxD = (x, z, size) => { const dx = Math.max(T.x0 - (x + size), x - T.x1, 0), dz = Math.max(T.z0 - (z + size), z - T.z1, 0); return Math.hypot(dx, dz); };
   const cache = new Map();
   const split = (x, z, size) => {
@@ -88,8 +96,8 @@ function townTerrainBuild(rs) {
     const key = x + ',' + z + ',' + size; let v = cache.get(key);
     if (v === undefined) {
       const d = boxD(x, z, size);
-      if (d <= 0) v = size > 128 || trackFarDist(x + size / 2, z + size / 2) < 140;
-      else v = d < size * 1.4;
+      if (d <= 0) v = size > 256 || (size > 128 && hasRoads(x, z, size));
+      else v = d < size * 1.0;
       cache.set(key, v);
     }
     return v;
@@ -113,6 +121,8 @@ function townTerrainBuild(rs) {
     if (bk[li] !== cur) { if (cur !== null) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 900); } cur = bk[li]; i0 = mb.ni; }
     const x = leaves[li * 3], z = leaves[li * 3 + 1], size = leaves[li * 3 + 2], st = size / NQ;
     for (let j = -1; j <= NQ + 1; j++) for (let i = -1; i <= NQ + 1; i++) hg[(j + 1) * W + i + 1] = H(x + i * st, z + j * st);
+    let hmax = -1e9; for (let k = 0; k < W * W; k++) if (hg[k] > hmax) hmax = hg[k];
+    if (hmax < T.sea - 0.6) continue;   // all under the sea (the water hides it)
     const nb = [sizeAt(x - 1, z + size / 2), sizeAt(x + size + 1, z + size / 2), sizeAt(x + size / 2, z - 1), sizeAt(x + size / 2, z + size + 1)];
     const snap = (i, j, alongX, ns) => {
       const cst = ns / NQ, t = alongX ? x + i * st : z + j * st, t0 = Math.floor((t - (alongX ? rx0 : rz0)) / cst) * cst + (alongX ? rx0 : rz0); if (Math.abs(t0 - t) < 1e-6) return;
@@ -275,7 +285,18 @@ function townBuilding(mb, b) {
   for (let k = k0; k < k0 + n; k++) { const g = hfAt(p[k * 2], p[k * 2 + 1]); gmin = Math.min(gmin, g); gmax = Math.max(gmax, g); cx += p[k * 2]; cz += p[k * 2 + 1]; }
   cx /= n; cz /= n;
   let base = gmin - 0.5, eaveY = gmax + hgt;
-  if (kind === 8) { let dy = 0; for (const d of TOWNW.decks) if (townInRing(d.ring, cx, cz)) dy = d.y; if (dy) { base = dy - 0.3; eaveY = dy + hgt; } }
+  for (const d of TOWNW.decks) if (cx > d.x0 && cx < d.x1 && cz > d.z0 && cz < d.z1 && townInRing(d.ring, cx, cz)) { base = d.y - 0.3; eaveY = d.y + hgt; }   // on a pier deck
+  if (kind === 11) {   // shelter: a roof on posts (the long covered seating along the Grand Pier, bus shelters)
+    const us = [], vs = []; for (let k = k0; k < k0 + n; k++) { us.push(p[k * 2]); vs.push(p[k * 2 + 1]); }
+    const tris = []; townEarClip(us, vs, n, tris);
+    mb.mat(13, 120).color(0.62, 0.64, 0.62, 1);
+    for (const [y, ny] of [[eaveY, 1], [eaveY - 0.25, -1]]) { const v0 = mb.nv; for (let i = 0; i < n; i++) mb.v(us[i], y, vs[i], 0, ny, 0, 0, 0); for (let q = 0; q < tris.length; q += 3) townTri(mb, v0 + tris[q], v0 + tris[q + 1], v0 + tris[q + 2], 0, ny, 0); }
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n, L = Math.hypot(us[j] - us[i], vs[j] - vs[i]), np = Math.max(1, Math.round(L / 4));
+      for (let q = 0; q < np; q++) { const f = q / np; mb.cyl(us[i] + (us[j] - us[i]) * f, base, vs[i] + (vs[j] - vs[i]) * f, 0.07, eaveY - 0.2, 0.07, 6, false, false); }
+    }
+    return;
+  }
   // ---- look: walls, roof and window style from the kind of building, the district and a per-building hash
   const centre = Math.hypot((cx - 250) / 1300, (cz + 50) / 1100) < 1, seafront = cx < 230 && cz > -420 && cz < 1700 && cx > -150;
   const pick = (a, h) => a[Math.min(a.length - 1, Math.floor(h * a.length))];
@@ -307,7 +328,7 @@ function townBuilding(mb, b) {
   const uc = (u0 + u1) / 2, vc = (v0 + v1) / 2, hu = (u1 - u0) / 2, hv = (v1 - v0) / 2;
   if ((roof === 1 || roof === 2) && hv > 9.5 && kind !== 4) roof = 0;
   if (kind === 9) roof = 3;
-  const pitch = kind === 4 ? 1.0 : kind <= 1 || kind === 10 ? 0.75 : 0.6;
+  const pitch = kind === 4 ? 1.0 : kind === 8 ? 0.32 : kind <= 1 || kind === 10 ? 0.75 : 0.6;
   const rise = roof === 1 || roof === 2 ? Math.min(hv * pitch, Math.max(2.2, hgt * 0.55), 7.5) : 0, kk = hv > 0.01 ? rise / hv : 0;
   const hip = roof === 2;
   const fRoof = (u, v) => {
@@ -392,7 +413,7 @@ function townPiersBuild(mb, rs) {
       const k0 = A.off[r], k1 = A.off[r + 1], n = k1 - k0, ring = new Float32Array(n * 2);
       let sx = -1e9, sz = 0, x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
       for (let k = 0; k < n; k++) { const x = A.p[(k0 + k) * 2], z = A.p[(k0 + k) * 2 + 1]; ring[k * 2] = x; ring[k * 2 + 1] = z; if (x > sx) { sx = x; sz = z; } x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-      const y = hfAt(sx + 4, sz) + 0.6; TOWNW.decks.push({ ring, y });
+      const y = hfAt(sx + 4, sz) + 0.6; TOWNW.decks.push({ ring, y, x0, z0, x1, z1 });
       const i0 = mb.ni, us = [], vs = []; let ar = 0;
       for (let k = 0; k < n; k++) { us.push(ring[k * 2]); vs.push(ring[k * 2 + 1]); const j = (k + 1) % n; ar += ring[k * 2] * ring[j * 2 + 1] - ring[j * 2] * ring[k * 2 + 1]; }
       if (ar < 0) { us.reverse(); vs.reverse(); }
@@ -426,14 +447,14 @@ function townPiersBuild(mb, rs) {
     r += nr;
   }
   // piers given as lines (Birnbeck Pier and its jetty): a deck ribbon on lattice legs
-  const R = T.rd, ri = T.rinfo;
-  for (let q = 0; q < R.n; q++) {
+  const RD = T.rd, ri = T.rinfo;
+  for (let q = 0; q < RD.n; q++) {
     if (ri[q * 4] !== 12) continue;
-    const k0 = R.off[q], k1 = R.off[q + 1] - 1, wd = ri[q * 4 + 1] * 0.1, hw = wd / 2;
-    const ya = hfAt(R.p[k0 * 2], R.p[k0 * 2 + 1]), yb = hfAt(R.p[k1 * 2], R.p[k1 * 2 + 1]), y = Math.max(ya, yb, TOWN.sea + 7) + 0.8;
+    const k0 = RD.off[q], k1 = RD.off[q + 1] - 1, wd = ri[q * 4 + 1] * 0.1, hw = wd / 2;
+    const ya = hfAt(RD.p[k0 * 2], RD.p[k0 * 2 + 1]), yb = hfAt(RD.p[k1 * 2], RD.p[k1 * 2 + 1]), y = Math.max(ya, yb, TOWN.sea + 7) + 0.8;
     const i0 = mb.ni;
     for (let k = k0; k < k1; k++) {
-      const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.1) continue;
+      const ax = RD.p[k * 2], az = RD.p[k * 2 + 1], bx = RD.p[k * 2 + 2], bz = RD.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.1) continue;
       const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz, nz = tx;
       mb.mat(6).color(1, 1, 1, 1);
       const a = mb.v(ax - nx * hw, y, az - nz * hw, 0, 1, 0, 0, -hw), b = mb.v(bx - nx * hw, y, bz - nz * hw, 0, 1, 0, L, -hw), c = mb.v(bx + nx * hw, y, bz + nz * hw, 0, 1, 0, L, hw), d = mb.v(ax + nx * hw, y, az + nz * hw, 0, 1, 0, 0, hw);
@@ -512,9 +533,9 @@ function townCircuitBuild(mb, rs) {
   const bw = pL + pR - 0.6, by0 = yb - 1.45, by1 = yb + 0.4;
   for (const f of [-1, 1]) {
     const sx = o[0] + tx * 0.08 * f, sz = o[2] + tz * 0.08 * f, d0 = -pL + 0.3, d1 = d0 + bw, v0 = f < 0 ? 0 : 0.5;
-    const a = mb.v(sx + nx * d0, by0, sz + nz * d0, -tx * f, 0, -tz * f, f < 0 ? 0 : 1, v0 + 0.5), b = mb.v(sx + nx * d1, by0, sz + nz * d1, -tx * f, 0, -tz * f, f < 0 ? 1 : 0, v0 + 0.5);
-    const c = mb.v(sx + nx * d1, by1, sz + nz * d1, -tx * f, 0, -tz * f, f < 0 ? 1 : 0, v0), d = mb.v(sx + nx * d0, by1, sz + nz * d0, -tx * f, 0, -tz * f, f < 0 ? 0 : 1, v0);
-    townQuad(mb, a, b, c, d, -tx * f, 0, -tz * f);
+    const a = mb.v(sx + nx * d0, by0, sz + nz * d0, tx * f, 0, tz * f, f < 0 ? 0 : 1, v0 + 0.5), b = mb.v(sx + nx * d1, by0, sz + nz * d1, tx * f, 0, tz * f, f < 0 ? 1 : 0, v0 + 0.5);
+    const c = mb.v(sx + nx * d1, by1, sz + nz * d1, tx * f, 0, tz * f, f < 0 ? 1 : 0, v0), d = mb.v(sx + nx * d0, by1, sz + nz * d0, tx * f, 0, tz * f, f < 0 ? 0 : 1, v0);
+    townQuad(mb, a, b, c, d, tx * f, 0, tz * f);
   }
   rs.addRange(mb, i0, mb.ni, 7);
 }
@@ -634,7 +655,7 @@ function townWorldBuild() {
   const TS = TOWN_TILE, tw = Math.ceil((T.x1 - T.x0) / TS), th = Math.ceil((T.z1 - T.z0) / TS), tiles = [];
   for (let k = 0; k < tw * th; k++) tiles.push([[], []]);
   const tileOf = (x, z) => clamp(Math.floor((x - T.x0) / TS), 0, tw - 1) + clamp(Math.floor((z - T.z0) / TS), 0, th - 1) * tw;
-  const R = T.rd; for (let r = 0; r < R.n; r++) { const k = (R.off[r] + R.off[r + 1]) >> 1; tiles[tileOf(R.p[k * 2], R.p[k * 2 + 1])][0].push(r); }
+  const RD = T.rd; for (let r = 0; r < RD.n; r++) { const k = (RD.off[r] + RD.off[r + 1]) >> 1; tiles[tileOf(RD.p[k * 2], RD.p[k * 2 + 1])][0].push(r); }
   const bb = T.bbox; for (let b = 0; b < T.bd.n; b++) tiles[tileOf((bb[b * 4] + bb[b * 4 + 2]) / 2, (bb[b * 4 + 1] + bb[b * 4 + 3]) / 2)][1].push(b);
   const Gr = townRoadGrid();
   for (let k = 0; k < tiles.length; k++) {
@@ -655,6 +676,7 @@ function townWorldBuild() {
     GAME.init = () => { trackPos(-30, -1.5, o); trackPos(40, 0, q); setCamera(o[0], o[1] + 1.6, o[2], q[0], q[1] + 0.8, q[2], 1.0); R.cube.pos.set([q[0], q[1] + 1.2, q[2]]); };
     window.__cap.trackCam = (s, d, h, s2, d2, h2, fov) => { trackPos(s, d, o); trackPos(s2, d2, q); const py = Math.max(o[1], hfAt(o[0], o[2])) + h; setCamera(o[0], py, o[2], q[0], q[1] + h2, q[2], fov || 1.0); R.cube.pos.set([q[0], q[1] + 1.2, q[2]]); return [o[0], py, o[2]]; };
   }
-  window.__cap.town = { stats: TOWNW.stats, TOWN, TOWNW };
+  // capture helpers: camera at heights above the ground (h, th) of its own point and of its target
+  window.__cap.town = { stats: TOWNW.stats, TOWN, TOWNW, hf: hfAt, camH: (x, z, h, tx, tz, th, fov) => window.__cap.cam(x, hfAt(x, z) + h, z, tx, hfAt(tx, tz) + th, tz, fov || 0.9) };
 }
 if (TOWN.on && WORLD.active) queueMicrotask(() => BUILD.push(async () => { townWorldBuild(); }));
