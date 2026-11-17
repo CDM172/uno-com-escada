@@ -4,9 +4,10 @@
 //
 // Controls (integers; in the game they travel as k-rate AudioParams, one number per audio block):
 //  0 bits: 1 = game running (0 = paused: the output fades out and the state freezes), 2 = mute,
-//          4/8 = camera (0 chase, 1 bonnet, 2 trackside TV, 3 cockpit — the Astons only),
-//          16/32 = the car: 0 Fiat Uno, 16 Aston Martin DB5, 32 Aston Martin V8 Vantage (48 is not used)
-//  1 engine speed (rpm)   2 throttle ×1000   3 gear (0 = reverse)   4 car speed (cm/s)
+//          4/8 = camera (0 chase, 1 bonnet, 2 trackside TV, 3 cockpit — not the Uno),
+//          16/32 = the car: 0 Fiat Uno, 16 Aston Martin DB5, 32 Aston Martin V8 Vantage, 48 an electric car;
+//          64 = (electric cars only) its gadgets are the V8's, laid out as the V8's in control 15 (clear: the DB5's, or none)
+//  1 engine speed (rpm; an electric car's motor speed, 0 at rest)   2 throttle ×1000   3 gear (0 = reverse)   4 car speed (cm/s)
 //  5/6 tyre slip left/right ×1000   7 wheels on grass/gravel ×1000   8 wheels on the kerb ×1000
 //  9 distance from the listener to the car (dm)   10 Doppler factor ×10000   11 listener speed (cm/s)
 //  12 grandstand proximity ×1000   13 grandstand side ×1000 (-1000 left .. 1000 right)   14 crash counter
@@ -22,8 +23,8 @@
 //     The counters are latched without firing on the first block and on the first block after a pause or a mute; a
 //     jump of more than 3 (seat, missile, explosion) or 7 (end stops) is taken as a discontinuity and fires nothing.
 //     (Control 15 tops at 2^21, well inside the 2^24 that a float AudioParam carries exactly.)
-// Layers (mix[i]): 0 engine (the Astons: with starter, gear whine and overrun pops), 1 tyres (squeal), 2 wind, 3 road
-// (surface, kerb, gravel, crash), 4 ambience (forest, birds), 5 crowd, 6 gadgets of the DB5 or the V8.
+// Layers (mix[i]): 0 engine (the Astons: with starter, gear whine and overrun pops; electric cars: the motor), 1 tyres
+// (squeal), 2 wind, 3 road (surface, kerb, gravel, crash), 4 ambience (forest, birds), 5 crowd, 6 gadgets of the DB5 or the V8.
 // Levels: VOL is the master volume, applied at the output, after the limiter (timbre and dynamics do not change with
 // it); AMB is the extra gain of the ambience layers (forest, birds and crowd) relative to the rest. Both cars share them.
 //
@@ -32,7 +33,9 @@
 // (tools/snd_test.js checks both). With bit 16 the engine is engDB5() (straight six), with bit 32 engV8() (cross-plane
 // V8); for both, the tyres, wind and road reuse the Uno's layers with other constants, the cockpit camera filters the car
 // as heard from inside the cabin, and gadDB5() / gadV8() add the gadget sounds to the car bus, so they get the same
-// distance, Doppler and camera treatment as the car they are bolted to.
+// distance, Doppler and camera treatment as the car they are bolted to. With 48 the car is electric: engEV() — no
+// combustion at all, only the motor's whine, the reduction gear and the inverter, from the motor speed and current — and
+// the rest as for the Astons (modern radial tyres as on the V8, the cockpit filter, the gadgets of either kit).
 function sndCore(sr) {
   const VOL = 0.4, AMB = 0.5;
   const NC = 32, PI = Math.PI, NPH = 40, PH0 = 128, ctl = new Float32Array(16), st = new Float64Array(PH0 + NPH * 22), F = new Float64Array(480), Z = new Float64Array(320);
@@ -177,11 +180,25 @@ function sndCore(sr) {
     QVP8 = 50, QVW8 = 51, QCE8 = 52, QCT8 = 53, QCA8 = 54, QHE8 = 55, QH18 = 56, QH28 = 57, QMT = 58, QMW = 59, QMB = 60, QXT = 61, QXW = 62, QXB = 63, QXK = 64, QXM = 65, QXE = 66,
     ZJ = 0, ZBK = 1, ZST = 2, ZLA = 3, ZMS = 4, ZES = 5, ZEX = 6, ZMQ = 7, ZSQ = 8, ZXQ = 9, ZMA = 10, ZXA = 11, ZON = 12, ZBS = 13, ZDW = 14;
   const YKD = dcy(0.0016), MDC = dcy(0.006), XDB = dcy(0.012);   // decays: crackle burst, missile thump and rocket ignition, explosion push
+  // ==== electric cars (control 0: 48 — the garage's Tesla Model 3, Hyundai Ioniq 5, Volvo EX30, GMC Hummer EV): state and
+  // tables. Nothing here is read or written by the Uno, the DB5 or the V8. Control 1 carries the motor speed (0 at rest, up to
+  // about 12,000 rpm). What is heard of an electric drive: the whine of the motor's magnetic forces, order 24 of the motor
+  // speed (a permanent-magnet machine of 8 poles in 48 slots) with its 2nd and 3rd harmonics; the reduction gear's mesh,
+  // order 27 (its 27-tooth pinion), quieter; and, at low speed under load, the inverter's switching whistle: a 4.5 kHz
+  // carrier split into two tones 4 × the electrical frequency apart (the sidebands of the PWM, ± twice the electrical
+  // frequency of 4 pole pairs). All of it follows the motor current: the throttle, and the regenerative braking when the
+  // driver lifts at speed — softer and purer, the gear's coast flank more than the drive flank.
+  // E: [0 motor speed, 1 regen, 2 drive level, 3 regen level, 4 phase of order 24, 5 of order 27, 6 switching carrier,
+  //     7 electrical angle, 8 flutter, 9 flutter target, 10 flutter clock, 12-14 camera gains]
+  const E = new Float64Array(16), EMS = 0, ERG = 1, ELD = 2, ELR = 3, EP1 = 4, EP2 = 5, EPS = 6, EPE = 7, EFL = 8, EFT = 9, EFC = 10, EVS = 12;
+  // camera gains (rows: chase, bonnet, TV, cockpit): [motor whine, reduction gear, inverter whistle]
+  const NE = 3, EVV = new Float64Array([0.75, 0.55, 0.45, 0.6, 0.45, 0.6, 0.7, 0.45, 0.25, 1.25, 0.9, 0.55]), GEV = 0.032;
   // estado inicial (também usado para zerar o sintetizador depois do aquecimento)
   function reset() {
     st.fill(0, 0, PH0); Z.fill(0); BI.fill(0); ctl.fill(0); RS[0] = 0x2F6E2B1; RS[1] = 0x1B873593; st[RP] = 900; st[DG] = 1; st[DP] = 1; st[GP] = 1; st[NEXT] = sr * 0.7; for (let k = 0; k < 8; k++) st[VGS + k] = VG[k];
     D.fill(0); GI.fill(0); EB.fill(0); RS[2] = 0x5DEECE6; RS[3] = 0x2545F49; D[XSL] = 0.04; D[GPH] = 1; for (let k = 0; k < NV; k++) D[XVS + k] = DV[k];
     Y.fill(0); YI.fill(0); YDL.fill(0); for (let k = 0; k < NY; k++) Y[YVS + k] = YV[k];
+    E.fill(0); for (let k = 0; k < NE; k++) E[EVS + k] = EVV[k];
   }
   reset();
   function noise(o) { let x = RS[0]; for (let i = 0; i < NC; i++) { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; o[i] = x * 4.656612873e-10; } RS[0] = x; }
@@ -728,14 +745,42 @@ function sndCore(sr) {
     }
     YI[ZBS] = busy;
   }
+  // ---- electric car. Writes the engine bus eg (eS stays empty: the drive is one source). Silent at rest. The whine and the
+  // gear follow the motor speed, their level the current: the throttle, or the regenerative braking when the driver lifts
+  // at speed (it comes in over a third of a second, and fades out as the car slows through 8 to 3 m/s); coasting with
+  // neither, a faint trace. The inverter's whistle is heard at low speed under load. A slow flutter (±4 %: torque ripple,
+  // the road) keeps the tones from sounding synthetic. Harmonics that would fold over the Nyquist frequency are faded out.
+  function nyq(f) { return f < 0.38 ? 1 : f < 0.42 ? (0.42 - f) * 25 : 0; }   // f in cycles per sample
+  function engEV(m, view) {
+    const dp = st[DP], dg = st[DG], spd = st[SPD], ld = st[LD];
+    const ms = E[EMS] += ((ctl[1] > 0 ? ctl[1] : 0) - E[EMS]) * K20;   // motor speed (rpm): unlike an engine's, it stops
+    for (let k = 0; k < NE; k++) E[EVS + k] += (EVV[view * NE + k] - E[EVS + k]) * K20;
+    const rg = E[ERG] += ((ld < 0.05 ? 1 : 0) * (spd > 3 ? (spd < 8 ? (spd - 3) / 5 : 1) : 0) - E[ERG]) * K300;
+    const sp = ms < 12000 ? ms / 12000 : 1, ss = Math.pow(sp, 0.7), on = ms < 150 ? ms / 150 : 1, rr = 1 - rg;
+    const dl0 = E[ELD], rl0 = E[ELR], dl1 = ((0.06 + 0.94 * ld) * (0.12 + 0.88 * ss) * rr + 0.05 * ss) * on, rl1 = rg * 0.45 * (0.12 + 0.88 * ss) * on;
+    E[ELD] = dl1; E[ELR] = rl1;
+    if (dl0 + rl0 + dl1 + rl1 < 1e-7) { eg.fill(0); eS.fill(0); return; }   // at rest: nothing at all
+    let fc = E[EFC] - m; if (fc <= 0) { fc += (0.06 + 0.1 * rnd16() / 65536) * sr; E[EFT] = (rnd16() / 32768 - 1) * 0.04; } E[EFC] = fc;
+    const fl = E[EFL] += (E[EFT] - E[EFL]) * K60;
+    const fm = ms / 60 * dp / sr, f1 = 24 * fm, f2 = 27 * fm, fe = 4 * ms / 60 / sr, fs = 4500 * dp / sr, h1 = nyq(f1), h2 = nyq(2 * f1), h3 = nyq(3 * f1), hg = nyq(f2);
+    const g1 = E[EVS] * GEV * dg, g2 = E[EVS + 1] * GEV * dg, g3 = E[EVS + 2] * GEV * dg * (ms < 3000 ? 1 - ms / 3000 : 0) * 0.3, dd = (dl1 - dl0) / m, dr = (rl1 - rl0) / m;
+    let p1 = E[EP1], p2 = E[EP2], ps = E[EPS], pe = E[EPE];
+    for (let i = 0; i < m; i++) {
+      p1 += f1; if (p1 >= 1) p1 -= 1; p2 += f2; if (p2 >= 1) p2 -= 1; ps += fs; if (ps >= 1) ps -= 1; pe += fe; if (pe >= 1) pe -= 1;
+      const d = dl0 + dd * (i + 1), r = rl0 + dr * (i + 1), q = r / (d + r + 1e-9), s1 = Math.sin(6.283185307 * p1), c1 = Math.cos(6.283185307 * p1);
+      const wh = (s1 * h1 * (1 - 0.2 * q) + 2 * s1 * c1 * h2 * (0.3 - 0.15 * q) + s1 * (3 - 4 * s1 * s1) * h3 * (0.1 - 0.07 * q)) * (d + r) * (1 + fl) * g1;   // order 24 and its 2nd and 3rd harmonics
+      eg[i] = wh + Math.sin(6.283185307 * p2) * hg * (d * 0.35 + r * 0.6) * g2 + Math.sin(6.283185307 * ps) * Math.cos(12.566370614 * pe) * (d + 0.5 * r) * g3;   // gear; inverter whistle
+    }
+    E[EP1] = p1; E[EP2] = p2; E[EPS] = ps; E[EPE] = pe; eS.fill(0);
+  }
   function chunk(m) {
-    const fl = ctl[0] | 0, view = (fl >> 2) & 3, on = (fl & 3) === 1 ? 1 : 0, mg0 = st[MG], car = (fl >> 4) & 3, db5 = car === 1 ? 1 : 0, v8 = car === 2 ? 1 : 0, ast = db5 | v8;   // ast: one of the two Astons
+    const fl = ctl[0] | 0, view = (fl >> 2) & 3, on = (fl & 3) === 1 ? 1 : 0, mg0 = st[MG], car = (fl >> 4) & 3, db5 = car === 1 ? 1 : 0, v8 = car === 2 ? 1 : 0, ast = db5 | v8, ev = car === 3 ? 1 : 0, mod = ast | ev;   // ast: one of the two Astons; ev: an electric car; mod: not the Uno
     if (!on && mg0 < 2e-4) { st[MG] = 0; oL.fill(0); oR.fill(0); GI[ILA] = 0; YI[ZLA] = 0; return; }   // pausa ou mudo: saída exatamente zero, estado congelado (GI[ILA] = 0: the gadget counters will be latched again, without firing)
     const mg1 = mg0 + (on - mg0) * K8 * 1.6; st[MG] = mg1;
     noise(wA); noise(wB);
     // ---- controles suavizados
     const gear = ctl[3] | 0;
-    if (gear !== st[GP]) { if (gear > 0 && st[GP] > 0) { st[SHT] = (db5 ? 0.27 : v8 ? 0.3 : 0.21) * sr; D[XSL] = gear < st[GP] ? (v8 ? 0.55 : 0.4) : 0.04; } st[CLK] = 1; st[GP] = gear; }   // (DB5: a slower change by hand; D[XSL] is the throttle during it — lifted going up, blipped going down to match the revs)
+    if (gear !== st[GP]) { if (gear > 0 && st[GP] > 0 && !ev) { st[SHT] = (db5 ? 0.27 : v8 ? 0.3 : 0.21) * sr; D[XSL] = gear < st[GP] ? (v8 ? 0.55 : 0.4) : 0.04; } st[CLK] = 1; st[GP] = gear; }   // (DB5: a slower change by hand; D[XSL] is the throttle during it — lifted going up, blipped going down to match the revs; an electric car has one fixed gear: no change, no interruption)
     const sht = st[SHT]; if (sht > 0) st[SHT] = sht - m;
     const rp = st[RP] += ((ctl[1] < 600 ? 600 : ctl[1]) - st[RP]) * (sht > 0 ? K50 : K20 * 1.3);
     const ld = st[LD] += ((sht > 0 ? (ast ? D[XSL] : 0.04) : ctl[2] * 0.001) - st[LD]) * (sht > 0 ? K8 * 2 : K20);
@@ -745,6 +790,7 @@ function sndCore(sr) {
     for (let k = 0; k < 8; k++) st[VGS + k] += (VG[view * 8 + k] - st[VGS + k]) * K20;
     if (db5) engDB5(m, view);
     else if (v8) engV8(m, view);
+    else if (ev) engEV(m, view);
     else {   // (the Uno's engine, as it always was: its lines are left as they were, indentation included)
     // ---- motor: um pulso de pressão por explosão (4 por ciclo de 2 voltas), largura em tempo fixo → formantes fixos
     const fc = rp / 30 * dp / sr, ifc = 1 / fc; let tp = (0.0035 - 0.0027 * ld) * sr; if (tp > 0.85 * ifc) tp = 0.85 * ifc;
@@ -771,9 +817,9 @@ function sndCore(sr) {
     // ---- pneus: canto (tom instável perto de 1 kHz com harmônicos) + raspado, por lado, na proporção do escorregamento
     // (DB5, tall cross-ply tyres: they start to howl at less slip, lower in pitch, and take longer to stop)
     // (V8, 255/60 VR15 radials: they let go at much the slip the Uno's do, a little lower and fuller, and hang on longer)
-    const tqF = db5 ? 455 : v8 ? 600 : 720, tqA = db5 ? 215 : v8 ? 320 : 380, tqE = db5 ? 1.05 : v8 ? 1.3 : 1.45, tqG = db5 ? 0.25 : v8 ? 0.27 : 0.3, tqS = db5 ? 0.7 : v8 ? 0.75 : 0.8, tqN = db5 ? 0.5 : v8 ? 0.6 : 0.55, tqK = db5 ? K220 : v8 ? K60 : K30, tqB = db5 ? 34 : v8 ? 90 : 8;
+    const rad = v8 | ev, tqF = db5 ? 455 : rad ? 600 : 720, tqA = db5 ? 215 : rad ? 320 : 380, tqE = db5 ? 1.05 : rad ? 1.3 : 1.45, tqG = db5 ? 0.25 : rad ? 0.27 : 0.3, tqS = db5 ? 0.7 : rad ? 0.75 : 0.8, tqN = db5 ? 0.5 : rad ? 0.6 : 0.55, tqK = db5 ? K220 : rad ? K60 : K30, tqB = db5 ? 34 : rad ? 90 : 8;   // (rad: modern wide radials, the V8's and the electric cars')
     for (let s = 0; s < 2; s++) {
-      let tgt = ctl[5 + s] * 0.001; if (db5) { tgt *= 1.6; if (tgt > 1) tgt = 1; } else if (v8) { tgt *= 1.15; if (tgt > 1) tgt = 1; }
+      let tgt = ctl[5 + s] * 0.001; if (db5) { tgt *= 1.6; if (tgt > 1) tgt = 1; } else if (rad) { tgt *= 1.15; if (tgt > 1) tgt = 1; }
       const a = st[SQ + s] += (tgt - st[SQ + s]) * (tgt > st[SQ + s] ? K20 : tqK), o = s ? sR : sL, w = s ? wB : wA;
       if (a < 0.004) { st[SQ + s] = tgt > 0 ? a : 0; o.fill(0); continue; }                                 // agarrou: some de vez
       const j = (st[SQJ + s] += ((rnd16() / 32768 - 1) * 0.08 - st[SQJ + s]) * 0.18) + (st[SQW + s] += ((rnd16() / 32768 - 1) * 2.2 - st[SQW + s]) * 0.004), env = st[SQA + s] += ((rnd16() / 65536) - st[SQA + s]) * 0.05;
@@ -785,14 +831,14 @@ function sndCore(sr) {
     // ---- barramento do carro visto do ouvinte: absorção do ar com a distância
     const air = 15000 / (1 + dist * 0.02); F[90] = F[93] = 2 * Math.sin(PI * (air < sr * 0.16 ? air : sr * 0.16) / sr);
     // (DB5, cockpit camera: the car is heard through the cabin — the same filter comes down to 1.5 kHz; cab = how far inside, 0..1)
-    const cab = ast ? D[XCB] += ((view === 3 ? 1 : 0) - D[XCB]) * K50 : 0;
-    if (cab > 0.002) { const a0 = air < sr * 0.16 ? air : sr * 0.16; F[90] = F[93] = 2 * Math.sin(PI * a0 * Math.pow(1500 / a0, cab) / sr); }
+    const cab = mod ? D[XCB] += ((view === 3 ? 1 : 0) - D[XCB]) * K50 : 0;
+    if (cab > 0.002) { const a0 = air < sr * 0.16 ? air : sr * 0.16; F[90] = F[93] = 2 * Math.sin(PI * a0 * Math.pow((ev ? 3000 : 1500) / a0, cab) / sr); }   // (an electric car's drive whine reaches the cabin through the structure: 3 kHz)
     // ---- vento (velocidade do ouvinte) e rodagem (velocidade do carro)
     const gust = st[GUST] += ((rnd16() / 65536) - st[GUST]) * 0.004, wv = lsp / 42, wg = wv * wv * (0.7 + 0.6 * gust) * (view === 1 ? 0.85 : 0.6), wf = 2 * Math.sin(PI * (260 + 21 * lsp) / sr);
-    F[30] = F[33] = wf; F[32] = F[35] = ast ? wg * 1.25 / (1 + 0.15 * wv * wv) * (1 - 0.45 * cab) : wg;   // (the Astons: a little more wind roar, less of it inside the cabin)
+    F[30] = F[33] = wf; F[32] = F[35] = ast ? wg * 1.25 / (1 + 0.15 * wv * wv) * (1 - 0.45 * cab) : ev ? wg * 0.9 * (1 - 0.45 * cab) : wg;   // (the Astons: a little more wind roar; the electric cars, smooth modern shapes, a little less; less of it inside the cabin)
     svf(wA, L2, m, 10, 1, 0); svf(wB, R2, m, 11, 1, 0);
     if (cab > 0.002) { F[170] = F[173] = cab * wv * wv * (0.5 + gust) * 0.14; svf(wB, L2, m, 56, 1, 1); svf(wA, R2, m, 57, 1, 1); }   // (DB5 cockpit: wind hiss around the window frames)
-    const rv = spd / 40; F[36] = 2 * Math.sin(PI * (130 + 9 * spd) / sr); F[38] = Math.pow(rv, 1.3) * (v8 ? 0.62 : 0.5) * dg;   // (V8: the roar of wide tyres)
+    const rv = spd / 40; F[36] = 2 * Math.sin(PI * (130 + 9 * spd) / sr); F[38] = Math.pow(rv, 1.3) * (rad ? 0.62 : 0.5) * dg;   // (V8 and electric cars: the roar of wide tyres)
     for (let i = 0; i < m; i++) t1[i] = wA[i] - wB[i]; svf(t1, cb, m, 12, 0, 0);
     const loo = st[LOO] += (ctl[7] * 0.001 - st[LOO]) * K50;
     if (loo > 0.003) { F[41] = loo * 0.5 * dg; svf(wB, cb, m, 13, 1, 1); const dn = 0.004 + 0.02 * loo; for (let i = 0; i < m; i++) t2[i] = (wA[i] > 1 - dn ? 1 : 0) * loo * 3; F[44] = dg; svf(t2, cb, m, 14, 1, 1); }
@@ -832,15 +878,17 @@ function sndCore(sr) {
       svf(t1, t2, m, 29, 1, 0); for (let i = 0; i < m; i++) { L5[i] += t2[i] * gl; R5[i] += t2[i] * gr; }
     } else { L5.fill(0); R5.fill(0); }
     // ---- mistura, absorção do ar no barramento do carro, limitador suave
-    const m0 = mix[0], m1 = mix[1], m2 = mix[2], m3 = mix[3], near = view === 1 && !ast ? 1.25 : 1;
+    const m0 = mix[0], m1 = mix[1], m2 = mix[2], m3 = mix[3], near = view === 1 && !mod ? 1.25 : 1;
     let m4 = mix[4] * AMB, m5 = mix[5] * AMB;
     for (let i = 0; i < m; i++) { const e = eg[i] * m0 * near, c = cb[i] * m3; t1[i] = e + c + (sL[i] * 0.85 + sR[i] * 0.4) * m1; t2[i] = e + c + (sL[i] * 0.4 + sR[i] * 0.85) * m1; }
-    if (ast) {
-      // the Astons: what differs between the two pipes gives the exhaust its width, the gadgets join the car bus (same distance, air and cabin
-      // treatment as the car) and, in the cockpit, the cabin booms and the world outside is heard through the glass
-      for (let i = 0; i < m; i++) { const s = eS[i] * m0; t1[i] += s; t2[i] -= s; }
-      if (db5) gadDB5(m, view); else gadV8(m, view);
-      if ((db5 ? GI[ION] : YI[ZON]) !== 0) { const gg = mix[6] * dg; for (let i = 0; i < m; i++) { t1[i] += gL[i] * gg; t2[i] += gR[i] * gg; } }
+    if (mod) {
+      // the Astons and the electric cars: what differs between the two pipes gives the exhaust its width, the gadgets join the car bus (same
+      // distance, air and cabin treatment as the car) and, in the cockpit, the cabin booms and the world outside is heard through the glass.
+      // (gk: which gadgets — the DB5's, or the V8's; an electric car carries either, bit 64 of control 0 says which)
+      if (!ev) for (let i = 0; i < m; i++) { const s = eS[i] * m0; t1[i] += s; t2[i] -= s; }
+      const gk = db5 ? 0 : v8 ? 1 : (fl >> 6) & 1;
+      if (gk) gadV8(m, view); else gadDB5(m, view);
+      if ((gk ? YI[ZON] : GI[ION]) !== 0) { const gg = mix[6] * dg; for (let i = 0; i < m; i++) { t1[i] += gL[i] * gg; t2[i] += gR[i] * gg; } }
       if (cab > 0.002) {
         for (let i = 0; i < m; i++) t3[i] = t1[i] + t2[i];
         F[164] = 0.14 * cab; svf(t3, t4, m, 54, 1, 0); F[167] = 0.2 * cab; svf(t3, t4, m, 55, 1, 1);
@@ -865,8 +913,13 @@ function sndCore(sr) {
 }
 // ==== tempo real e fora do tempo real: ligação do sintetizador com o jogo
 // (car: bits 16/32 of control 0 — 16 the DB5, 32 the V8 Vantage, whatever id 01_gpu.js gives it as long as it starts with
-// 'v8' or says 'vantage'; gad: the gadget counters as last read from GAD.snd [0, 1, 4] and as sent in control 15 [2, 3, 5])
-const SND = { ctx: null, node: null, P: null, ok: false, run: false, mute: false, sc: new Int32Array(16), last: new Int32Array(16), stand: new Float64Array(4), rec: null, recN: 0, pcm: null, an: null, anBuf: null, car: CARSEL === 'db5' ? 16 : /^v8|vantage/.test(CARSEL) ? 32 : 0, gad: new Int32Array(6) };
+// 'v8' or says 'vantage'; 48 an electric car. ev: 1 for an electric car — set it, at load time, for the garage's electric
+// cars: control 0 then carries 48 whatever car is, and car only says which gadgets it has (16 the DB5's, 32 the V8's, 0
+// none); car = 48 alone is an electric car with no gadgets. gad: the gadget counters as last read from GAD.snd [0, 1, 4]
+// and as sent in control 15 [2, 3, 5])
+const SND = { ctx: null, node: null, P: null, ok: false, run: false, mute: false, sc: new Int32Array(16), last: new Int32Array(16), stand: new Float64Array(4), rec: null, recN: 0, pcm: null, an: null, anBuf: null, car: CARSEL === 'db5' ? 16 : /^v8|vantage/.test(CARSEL) ? 32 : 0, ev: 0, gad: new Int32Array(6) };
+// the car bits of control 0: SND.car for the Uno and the Astons; 48 for an electric car, plus 64 if it has the V8's gadgets
+function sndCarBits() { return SND.ev || SND.car === 48 ? 48 | (SND.car === 32 ? 64 : 0) : SND.car; }
 function sndInit() {
   const p = new Float64Array(5), S = TRK.stand, d = (S.d0 + S.d1) / 2;
   trackPos(TRK.L + S.s0, d, p); SND.stand[0] = p[0]; SND.stand[1] = p[2]; trackPos(S.s1, d, p); SND.stand[2] = p[0]; SND.stand[3] = p[2];
@@ -889,7 +942,7 @@ function sndControl() {
   // público: distância do ouvinte ao eixo da arquibancada e de que lado ela fica
   const A = SND.stand, bx = A[2] - A[0], bz = A[3] - A[1]; let t = ((cp[0] - A[0]) * bx + (cp[2] - A[1]) * bz) / (bx * bx + bz * bz); t = t < 0 ? 0 : t > 1 ? 1 : t;
   const px = A[0] + bx * t - cp[0], pz = A[1] + bz * t - cp[2], pd = Math.sqrt(px * px + pz * pz) + 0.01, fw = cam.fwd, fl = Math.sqrt(fw[0] * fw[0] + fw[2] * fw[2]) + 1e-6;
-  c[0] = (SND.run ? 1 : 0) | (SND.mute ? 2 : 0) | (view << 2) | SND.car;
+  c[0] = (SND.run ? 1 : 0) | (SND.mute ? 2 : 0) | (view << 2) | sndCarBits();
   c[1] = V.rpm; c[2] = V.ctl[0] * 1000; c[3] = V.gear; c[4] = sp * 100; c[5] = sl * 1000; c[6] = sr * 1000; c[7] = loose * kv * 1000; c[8] = kerb * kv * 1000;
   c[9] = dist * 10; c[10] = dop * 10000; c[11] = lsp * 100; c[12] = 1000 / (1 + pd * pd / 2025); c[13] = (px * -fw[2] + pz * fw[0]) / (pd * fl) * 1000; c[14] = V.hits & 1023;
   // DB5 gadgets → control 15 (layout at the top of the file): the flags of this tick and the two event counters. The
@@ -916,7 +969,9 @@ function sndControl() {
 // 900 blocks with no gadget at all, which is how the game spends most of its time; overruns at high revs for the burble
 // and, at the end, a long one for the pops (the V8 pulls flat out first, to wet its manifold for the crackle); a mute and
 // a pause; a stretch with the car near, flat out, the noisiest gadgets going, to reach the limiter; for the V8, the
-// throttle snapped open and shut, for the bark, and a missile and an explosion played to their end.
+// throttle snapped open and shut, for the bark, and a missile and an explosion played to their end. car 3 and 7: an electric
+// car (the car bits of control 0 >> 4; 7 with the V8's gadgets): at rest, pulling away, flat out to 12,000 rpm, lifting at
+// speed (regen) and coasting down to rest, the four cameras, the gadgets of its kit, a mute and a pause, the limiter.
 function sndWarm(s, car) {
   const a = new Float32Array(128), b = new Float32Array(128), c = s.ctl, n = car ? 3600 : 1600;
   for (let i = 0; i < n; i++) {
@@ -935,6 +990,11 @@ function sndWarm(s, car) {
       if (i >= 1500 && i < 1540) c[0] |= 2; else if (i >= 1600 && i < 1640) c[0] &= ~1; else if (i >= 1700 && i < 1900) { c[1] = 5800; c[2] = 1000; c[9] = 55; c[15] |= 19; }
       if (i >= 2000 && i < 2300) { c[1] = 2500 + (i & 63) * 40; c[2] = (i >> 4 & 1) * 1000; }
       if (i >= 2700 && i < 3000) { c[1] = 5500; c[2] = 1000; c[3] = 3; } else if (i >= 3000) { c[1] = 5300; c[2] = 0; c[3] = 3; }
+    } else if ((car & 3) === 3) {
+      const v = car & 4, u = i % 600, h = i < 2100 ? i : 2100;
+      c[0] = 49 | (v ? 64 : 0) | (i >> 7 & 3) << 2; c[3] = i % 1200 < 1150 ? 1 : 0; c[15] = i < 900 ? 0 : v ? (i >> 3 & 31) | (h >> 10 & 31) << 5 | ((i >> 5) + (i >> 8 & 1) & 63) << 10 | (h >> 9 & 31) << 16 : (i >> 3 & 31) | (i >> 10 & 31) << 5 | ((i >> 5) + (i >> 8 & 1) & 63) << 10;
+      if (u < 40) { c[1] = 0; c[2] = 0; c[4] = 0; } else if (u < 300) { c[1] = (u - 40) * 46; c[2] = 1000; c[4] = (u - 40) * 19; } else if (u < 450) { c[1] = 12000 - (u - 300) * 40; c[2] = 0; c[4] = 5000 - (u - 300) * 30; } else { c[1] = 6000 - (u - 450) * 40; c[2] = (u >> 4 & 1) * 300; c[4] = 500 - (u - 450) * 3; }
+      if (i >= 1500 && i < 1540) c[0] |= 2; else if (i >= 1600 && i < 1640) c[0] &= ~1; else if (i >= 1700 && i < 1900) { c[2] = 1000; c[9] = 55; c[15] |= v ? 3 : 17; }
     }
     s.render(a, b, 0, 128);
   }
@@ -952,7 +1012,7 @@ function sndStart() {
   if (!ctx.audioWorklet) { fallback(); return; }
   // (o construtor do processador roda sndWarm — segundos de áudio com controles variados — e zera o estado: o V8 otimiza o
   // sintetizador antes do primeiro bloco de verdade, em vez de passar o primeiro segundo no interpretador, alocando)
-  const code = 'const mk=' + sndCore.toString() + ',wu=' + sndWarm.toString() + ',N=[];for(let i=0;i<16;i++)N.push("p"+i);registerProcessor("uno",class extends AudioWorkletProcessor{static get parameterDescriptors(){return N.map(n=>({name:n,defaultValue:0,automationRate:"k-rate"}))}constructor(){super();wu(this.s=mk(sampleRate),' + (SND.car >> 4) + ')}process(i,o,p){const s=this.s,c=s.ctl,q=o[0];for(let k=0;k<16;k++)c[k]=p[N[k]][0];s.render(q[0],q[1],0,q[0].length);return true}})';
+  const code = 'const mk=' + sndCore.toString() + ',wu=' + sndWarm.toString() + ',N=[];for(let i=0;i<16;i++)N.push("p"+i);registerProcessor("uno",class extends AudioWorkletProcessor{static get parameterDescriptors(){return N.map(n=>({name:n,defaultValue:0,automationRate:"k-rate"}))}constructor(){super();wu(this.s=mk(sampleRate),' + (sndCarBits() >> 4) + ')}process(i,o,p){const s=this.s,c=s.ctl,q=o[0];for(let k=0;k<16;k++)c[k]=p[N[k]][0];s.render(q[0],q[1],0,q[0].length);return true}})';
   // O módulo vai por URL data: — aberto como arquivo (file://) a página tem origem opaca e o Chrome recusa módulo por URL blob:.
   // Se o navegador recusar data:, tenta blob:; se não houver worklet de jeito nenhum, cai no ScriptProcessor.
   const mod = u => ctx.audioWorklet.addModule(u);
@@ -968,7 +1028,7 @@ function sndFrame() {
   const P = SND.P; if (!P) return; const c = SND.sc, l = SND.last;
   for (let i = 0; i < 16; i++) { const v = c[i]; if (v !== l[i]) { l[i] = v; P[i].value = v; } }
 }
-function sndFlags() { const c = SND.sc; c[0] = (SND.run ? 1 : 0) | (SND.mute ? 2 : 0) | (c[0] & 12) | SND.car; if (SND.P) { SND.P[0].value = c[0]; SND.last[0] = c[0]; } }
+function sndFlags() { const c = SND.sc; c[0] = (SND.run ? 1 : 0) | (SND.mute ? 2 : 0) | (c[0] & 12) | sndCarBits(); if (SND.P) { SND.P[0].value = c[0]; SND.last[0] = c[0]; } }
 // pausa (menu) e retomada: o sintetizador some em poucos milissegundos e o contexto de áudio é suspenso em seguida
 function sndRun(on) {
   SND.run = on; if (!SND.ctx) return; sndFlags();

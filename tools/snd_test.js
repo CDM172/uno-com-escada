@@ -2,15 +2,16 @@
 // Test bench for the game's sound synthesiser (fable/source/js/50_som.js). No browser: sndCore is plain JavaScript, so
 // this script cuts it out of the source file, feeds it synthetic control streams (one set of 16 integers per 1/60 s frame,
 // as the game records them) and measures what comes out. The glue around the synthesiser (sndControl, the worklet
-// module built by sndStart, sndOffline) is run in a sandbox against a mock of the game. Three cars: the Fiat Uno, the
-// Aston Martin DB5 (straight six) and the Aston Martin V8 Vantage (cross-plane V8).
+// module built by sndStart, sndOffline) is run in a sandbox against a mock of the game. Four sounds: the Fiat Uno, the
+// Aston Martin DB5 (straight six), the Aston Martin V8 Vantage (cross-plane V8) and the electric cars of the garage.
 //
-//   node tools/snd_test.js [--src FILE] [--ref FILE|git-rev] [--ref-db5 FILE|git-rev] [--wav DIR] [--only name,...] [--quiet]
+//   node tools/snd_test.js [--src FILE] [--ref FILE|git-rev] [--ref-db5 FILE|git-rev] [--ref-v8 FILE|git-rev] [--wav DIR] [--only name,...] [--quiet]
 //
 //   --src      the sound source under test (default fable/source/js/50_som.js)
 //   --ref      the reference for "the Uno must not change": a file, or a git revision of the source (default ac7d06c, the
 //              last commit in which the Uno was the only car)
 //   --ref-db5  the reference for "the DB5 must not change" (default f183d38, the commit that brought the DB5, before the V8)
+//   --ref-v8   the reference for "the V8 must not change" (default 90a6b3e, the commit that brought the V8, before the electric cars)
 //   --wav      directory for audition files (16-bit stereo WAV, 48 kHz): drives from the four cameras, drive-bys and every
 //              gadget of the DB5 and the V8 (the V8's are named v8_*); nothing is written without it
 //   --only  run just the named tests (the names are the "== name" headings of the report)
@@ -20,7 +21,7 @@
 const fs = require('fs'), path = require('path'), cp = require('child_process'), vm = require('vm');
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i >= 0 ? process.argv[i + 1] : d; };
 const ROOT = path.join(__dirname, '..'), SRC = path.resolve(arg('src', path.join(ROOT, 'fable/source/js/50_som.js')));
-const REF = arg('ref', 'ac7d06c'), REF_DB5 = arg('ref-db5', 'f183d38'), WAV = arg('wav', null), ONLY = arg('only', null), QUIET = process.argv.includes('--quiet');
+const REF = arg('ref', 'ac7d06c'), REF_DB5 = arg('ref-db5', 'f183d38'), REF_V8 = arg('ref-v8', '90a6b3e'), WAV = arg('wav', null), ONLY = arg('only', null), QUIET = process.argv.includes('--quiet');
 const SR = 48000, FR = 800;                       // sample rate and samples per 1/60 s frame, as in sndOffline
 
 // ---------------------------------------------------------------------------------------------------------- loading
@@ -41,17 +42,17 @@ function fnText(src, name) {
   }
   throw new Error('unbalanced function ' + name);
 }
-const srcNew = fs.readFileSync(SRC, 'utf8'), srcRef = readRef(REF), srcDb5 = readRef(REF_DB5);
+const srcNew = fs.readFileSync(SRC, 'utf8'), srcRef = readRef(REF), srcDb5 = readRef(REF_DB5), srcV8 = readRef(REF_V8);
 // patch: [[text, replacement], ...] applied to the source of sndCore (used to count rare events; every text must be found)
 const mkCore = (src, patch) => { let t = fnText(src, 'sndCore'); for (const [a, b] of patch || []) { if (!t.includes(a)) throw new Error('patch text not found: ' + a); t = t.split(a).join(b); } return new Function(t + '\nreturn sndCore;')(); };
-const coreNew = mkCore(srcNew), coreRef = mkCore(srcRef), coreDb5 = mkCore(srcDb5);
+const coreNew = mkCore(srcNew), coreRef = mkCore(srcRef), coreDb5 = mkCore(srcDb5), coreV8r = mkCore(srcV8);
 const warmNew = new Function(fnText(srcNew, 'sndWarm') + '\nreturn sndWarm;')();
 
 // ---------------------------------------------------------------------------------------------------------- controls
 // One frame of controls from a description in physical units (see the layout at the top of 50_som.js).
 function frame(rec, f, o) {
   const c = rec.subarray(f * 16, f * 16 + 16);
-  c[0] = (o.run === 0 ? 0 : 1) | (o.mute ? 2 : 0) | ((o.cam || 0) << 2) | (o.db5 ? 16 : 0) | (o.v8 ? 32 : 0);
+  c[0] = (o.run === 0 ? 0 : 1) | (o.mute ? 2 : 0) | ((o.cam || 0) << 2) | (o.db5 ? 16 : 0) | (o.v8 ? 32 : 0) | (o.ev ? 48 : 0) | (o.kit8 ? 64 : 0);   // kit8: an electric car with the V8's gadgets
   c[1] = o.rpm === undefined ? 900 : o.rpm; c[2] = (o.thr || 0) * 1000; c[3] = o.gear === undefined ? 1 : o.gear; c[4] = (o.speed || 0) * 100;
   c[5] = (o.slipL || 0) * 1000; c[6] = (o.slipR || 0) * 1000; c[7] = (o.loose || 0) * 1000; c[8] = (o.kerb || 0) * 1000;
   c[9] = (o.dist === undefined ? 5.5 : o.dist) * 10; c[10] = (o.dop || 1) * 10000; c[11] = (o.lsp === undefined ? (o.speed || 0) : o.lsp) * 100;
@@ -78,6 +79,17 @@ const CARS = {
   uno: { gears: [3.91, 2.16, 1.48, 1.12, 0.9], final: 4.07, R: 0.281, idle: 900, shift: 6250, acc: [4.6, 3.0, 2.0, 1.4, 1.0], db5: 0 },
   v8: { gears: [2.90, 1.78, 1.22, 1.00, 0.845], final: 3.54, R: 0.335, idle: 780, shift: 6200, acc: [7.6, 5.4, 3.8, 2.8, 1.9], db5: 0, v8: 1 },
 };
+// an electric car: one fixed 9:1 reduction, motor speed straight from the wheels (0 at rest, 12,000 rpm at 49 m/s), the
+// power falling away with speed; thrFn, extra and speedOf as for drive()
+function driveEV(secs, thrFn, extra, speedOf) {
+  const n = Math.round(secs * 60), rec = new Int32Array(n * 16), log = { rpm: new Float64Array(n), speed: new Float64Array(n), thr: new Float64Array(n) }; let v = 0;
+  for (let f = 0; f < n; f++) {
+    const t = f / 60, th = thrFn(t), thr = th > 0 ? th : 0; if (speedOf) v = speedOf.speed[f]; const rpm = v * 9 / (2 * Math.PI * 0.35) * 60;
+    frame(rec, f, Object.assign({ ev: 1, rpm, thr, gear: 1, speed: v }, extra ? extra(t, f, { rpm, speed: v, thr }) : null)); log.rpm[f] = rpm; log.speed[f] = v; log.thr[f] = thr;
+    v += (thr * Math.min(6, 180 / (v + 1)) - (th < 0 ? -th * 9 : 0) - (thr === 0 && v > 3 ? 1.2 : 0) - 0.15 - 0.0006 * v * v) / 60; if (v < 0) v = 0;
+  }
+  return { rec, log, n };
+}
 // thrFn(t) → throttle 0..1 (negative = brake); returns the stream and the per-frame rpm / gear / speed it went through.
 // speedOf: a log from another run — the car then follows that speed trace (same road speed, its own gearing and revs).
 function drive(car, secs, thrFn, extra, speedOf) {
@@ -96,7 +108,8 @@ function drive(car, secs, thrFn, extra, speedOf) {
   return { rec, log, n };
 }
 // pseudo-random but plausible game: every control wanders; cameras, gears, crashes, mute and pause all happen
-// (db5: 1 for the DB5, 2 for the V8; gadgets: the flags and counters of that car wander too)
+// (db5: 1 for the DB5, 2 for the V8, 3 an electric car (with the DB5's gadgets), 7 an electric car with the V8's; gadgets: the
+// flags and counters of that car wander too)
 function wander(n, seed, db5, gadgets, noStops) {
   let q = seed >>> 0; const r = () => ((q = (Math.imul(q, 1664525) + 1013904223) >>> 0) / 4294967296);
   let rpm = 900, thr = 0, gear = 1, speed = 0, cam = 0, hits = 0, mute = 0, run = 1, sl = 0, sr = 0, loose = 0, kerb = 0, dist = 5.5, dop = 1, crowd = 0, side = 0, gad = 0, ej = 0, es = 0, ex = 0;
@@ -106,8 +119,8 @@ function wander(n, seed, db5, gadgets, noStops) {
     if (r() < 0.004) hits++; if (r() < 0.02) sl = r() < 0.5 ? 0 : r(); if (r() < 0.02) sr = r() < 0.5 ? 0 : r(); if (r() < 0.01) loose = r() < 0.6 ? 0 : r(); if (r() < 0.01) kerb = r() < 0.6 ? 0 : r();
     if (r() < 0.01) dist = cam === 2 ? 3 + r() * 250 : 5.5; dop = cam === 2 ? 0.9 + r() * 0.2 : 1; if (r() < 0.01) { crowd = r(); side = r() * 2 - 1; }
     if (r() < 0.002) mute ^= 1; if (r() < 0.002) run ^= 1; if (noStops) { mute = 0; run = 1; }
-    if (gadgets) { if (r() < 0.02) gad = Math.floor(r() * 32); if (r() < 0.004) ej++; if (r() < 0.01) es++; if (db5 === 2 && r() < 0.003) ex++; }
-    return { run, mute, cam, db5: db5 === 1, v8: db5 === 2, rpm, thr, gear, speed, slipL: sl, slipR: sr, loose, kerb, dist, dop, lsp: cam === 2 ? 0 : speed, crowd, side, hits: hits & 1023, gad, ej, es, ex };
+    if (gadgets) { if (r() < 0.02) gad = Math.floor(r() * 32); if (r() < 0.004) ej++; if (r() < 0.01) es++; if ((db5 === 2 || db5 === 7) && r() < 0.003) ex++; }
+    return { run, mute, cam, db5: db5 === 1, v8: db5 === 2, ev: db5 === 3 || db5 === 7, kit8: db5 === 7, rpm, thr, gear, speed, slipL: sl, slipR: sr, loose, kerb, dist, dop, lsp: cam === 2 ? 0 : speed, crowd, side, hits: hits & 1023, gad, ej, es, ex };
   });
 }
 // the control pattern of the worklet's warm-up as it was before the DB5 (1600 blocks of 128 samples)
@@ -246,6 +259,24 @@ test('db5-identical', () => {
   // bits 16-20 of control 15 (the V8's explosion counter) must not reach the DB5
   { const rec = wander(60 * 15, 26, 1, 1), g = rec.slice(); for (let f = 0; f < g.length / 16; f++) g[f * 16 + 15] |= ((f >> 4) & 31) << 16;
     cmp(render(coreDb5, rec, 127), render(coreNew, g, 127), 'control 15 with the V8\'s explosion bits set, DB5 selected (15 s)'); }
+  say('  total: ' + total + ' samples compared, ' + diff + ' different');
+});
+
+test('v8-identical', () => {
+  say('V8 Vantage: the output of the new synthesiser against the V8 before the electric cars (' + (fs.existsSync(REF_V8) ? REF_V8 : 'git ' + REF_V8) + '), bit for bit');
+  let total = 0, diff = 0; const cmp = (a, b, what) => { const d = sameBits(a.L, b.L) + sameBits(a.R, b.R); total += a.n * 2; diff += d; check(d === 0, what, a.n * 2 + ' samples, ' + d + ' differ, hash ' + hash(b)); };
+  { const warmRef = new Function(fnText(srcV8, 'sndWarm') + '\nreturn sndWarm;')(), blocks = [], spy = { ctl: new Float32Array(16), render() { blocks.push(Float32Array.from(this.ctl)); }, reset() { } }; warmRef(spy, 2);
+    const run = core => { const S = core(SR), n = blocks.length * 128, o = { L: new Float32Array(n), R: new Float32Array(n), n }; for (let b = 0; b < blocks.length; b++) { S.ctl.set(blocks[b]); if (b === 250) S.reset(); S.render(o.L, o.R, b * 128, 128); } return o; };
+    cmp(run(coreV8r), run(coreNew), 'the V8 warm-up pattern (' + blocks.length + ' blocks of 128, with the reset at block 250)'); }
+  for (const [seed, blk, sr] of [[41, 800, SR], [42, 128, SR], [43, 37, SR], [44, 735, 44100], [45, 128, 96000]]) {
+    const rec = wander(60 * 30, seed, 2, 1); cmp(render(coreV8r, rec, 127, { block: blk, sr }), render(coreNew, rec, 127, { block: blk, sr }), 'wandering controls with gadgets, mute and pause, seed ' + seed + ', blocks of ' + blk + ', ' + sr + ' Hz (30 s)');
+  }
+  const gfn = (t) => ({ gad: (t > 4 && t < 6 ? 1 : 0) | (t > 7 && t < 9.5 ? 2 : 0) | (t > 11 && t < 12.2 ? 8 : 0) | (t > 13.5 && t < 14.5 ? 16 : 0), es: t > 12.2 ? 1 : 0, ej: t > 15.5 ? 1 : 0, ex: t > 17.5 ? 1 : 0 });
+  for (const [name, cam, dist] of [['chase', 0, 5.5], ['bonnet', 1, 1.5], ['TV', 2, 40], ['cockpit', 3, 0.6]]) {
+    const d = drive('v8', 22, t => t < 1.5 ? 0 : t < 16 ? 1 : t < 18 ? 0 : -0.6, (t, f, s) => Object.assign({ cam, dist, lsp: cam === 2 ? 0 : s.speed, slipL: t > 17 && t < 19 ? 0.4 : 0, kerb: t > 9 && t < 10 ? 0.5 : 0 }, gfn(t)));
+    cmp(render(coreV8r, d.rec, 127), render(coreNew, d.rec, 127), 'a run with every gadget, ' + name + ' camera (22 s)');
+    if (cam === 0) for (let l = 0; l < 7; l++) cmp(render(coreV8r, d.rec, 1 << l), render(coreNew, d.rec, 1 << l), 'the same, layer ' + l + ' alone');
+  }
   say('  total: ' + total + ' samples compared, ' + diff + ' different');
 });
 
@@ -628,11 +659,15 @@ test('loudness', () => {
 
 test('warm-reset', () => {
   say('Warm-up (sndWarm, as the worklet runs it) and reset()');
-  for (const car of [0, 1, 2]) {
-    const nm = ['Uno', 'DB5', 'V8'][car], rec = wander(60 * 12, 77, car, car), A = coreNew(SR), fresh = render(coreNew, rec, 127), warm = (warmNew(A, car), render(coreNew, rec, 127, { core: A }));
+  for (const car of [0, 1, 2, 3, 7]) {
+    const nm = { 0: 'Uno', 1: 'DB5', 2: 'V8', 3: 'electric car', 7: 'electric car with the V8\'s gadgets' }[car], rec = wander(60 * 12, 77, car, car ? 1 : 0), A = coreNew(SR), fresh = render(coreNew, rec, 127), warm = (warmNew(A, car), render(coreNew, rec, 127, { core: A }));
     check(sameBits(fresh.L, warm.L) + sameBits(fresh.R, warm.R) === 0, nm + ': after the warm-up and reset() the output is that of a new synthesiser, bit for bit', fresh.n * 2 + ' samples');
     const again = render(coreNew, rec, 127); check(sameBits(fresh.L, again.L) === 0, nm + ': deterministic (two fresh runs agree)', 'hash ' + hash(again));
   }
+  { const evc = [['if (dl0 + rl0 + dl1 + rl1 < 1e-7) { eg.fill(0); eS.fill(0); return; }', 'if (dl0 + rl0 + dl1 + rl1 < 1e-7) { globalThis.__rest++; eg.fill(0); eS.fill(0); return; }'], ['E[ELD] = dl1; E[ELR] = rl1;', 'E[ELD] = dl1; E[ELR] = rl1; if (rl1 > 0.02) globalThis.__regen++; if (dl1 > 0.3) globalThis.__drive++;'], ['E[EFT] = (rnd16()', 'globalThis.__flut++; E[EFT] = (rnd16()'], ['h1 = nyq(f1),', 'h1 = (globalThis.__whis += ms < 3000 ? 1 : 0, nyq(f1)),']];
+    for (const kit of [3, 7]) { const core = mkCore(srcNew, evc.concat(kit === 3 ? COUNTERS : COUNTERS_V8)), G = globalThis; Object.assign(G, { __rest: 0, __regen: 0, __drive: 0, __flut: 0, __whis: 0, __shots: 0, __laser: 0, __clunks: 0, __lim: 0, __frozen: 0, __pops: 0, __seats: 0, __miss: 0, __crank: 0, __flare: 0, __seatEnd: 0, __v8pops: 0, __bark: 0, __rocket: 0, __servo: 0, __horn: 0, __missiles: 0, __booms: 0, __missileEnd: 0, __boomEnd: 0 }); warmNew(core(SR), kit);
+      say('  the electric car\'s warm-up (' + (kit === 3 ? 'the DB5\'s gadgets' : 'the V8\'s') + ') went through: ' + G.__rest + ' chunks at rest, ' + G.__drive + ' pulling hard, ' + G.__regen + ' of regen, ' + G.__whis + ' with the whistle, ' + G.__flut + ' flutter steps; ' + (kit === 3 ? G.__shots + ' gun reports, ' + G.__seats + ' seat firings' : G.__laser + ' chunks of lasers, ' + G.__missiles + ' missiles, ' + G.__booms + ' explosions (' + G.__boomEnd + ' to the end)') + ', ' + G.__clunks + ' clunks, ' + G.__lim + ' samples in the limiter, ' + G.__frozen + ' frozen chunks');
+      check(G.__rest > 100 && G.__drive > 1000 && G.__regen > 1000 && G.__whis > 1000 && G.__flut > 50 && G.__clunks > 10 && G.__lim > 20 && G.__frozen > 20 && (kit === 3 ? G.__shots > 20 && G.__seats >= 2 : G.__laser > 50 && G.__missiles >= 2 && G.__boomEnd >= 1), 'the electric car\'s warm-up (' + (kit === 3 ? 'the DB5\'s gadgets' : 'the V8\'s') + ') reaches the rare branches (rest, full drive, regen, whistle, flutter, its gadgets, limiter, mute and pause)'); } }
   { const core = mkCore(srcNew, COUNTERS_V8), G = globalThis;
     Object.assign(G, { __v8pops: 0, __crank: 0, __flare: 0, __miss: 0, __bark: 0, __laser: 0, __rocket: 0, __servo: 0, __horn: 0, __missiles: 0, __booms: 0, __clunks: 0, __missileEnd: 0, __boomEnd: 0, __lim: 0, __frozen: 0 }); warmNew(core(SR), 2);
     say('  the V8 warm-up went through: ' + G.__crank + ' chunks of cranking, ' + G.__flare + ' of flare, ' + G.__miss + ' weak firings, ' + G.__bark + ' chunks of bark, ' + G.__v8pops + ' pops, ' + G.__laser + ' / ' + G.__rocket + ' / ' + G.__servo + ' / ' + G.__horn + ' chunks of lasers / rocket / servo / horn, ' + G.__missiles + ' missiles (' + G.__missileEnd + ' to the end), ' + G.__booms + ' explosions (' + G.__boomEnd + ' to the end), ' + G.__clunks + ' clunks, ' + G.__lim + ' samples in the limiter, ' + G.__frozen + ' frozen chunks');
@@ -915,6 +950,71 @@ test('v8-gadgets', () => {
     check(zeroIn(o, z1 / SR, 2) && zeroIn(o, z2 / SR, 4) && z1 - sec(1) < sec(0.06) && z2 - sec(3) < sec(0.06) && rms(o.L, sec(2.1), sec(2.9)) > 0.02, 'V8: mute and pause give exact zeros within 50 ms, and the sound comes back'); }
 });
 
+// ========================================================================================================== electric cars
+const EVC = (o) => Object.assign({ ev: 1, rpm: 0, thr: 0, gear: 1, speed: 0 }, o);
+test('ev', () => {
+  say('Electric car (control 0: 48): motor whine, reduction gear, inverter whistle, regen; the rest as for the others');
+  // silent at rest, throttle or not; nothing but the motor in the engine layer
+  const rest = render(coreNew, steady(3, EVC({})), 1), rest1 = render(coreNew, steady(3, EVC({ thr: 1 })), 1), all = render(coreNew, steady(4, EVC({})), 127), amb = render(coreNew, steady(4, EVC({})), 127 & ~1);
+  check(quietIn(rest, 0, 3) && quietIn(rest1, 0, 3), 'at rest the engine layer is silent, throttle or not (no idle, no starter)', 'peak ' + pk(rest.L).toExponential(1));
+  check(sameBits(all.L, amb.L) + sameBits(all.R, amb.R) === 0, 'at rest the whole mix is the ambience alone, sample for sample');
+  // the whine follows the motor speed: strongest line = order 24; harmonics; the reduction gear, order 27; the inverter whistle
+  const N = 32768, rows = [];
+  for (const [rpm, thr, v] of [[300, 1, 0.7], [1200, 1, 3], [2500, 1, 10], [4000, 1, 16], [6000, 1, 24], [8000, 1, 33], [10000, 1, 41], [12000, 1, 49], [4000, 0.2, 16], [8000, 0.2, 33], [4000, 0, 16], [8000, 0, 33], [1500, 0, 2]]) {
+    const m = mono(render(coreNew, steady(4, EVC({ rpm, thr, speed: v })), 1)), mg = spec(m, sec(2.5), N), f1 = 24 * rpm / 60, fe = 4 * rpm / 60;
+    let pf = 0, pa = 0; for (let k = 20; k < N / 2; k++) if (mg[k] > pa) { pa = mg[k]; pf = k * SR / N; }
+    const l1 = line(mg, N, f1, 0.01); rows.push({ rpm, thr, v, rms: rms(m, sec(2.5)), pf, f1, h2: dB(line(mg, N, 2 * f1, 0.01) / l1), gr: dB(line(mg, N, 27 * rpm / 60, 0.01) / l1), lo: band(mg, N, 20, Math.min(f1 * 0.7, 1000)) / rms(m, sec(2.5)), wh: dB(Math.max(line(mg, N, 4500 + 2 * fe, 0.003), line(mg, N, 4500 - 2 * fe, 0.003)) / l1) });
+  }
+  say('    rpm  throttle  m/s |  rms      strongest line Hz (order 24)   2nd harmonic  gear (order 27)  inverter whistle  energy below the whine');
+  for (const r of rows) say('  ' + String(r.rpm).padStart(5) + '   ' + f1(r.thr) + '     ' + String(r.v).padStart(3) + '  |  ' + r.rms.toFixed(5) + '   ' + f1(r.pf).padStart(8) + ' (' + f1(r.f1) + ')          ' + f1(r.h2).padStart(6) + ' dB       ' + f1(r.gr).padStart(6) + ' dB        ' + (r.wh > -100 ? f1(r.wh).padStart(6) + ' dB' : '    —   ') + '          ' + f3(r.lo));
+  const at = (rpm, thr) => rows.find(r => r.rpm === rpm && r.thr === thr);
+  check(rows.every(r => Math.abs(r.pf / r.f1 - 1) < 0.005), 'the whine\'s pitch follows the motor: the strongest line is order 24 of the motor speed, 120 Hz at 300 rpm to 4.8 kHz at 12,000', 'worst ' + f2(Math.max(...rows.map(r => Math.abs(r.pf / r.f1 - 1))) * 100) + ' %');
+  check(rows.every(r => r.h2 < -6 && r.h2 > -25) && rows.every(r => r.gr < -3 && r.gr > -20), 'a couple of harmonics and the reduction gear under it');
+  check([300, 1200].every(r => at(r, 1).wh > -35 && at(r, 1).wh < -18) && [6000, 8000, 12000].every(r => at(r, 1).wh < -60), 'a faint inverter whistle (4.5 kHz, ± twice the electrical frequency) at low speed under load, gone at speed', f1(at(300, 1).wh) + ' / ' + f1(at(1200, 1).wh) + ' dB at 300 / 1,200 rpm');
+  check(rows.every(r => r.lo < 0.1), 'no combustion: almost nothing under the whine (no firing pulses, no rumble)', 'largest share below 0.7 × the whine: ' + f3(Math.max(...rows.map(r => r.lo))));
+  check([4000, 8000].every(r => at(r, 1).rms > 2.5 * at(r, 0.2).rms) && at(12000, 1).rms > at(4000, 1).rms && at(4000, 1).rms > at(1200, 1).rms, 'level follows the throttle, and the speed', 'at 4,000 rpm: ' + f1(dB(at(4000, 1).rms / at(4000, 0.2).rms)) + ' dB from 20 % to full; full throttle ' + f4(at(1200, 1).rms) + ' / ' + f4(at(4000, 1).rms) + ' / ' + f4(at(12000, 1).rms) + ' at 1,200 / 4,000 / 12,000 rpm');
+  // regen: lifting at speed
+  check([4000, 8000].every(r => at(r, 0).rms > 0.25 * at(r, 1).rms && at(r, 0).rms < 0.7 * at(r, 1).rms && at(r, 0).h2 < at(r, 1).h2 - 2 && at(r, 0).gr > at(r, 1).gr + 3), 'lifting at speed: regen — a softer, purer tone, the gear\'s coast flank forward', 'regen / drive ' + f1(dB(at(8000, 0).rms / at(8000, 1).rms)) + ' dB at 8,000 rpm; 2nd harmonic ' + f1(at(8000, 0).h2) + ' against ' + f1(at(8000, 1).h2) + ' dB; gear ' + f1(at(8000, 0).gr) + ' against ' + f1(at(8000, 1).gr) + ' dB');
+  check(at(1500, 0).rms < 0.25 * at(4000, 0).rms, 'coasting slowly (no regen below 3 m/s): only a faint trace', f4(at(1500, 0).rms));
+  // a run: rest, full power, lift (regen) at speed, coast to rest
+  const d = driveEV(30, t => t < 1 ? 0 : t < 12 ? 1 : t < 22 ? 0 : t < 25 ? -0.8 : 0), o = render(coreNew, d.rec, 1), m = mono(o);
+  let ok = 0, n = 0; for (let t = 2; t < 21; t += 0.5) { const f = Math.round(t * 60), r = d.log.rpm[f]; if (r < 300) continue; n++; const p = peak(spec(m, sec(t) - 2048, 4096), 4096, 50, 9000); if (Math.abs(p.f / (24 * r / 60) - 1) < 0.03) ok++; }
+  const lv = t => rms(m, sec(t), sec(t + 0.3)), tLift = 12, sLift = d.log.speed[12 * 60];
+  say('  run: 0 → ' + f1(sLift) + ' m/s in 11 s (motor ' + Math.round(d.log.rpm[12 * 60 - 1]) + ' rpm), lift at 12 s, coast, brake from 22 s: level ' + [2, 6, 11.5, 12.6, 16, 21, 26, 29].map(t => f4(lv(t))).join(' ') + ' at 2 / 6 / 11.5 / 12.6 / 16 / 21 / 26 / 29 s');
+  check(ok === n && n > 30, 'through a run the whine tracks the motor speed', ok + ' of ' + n + ' windows within 3 %');
+  check(lv(12.6) < 0.7 * lv(11.5) && lv(12.6) > 0.2 * lv(11.5) && lv(16) > 0.15 * lv(11.5), 'the lift is heard: drive gives way to the softer regen tone, which holds while the car is fast');
+  check(quietIn(o, 29.5, 30) || d.log.speed[29 * 60] > 0.1, 'and it falls silent once the car stops', 'speed at the end ' + f2(d.log.speed[30 * 60 - 1]) + ' m/s');
+  const b = bad(render(coreNew, d.rec, 127)); check(b.nan === 0 && b.pk < 0.39, 'no NaN, no clipping (whole mix)', 'peak ' + f3(b.pk));
+  // the rest as for the others: tyres (modern radials, as the V8's), wind, the cockpit filter, gadgets of either kit
+  // (not sample for sample: the squeal's jitter draws on the random numbers the engines also draw on, each in its own way)
+  const tyr = x => { const q = mono(render(coreNew, steady(2.5, Object.assign({ rpm: 3000, thr: 0.3, gear: 1, speed: 30, slipL: 0.4, slipR: 0.4 }, x)), 2)); return { r: rms(q, sec(1)), f: peak(spec(q, sec(1), 16384), 16384, 200, 1600).f }; }, te = tyr({ ev: 1 }), tv = tyr({ v8: 1 }), tu = tyr({});
+  check(Math.abs(te.f / tv.f - 1) < 0.03 && Math.abs(te.r / tv.r - 1) < 0.15 && te.f < tu.f, 'tyres: modern wide radials, as the V8\'s (squeal pitch and level)', f1(te.f) + ' Hz / ' + f4(te.r) + ' against the V8\'s ' + f1(tv.f) + ' Hz / ' + f4(tv.r));
+  const wnd = (x, cam) => rms(mono(render(coreNew, steady(4, Object.assign({ rpm: 6000, thr: 0.3, gear: 1, speed: 40, cam, dist: cam === 3 ? 0.6 : 5.5 }, x)), 4)), sec(1)), we = wnd({ ev: 1 }, 0), wu = wnd({}, 0), wc = wnd({ ev: 1 }, 3);
+  check(we < wu && we > 0.85 * wu && wc < we, 'wind: a little less than the Uno\'s (smooth modern shapes), less again in the cockpit', f1(dB(we / wu)) + ' dB against the Uno, ' + f1(dB(wc / we)) + ' dB inside');
+  const cab = cam => { const x = mono(render(coreNew, steady(4, EVC({ rpm: 8000, thr: 1, speed: 33, cam, dist: cam === 3 ? 0.6 : 5.5 })), 1)), mg = spec(x, sec(2.5), N); return { r: rms(x, sec(2.5)), w: line(mg, N, 3200, 0.01), h: band(mg, N, 5000, 12000) }; }, c0 = cab(0), c3 = cab(3);
+  say('  cockpit against chase, 8,000 rpm flat out: whine (3.2 kHz) ' + f1(dB(c3.w / c0.w)) + ' dB, 5-12 kHz ' + f1(dB(c3.h / c0.h)) + ' dB');
+  check(c3.h / c3.w < 0.6 * c0.h / c0.w && c3.w > 0.5 * c0.w, 'cockpit: the cabin filter takes the top off, the drive whine still comes through (3 kHz corner for electric cars)');
+  for (const [kit, nm, gad] of [[0, 'the DB5\'s', 1], [1, 'the V8\'s', 2]]) { const g = render(coreNew, stream(60 * 4, (f, t) => EVC({ rpm: 4000, thr: 0.5, speed: 16, kit8: kit, gad: t > 1 && t < 2.5 ? gad : 0 })), 64), mg = mono(g);
+    check(quietIn(g, 0, 0.99) && rms(mg, sec(1.2), sec(2.4)) > 0.004, 'gadgets: an electric car with ' + nm + ' kit plays them (bit 64 of control 0 picks the kit)', 'rms ' + f4(rms(mg, sec(1.2), sec(2.4)))); }
+  { const g = render(coreNew, stream(60 * 4, (f, t) => EVC({ rpm: 4000, thr: 0.5, speed: 16, gad: 1, ex: Math.floor(t) })), 64), ex = render(coreNew, stream(60 * 4, (f, t) => EVC({ rpm: 4000, thr: 0.5, speed: 16, kit8: 1, gad: 1, ex: Math.floor(t) })), 64);
+    check(sameBits(g.L, render(coreNew, stream(60 * 4, (f, t) => EVC({ rpm: 4000, thr: 0.5, speed: 16, gad: 1 })), 64).L) === 0 && rms(mono(ex), 0, ex.n) > 0, 'with the DB5\'s kit the V8-only explosion bits are ignored; with the V8\'s they play'); }
+  // loudness against the Uno over the same road speeds
+  { const thr = t => t < 1.5 ? 0 : t < 20 ? 1 : t < 23 ? 0 : t < 25 ? -1 : 0.5, du = drive('uno', 30, thr), de = driveEV(30, thr, null, du.log), ru = rms(mono(render(coreNew, du.rec, 127)), sec(1.5)), re = rms(mono(render(coreNew, de.rec, 127)), sec(1.5)), eu = rms(mono(render(coreNew, du.rec, 1)), sec(1.5)), ee = rms(mono(render(coreNew, de.rec, 1)), sec(1.5));
+    say('  over the same road speeds (the Uno\'s run): mix rms Uno ' + f4(ru) + ', electric ' + f4(re) + ' (' + f1(dB(re / ru)) + ' dB); engine layer Uno ' + f4(eu) + ', electric motor ' + f4(ee) + ' (' + f1(dB(ee / eu)) + ' dB)');
+    check(re < ru && ee < eu * 0.35, 'subtle: the motor sits far under an engine, the electric car is the quietest of all'); }
+  // mute and pause
+  { const q = render(coreNew, stream(60 * 4, (f, t) => EVC({ rpm: 6000, thr: 1, speed: 25, mute: t >= 1 && t < 2 ? 1 : 0, run: t >= 3 ? 0 : 1 })), 127); let z1 = sec(1); while (q.L[z1] !== 0 || q.R[z1] !== 0) z1++; let z2 = sec(3); while (q.L[z2] !== 0 || q.R[z2] !== 0) z2++;
+    check(zeroIn(q, z1 / SR, 2) && zeroIn(q, z2 / SR, 4) && z1 - sec(1) < sec(0.06) && z2 - sec(3) < sec(0.06), 'mute and pause: exact zeros within 50 ms'); }
+  for (const [seed, sr, blk] of [[51, SR, 800], [52, 44100, 37], [53, 96000, 128]]) { const w = wander(60 * 40, seed, 0, 0); for (let f = 0; f < w.length / 16; f++) { w[f * 16] = (w[f * 16] & 15) | 48; w[f * 16 + 1] = Math.round(w[f * 16 + 4] * 2.456); } const q = render(coreNew, w, 127, { sr, block: blk }), bb = bad(q); check(bb.nan === 0 && bb.pk < 0.39, 'wandering controls, seed ' + seed + ', ' + sr + ' Hz in blocks of ' + blk + ' (40 s): no NaN, no clipping', 'peak ' + f3(bb.pk)); }
+  // audition
+  const city = t => { const u = t % 9; return u < 3 ? 0.55 : u < 5 ? 0 : u < 6.5 ? -0.6 : 0; };
+  wav('ev_run_chase.wav', render(coreNew, d.rec, 127));
+  wav('ev_run_cockpit.wav', render(coreNew, driveEV(30, t => t < 1 ? 0 : t < 12 ? 1 : t < 22 ? 0 : t < 25 ? -0.8 : 0, () => ({ cam: 3, dist: 0.6 })).rec, 127));
+  wav('ev_city_stop_go_cockpit.wav', render(coreNew, driveEV(28, city, () => ({ cam: 3, dist: 0.6 })).rec, 127));
+  wav('ev_driveby_tv.wav', render(coreNew, stream(60 * 9, (f, t) => { const x = -140 + 40 * t, dd = Math.hypot(x, 8), vr = -40 * x / dd; return EVC({ cam: 2, dist: dd, dop: 343 / (343 - vr), lsp: 0, rpm: 40 * 245.6, thr: t < 4 ? 0.6 : 0, speed: 40 }); }), 127));
+  { const lap = t => { const u = t % 14; return t < 1.2 ? 0 : u < 7.5 ? 1 : u < 8.3 ? 0 : u < 10.3 ? -0.8 : u < 11 ? 0.3 : 1; }, parts = [render(coreNew, drive('uno', 14, lap).rec, 127), render(coreNew, drive('db5', 14, lap).rec, 127), render(coreNew, drive('v8', 14, lap).rec, 127), render(coreNew, driveEV(14, lap).rec, 127)], nn = parts.reduce((a, p) => a + p.n, 0), q = { L: new Float32Array(nn), R: new Float32Array(nn), n: nn }; let o2 = 0; for (const p of parts) { q.L.set(p.L, o2); q.R.set(p.R, o2); o2 += p.n; } wav('compare_uno_db5_v8_ev_lap.wav', q); }
+});
+
 // ---- the glue around the synthesiser, run in a sandbox with a mock of the game: sndControl, sndStart (worklet module), sndOffline
 function sandbox(src, car) {
   const sc = { CARSEL: car, GAD: { snd: new Int32Array(4) }, ZONE: { ASPHALT: 0, KERB: 1, GRASS: 2, GRAVEL: 3, ROUGH: 4, PIT: 5 },
@@ -934,21 +1034,28 @@ function worklet(code) {
 test('glue', () => {
   say('sndControl, sndFlags, sndOffline and the worklet module, run against a mock of the game');
   const mk = (src, car) => { const s = sandbox(src, car); s.X.sndInit(); return s; };
-  const U0 = mk(srcRef, 'uno'), U1 = mk(srcNew, 'uno'), D1 = mk(srcNew, 'db5'), D0 = mk(srcDb5, 'db5'), V1 = mk(srcNew, 'v8');
+  const U0 = mk(srcRef, 'uno'), U1 = mk(srcNew, 'uno'), D1 = mk(srcNew, 'db5'), D0 = mk(srcDb5, 'db5'), V1 = mk(srcNew, 'v8'), V0 = mk(srcV8, 'v8');
+  // electric cars, as the integration sets them up: SND.ev = 1 with car 0 (no gadgets), 16 (the DB5's kit), 32 (the V8's), or car = 48 alone
+  const E0 = mk(srcNew, 'uno'), E1 = mk(srcNew, 'db5'), E2 = mk(srcNew, 'v8'), E3 = mk(srcNew, 'uno'); E0.X.SND.ev = 1; E1.X.SND.ev = 1; E2.X.SND.ev = 1; E3.X.SND.car = 48;
   let q = 12345; const r = () => ((q = (Math.imul(q, 1664525) + 1013904223) >>> 0) / 4294967296), set = (s, k) => {
     const V = s.VEH, G = s.GS; V.rpm = 900 + k.a * 5800; V.gear = Math.floor(k.b * 6); V.ctl[0] = k.c; V.vx = k.d * 50; V.vy = k.e * 4 - 2; V.yaw = k.f * 6; V.hits = Math.floor(k.g * 3000); G.speed = Math.hypot(V.vx, V.vy); G.cam = k.cam; G.cx = k.a * 100; G.cz = k.b * 60;
     for (let i = 0; i < 4; i++) { V.wzone[i] = Math.floor(k.z[i] * 6); V.slip[i] = k.s[i]; } s.R.cam.pos.set([k.c * 80, 2 + k.d * 6, k.e * 70]); s.X.SND.run = k.run; s.X.SND.mute = k.mute; };
-  let dif = 0, dif5 = 0, n = 0, bit16 = 0, bit32 = 0, c15 = 0;
+  let dif = 0, dif5 = 0, dif8 = 0, evb = 0, n = 0, bit16 = 0, bit32 = 0, c15 = 0;
   for (let i = 0; i < 4000; i++) {
     const k = { a: r(), b: r(), c: r(), d: r(), e: r(), f: r(), g: r(), cam: Math.floor(r() * 3), z: [r(), r(), r(), r()], s: [r(), r(), r(), r()], run: r() < 0.9, mute: r() < 0.1 };
-    set(U0, k); set(U1, k); set(D1, k); set(D0, k); set(V1, k); U1.GAD.snd[0] = 31; U1.GAD.snd[1] = i; U1.GAD.snd[2] = i * 2; U1.GAD.snd[3] = i;   // the Uno must ignore GAD.snd
-    for (const S of [D0, D1, V1]) { S.GAD.snd[0] = (i * 7) & 31; S.GAD.snd[1] = i >> 3; S.GAD.snd[2] = i >> 2; S.GAD.snd[3] = i >> 4; }
-    U0.X.sndControl(); U1.X.sndControl(); D1.X.sndControl(); D0.X.sndControl(); V1.X.sndControl(); n++;
+    set(U0, k); set(U1, k); set(D1, k); set(D0, k); set(V1, k); set(V0, k); for (const S of [E0, E1, E2, E3]) set(S, k); U1.GAD.snd[0] = 31; U1.GAD.snd[1] = i; U1.GAD.snd[2] = i * 2; U1.GAD.snd[3] = i;   // the Uno must ignore GAD.snd
+    for (const S of [D0, D1, V1, V0, E0, E1, E2, E3]) { S.GAD.snd[0] = (i * 7) & 31; S.GAD.snd[1] = i >> 3; S.GAD.snd[2] = i >> 2; S.GAD.snd[3] = i >> 4; }
+    for (const S of [U0, U1, D1, D0, V1, V0, E0, E1, E2, E3]) S.X.sndControl(); n++;
+    for (let j = 0; j < 16; j++) if (V0.X.SND.sc[j] !== V1.X.SND.sc[j]) dif8++;
+    const ec = (S, bits, c15) => { const c = S.X.SND.sc; if ((c[0] & ~3) !== ((U1.X.SND.sc[0] & ~3 & 12) | bits) || (c[0] & 3) !== (U1.X.SND.sc[0] & 3) || c[15] !== c15) return 1; for (let j = 1; j < 15; j++) if (c[j] !== U1.X.SND.sc[j]) return 1; return 0; };
+    evb += ec(E0, 48, 0) + ec(E1, 48, D1.X.SND.sc[15]) + ec(E2, 112, V1.X.SND.sc[15]) + ec(E3, 48, 0);
     for (let j = 0; j < 16; j++) { if (U0.X.SND.sc[j] !== U1.X.SND.sc[j]) dif++; if (j && j < 15 && (D1.X.SND.sc[j] !== U1.X.SND.sc[j] || V1.X.SND.sc[j] !== U1.X.SND.sc[j])) dif++; if (D0.X.SND.sc[j] !== D1.X.SND.sc[j]) dif5++; }
     if ((D1.X.SND.sc[0] & ~16) !== U1.X.SND.sc[0] || !(D1.X.SND.sc[0] & 16)) bit16++; if ((V1.X.SND.sc[0] & ~32) !== U1.X.SND.sc[0] || !(V1.X.SND.sc[0] & 32)) bit32++; if (U1.X.SND.sc[15] !== 0) c15++;
   }
   check(dif === 0 && c15 === 0, 'Uno: sndControl gives the 16 controls of the reference over ' + n + ' random game states (GAD.snd ignored); DB5 and V8: controls 1-14 are the same', dif + ' differences');
   check(dif5 === 0, 'DB5: sndControl gives the 16 controls of the DB5 reference, gadget counters included', dif5 + ' differences');
+  check(dif8 === 0, 'V8: sndControl gives the 16 controls of the V8 reference, gadget counters included', dif8 + ' differences');
+  check(evb === 0, 'electric cars: control 0 carries 48 (+64 with the V8\'s gadgets) for SND.ev = 1 whatever SND.car, and for SND.car = 48; controls 1-14 as for any car; control 15 the gadgets of the kit SND.car names (none for 0 or 48)', evb + ' differences');
   check(bit16 === 0 && bit32 === 0, 'control 0 is the Uno\'s plus bit 16 for the DB5, plus bit 32 for the V8');
   // cockpit camera and gadget word
   const G = D1.GAD.snd, S = D1.X.SND, w = () => { D1.X.sndControl(); return S.sc[15]; }; D1.GS.cam = 3; D1.X.sndControl();
@@ -975,7 +1082,7 @@ test('glue', () => {
   { const p5 = off(D0, lap, 63, 300, 420).pcm.slice(), p6 = off(D1, lap, 63, 300, 420).pcm.slice(); let d6 = 0; for (let i = 0; i < p5.length; i++) if (p5[i] !== p6[i]) d6++; check(d6 === 0, 'DB5: sndOffline gives the DB5 reference PCM', p5.length + ' values'); }
   { const vg = v8g(4, t => ({ gad: t > 1 && t < 2 ? 2 : 0 })), v63 = off(V1, vg, 63, -1, -1).pcm.slice(), v31 = off(V1, vg, 31, -1, -1).pcm.slice(); check(pkI(v63) > pkI(v31) + 2000, 'V8: sndOffline plays the gadgets with mask 63 and leaves them out with 31', pkI(v63) + ' / ' + pkI(v31)); }
   // the worklet module
-  const mods = {}; for (const [k, s] of [['ref', U0], ['uno', U1], ['db5', D1], ['db5ref', D0], ['v8', V1]]) { s.X.sndStart(); mods[k] = decodeURIComponent(s.mods[0].slice(s.mods[0].indexOf(',') + 1)); }
+  const mods = {}; for (const [k, s] of [['ref', U0], ['uno', U1], ['db5', D1], ['db5ref', D0], ['v8', V1], ['v8ref', V0], ['ev', E0], ['ev8', E2]]) { s.X.sndStart(); mods[k] = decodeURIComponent(s.mods[0].slice(s.mods[0].indexOf(',') + 1)); }
   check(mods.uno.startsWith('const mk=function sndCore(sr)') && mods.db5.includes('wu(this.s=mk(sampleRate),1)') && mods.uno.includes('wu(this.s=mk(sampleRate),0)'), 'the worklet module carries the synthesiser, the warm-up and the car', (mods.db5.length / 1024).toFixed(1) + ' KiB (was ' + (mods.ref.length / 1024).toFixed(1) + ' KiB)');
   const t0 = Date.now(), W = { ref: worklet(mods.ref), uno: worklet(mods.uno) }, t1 = Date.now(), Wd = worklet(mods.db5), t2 = Date.now();
   say('  constructing the processor (warm-up included): Uno ' + ((t1 - t0) / 2).toFixed(0) + ' ms, DB5 ' + (t2 - t1) + ' ms');
@@ -993,18 +1100,26 @@ test('glue', () => {
   const vr = wander(60 * 10, 7, 2, 1), cv = run(Wv.inst, vr, 3750), S3 = coreNew(SR), L3 = new Float32Array(3750 * 128), R3 = new Float32Array(3750 * 128);
   for (let bl = 0; bl < 3750; bl++) { const f = Math.min(vr.length / 16 - 1, Math.floor(bl * 128 / FR)); for (let k = 0; k < 16; k++) S3.ctl[k] = vr[f * 16 + k]; S3.render(L3, R3, bl * 128, 128); }
   check(sameBits(cv.L, L3) + sameBits(cv.R, R3) === 0, 'V8: the worklet processor gives what the offline synthesiser gives for the same controls', cv.n * 2 + ' samples, hash ' + hash(cv));
+  { const c8 = run(worklet(mods.v8ref).inst, vr, 3750); check(sameBits(cv.L, c8.L) + sameBits(cv.R, c8.R) === 0, 'V8: the worklet processor gives the output of the V8 reference processor, bit for bit', cv.n * 2 + ' samples'); }
+  check(mods.ev.includes('wu(this.s=mk(sampleRate),3)') && mods.ev8.includes('wu(this.s=mk(sampleRate),7)'), 'the electric car\'s worklet module warms up the electric car (3; 7 with the V8\'s gadgets)');
+  for (const [nm, mod, code] of [['electric car', mods.ev, 3], ['electric car with the V8\'s gadgets', mods.ev8, 7]]) {
+    const t4 = Date.now(), We = worklet(mod), tw = Date.now() - t4, er = wander(60 * 10, 8 + code, code, 1), ce = run(We.inst, er, 3750), S4 = coreNew(SR), L4 = new Float32Array(3750 * 128), R4 = new Float32Array(3750 * 128);
+    for (let bl = 0; bl < 3750; bl++) { const f = Math.min(er.length / 16 - 1, Math.floor(bl * 128 / FR)); for (let k = 0; k < 16; k++) S4.ctl[k] = er[f * 16 + k]; S4.render(L4, R4, bl * 128, 128); }
+    check(sameBits(ce.L, L4) + sameBits(ce.R, R4) === 0, nm + ': the worklet processor gives what the offline synthesiser gives (constructed in ' + tw + ' ms, warm-up included)', ce.n * 2 + ' samples, hash ' + hash(ce));
+  }
 });
 
 // ---- cost: time and allocation per block, deoptimisations after the warm-up
 // integer-only driver (a float read here would itself allocate before it is optimised), filling the 16 controls for block i
 function driveBlock(c, i, db5, gad) {
-  c[0] = 1 | (db5 === 2 ? 32 : db5 ? 16 : 0) | ((i >> 11) % (db5 ? 4 : 3)) << 2; c[1] = 900 + (i * 7) % 5000; c[2] = (i >> 9) & 1 ? 1000 : (i >> 7) & 1 ? 300 : 0; c[3] = 1 + (i >> 10) % 5; const v = 1000 + (i * 3) % 4000; c[4] = v; c[5] = (i >> 8) & 1 ? 400 : 0; c[6] = (i >> 9) & 1 ? 700 : 0; c[7] = (i >> 12) & 1 ? 500 : 0; c[8] = (i >> 11) & 1 ? 500 : 0;
-  c[9] = 55; c[10] = 10000; c[11] = v; c[12] = 600; c[13] = 300; c[14] = i >> 9; c[15] = gad ? ((i >> 6) & 31) | ((i >> 10) & 31) << 5 | ((i >> 7) & 63) << 10 | (db5 === 2 ? ((i >> 11) & 31) << 16 : 0) : 0;
+  c[0] = 1 | (db5 === 7 ? 112 : db5 === 3 ? 48 : db5 === 2 ? 32 : db5 ? 16 : 0) | ((i >> 11) % (db5 ? 4 : 3)) << 2; c[1] = 900 + (i * 7) % 5000; c[2] = (i >> 9) & 1 ? 1000 : (i >> 7) & 1 ? 300 : 0; c[3] = 1 + (i >> 10) % 5; const v = 1000 + (i * 3) % 4000; c[4] = v; c[5] = (i >> 8) & 1 ? 400 : 0; c[6] = (i >> 9) & 1 ? 700 : 0; c[7] = (i >> 12) & 1 ? 500 : 0; c[8] = (i >> 11) & 1 ? 500 : 0;
+  c[9] = 55; c[10] = 10000; c[11] = v; c[12] = 600; c[13] = 300; c[14] = i >> 9; c[15] = gad ? ((i >> 6) & 31) | ((i >> 10) & 31) << 5 | ((i >> 7) & 63) << 10 | (db5 === 2 || db5 === 7 ? ((i >> 11) & 31) << 16 : 0) : 0;
+  if (db5 === 3 || db5 === 7) c[1] = (i * 13) % 12000;   // (an electric motor: 0 to 12,000 rpm)
 }
 function runBlocks(S, L, R, i0, n, db5, gad) { const c = S.ctl; for (let i = i0; i < i0 + n; i++) { driveBlock(c, i, db5, gad); S.render(L, R, 0, 128); } }
 // child process: one configuration, measured as the worklet would run it (its own V8, the real warm-up); prints one JSON line
 function costChild(cfg) {
-  const db5 = cfg & 4 ? 2 : cfg & 1, gad = (cfg >> 1) & 1, S = coreNew(SR), L = new Float32Array(128), R = new Float32Array(128); warmNew(S, db5); runBlocks(S, L, R, 0, 6000, db5, gad);
+  const db5 = cfg & 8 ? (cfg & 4 ? 7 : 3) : cfg & 4 ? 2 : cfg & 1, gad = (cfg >> 1) & 1, S = coreNew(SR), L = new Float32Array(128), R = new Float32Array(128); warmNew(S, db5); runBlocks(S, L, R, 0, 6000, db5, gad);
   const heap = [], ms = [];
   for (let k = 0; k < 7; k++) { const h0 = process.memoryUsage().heapUsed, t0 = process.hrtime.bigint(); runBlocks(S, L, R, 6000 + k * 8192, 8192, db5, gad); ms.push(Number(process.hrtime.bigint() - t0) / 1e6); heap.push((process.memoryUsage().heapUsed - h0) / 8192); }
   heap.sort((a, b) => a - b); ms.sort((a, b) => a - b); console.log('@@' + JSON.stringify({ us: ms[3] / 8192 * 1000, heap: heap[3], hmax: heap[6] }));
@@ -1012,38 +1127,40 @@ function costChild(cfg) {
 test('cost', () => {
   say('Cost and allocation, after the warm-up, in blocks of 128 as in the worklet (a block lasts 2,667 µs); one child process per case, so each has a V8 of its own');
   const res = [];
-  for (const [name, cfg] of [['Uno', 0], ['DB5, no gadgets', 1], ['DB5, gadgets working', 3], ['V8, no gadgets', 4], ['V8, gadgets working', 6]]) {
+  for (const [name, cfg] of [['Uno', 0], ['DB5, no gadgets', 1], ['DB5, gadgets working', 3], ['V8, no gadgets', 4], ['V8, gadgets working', 6], ['electric, no gadgets', 8], ['electric, V8 gadgets', 14]]) {
     const out = cp.execFileSync(process.execPath, [__filename, '--src', SRC, '--ref', REF, '--cost-child', String(cfg)], { encoding: 'utf8' }), r = JSON.parse(out.slice(out.indexOf('@@') + 2)); r.name = name; res.push(r);
     say('  ' + name.padEnd(21) + ': ' + f1(r.us) + ' µs per block = ' + f2(r.us / 2666.7 * 100) + ' % of real time; heap growth per block (median of 7 runs of 8,192 blocks) ' + f2(r.heap) + ' bytes, largest ' + f2(r.hmax));
   }
-  check(res[2].us < 267 && res[4].us < 267, 'DB5 and V8 with every gadget working cost under 10 % of real time on this machine (about 3 % when the machine is idle)', f2(res[2].us / 26.667) + ' % / ' + f2(res[4].us / 26.667) + ' %');
+  check(res[2].us < 267 && res[4].us < 267 && res[6].us < 267, 'DB5, V8 and electric car with every gadget working cost under 10 % of real time on this machine (about 3 % when it is idle)', f2(res[2].us / 26.667) + ' % / ' + f2(res[4].us / 26.667) + ' % / ' + f2(res[6].us / 26.667) + ' %');
+  check(res[5].us < res[3].us, 'the electric car costs less than the V8', f1(res[5].us) + ' against ' + f1(res[3].us) + ' µs per block');
   check(res.every(r => Math.abs(r.heap) < 1 && r.hmax < 2), 'no allocation per block: the heap does not grow while rendering, in any of the seven runs', res.map(r => f2(r.heap) + ' (largest ' + f2(r.hmax) + ')').join(' / ') + ' bytes per block');
 });
 // child process for the test below: warm up as the worklet does, then render a long varied stream in blocks of 128.
 // which: 0 Uno, 1 DB5, 2 the reference Uno (with the warm-up it had)
 function deoptChild(which) {
-  const db5 = which === 1 ? 1 : which === 3 ? 2 : 0, S = (which === 2 ? coreRef : coreNew)(SR), L = new Float32Array(128), R = new Float32Array(128);
+  const db5 = which === 1 ? 1 : which === 3 ? 2 : which === 4 ? 3 : which === 5 ? 7 : 0, S = (which === 2 ? coreRef : coreNew)(SR), L = new Float32Array(128), R = new Float32Array(128);
   if (which === 2) { oldWarm(S, L, R); S.reset(); } else warmNew(S, db5);
   console.log('@@WARM');
-  for (let b = 0; b < 5; b++) { S.ctl.fill(0); S.ctl[0] = 1 | (db5 === 2 ? 32 : db5 ? 16 : 0); S.render(L, R, 0, 128); }   // as in the game: the first blocks come before the first controls
+  for (let b = 0; b < 5; b++) { S.ctl.fill(0); S.ctl[0] = 1 | (db5 === 7 ? 112 : db5 === 3 ? 48 : db5 === 2 ? 32 : db5 ? 16 : 0); S.render(L, R, 0, 128); }   // as in the game: the first blocks come before the first controls
   const play = (rec) => { const n = Math.floor(rec.length / 16 * FR / 128), c = S.ctl; for (let b = 0; b < n; b++) { const f = Math.floor(b * 128 / FR) * 16; for (let k = 0; k < 16; k++) c[k] = rec[f + k]; S.render(L, R, 0, 128); } };
   const gfn = (t) => db5 ? ({ cam: Math.floor(t / 7) % 4, gad: (t % 9 > 4 && t % 9 < 5.5 ? 1 : 0) | (t % 13 > 7 && t % 13 < 10 ? 2 : 0) | (t % 17 > 11 && t % 17 < 13 ? 4 : 0) | (t % 5 > 4 ? 8 : 0) | (t % 11 > 10 ? 16 : 0), es: Math.floor(t / 5) * 2, ej: Math.floor(t / 23), ex: Math.floor(t / 19) }) : ({ cam: Math.floor(t / 7) % 3 });   // (end stops two at a time: two clunks queued)
   const lap = t => { const u = t % 14; return t < 1.2 ? 0 : u < 7.5 ? 1 : u < 8.3 ? 0 : u < 10.3 ? -0.8 : u < 11 ? 0.3 : 1; };
-  play(drive(db5 === 2 ? 'v8' : db5 ? 'db5' : 'uno', 90, lap, (t, f, s) => Object.assign({ slipL: (t % 14) > 10.3 && (t % 14) < 11.6 ? 0.45 : 0, slipR: (t % 14) > 10.5 && (t % 14) < 11.4 ? 0.3 : 0, kerb: t % 19 > 18 ? 0.5 : 0, loose: t % 31 > 29 ? 0.5 : 0, hits: Math.floor(t / 37), crowd: t % 40 < 6 ? 0.7 : 0, lsp: s.speed }, gfn(t))).rec);
+  if (db5 === 3 || db5 === 7) play(driveEV(90, lap, (t, f, s) => Object.assign({ kit8: db5 === 7, slipL: (t % 14) > 10.3 && (t % 14) < 11.6 ? 0.45 : 0, kerb: t % 19 > 18 ? 0.5 : 0, hits: Math.floor(t / 37), crowd: t % 40 < 6 ? 0.7 : 0, lsp: s.speed }, gfn(t))).rec);
+  else play(drive(db5 === 2 ? 'v8' : db5 ? 'db5' : 'uno', 90, lap, (t, f, s) => Object.assign({ slipL: (t % 14) > 10.3 && (t % 14) < 11.6 ? 0.45 : 0, slipR: (t % 14) > 10.5 && (t % 14) < 11.4 ? 0.3 : 0, kerb: t % 19 > 18 ? 0.5 : 0, loose: t % 31 > 29 ? 0.5 : 0, hits: Math.floor(t / 37), crowd: t % 40 < 6 ? 0.7 : 0, lsp: s.speed }, gfn(t))).rec);
   play(wander(60 * 90, 4242, db5, db5));
   console.log('@@END');
 }
 test('deopt', () => {
   say('Deoptimisations of the synthesiser after the warm-up (child process with --trace-deopt: warm-up as in the worklet, then a 90 s lap-like drive — with every gadget for the DB5 — and 90 s of wandering controls, mute and pause included)');
-  const names = /<JSFunction (chunk|engDB5|gadDB5|engV8|gadV8|svf|noise|noise2|rnd16|rndG|render|birdNote|birdStart|reset)\b/, cnt = {};
-  for (const [which, name] of [[2, 'reference Uno'], [0, 'Uno'], [1, 'DB5'], [3, 'V8']]) {
+  const names = /<JSFunction (chunk|engDB5|gadDB5|engV8|gadV8|engEV|nyq|svf|noise|noise2|rnd16|rndG|render|birdNote|birdStart|reset)\b/, cnt = {};
+  for (const [which, name] of [[2, 'reference Uno'], [0, 'Uno'], [1, 'DB5'], [3, 'V8'], [4, 'electric (DB5 kit)'], [5, 'electric (V8 kit)']]) {
     const out = cp.execFileSync(process.execPath, ['--trace-deopt', __filename, '--src', SRC, '--ref', REF, '--deopt-child', String(which)], { encoding: 'utf8', maxBuffer: 1 << 28 });
     const a = out.indexOf('@@WARM'), b = out.indexOf('@@END'); if (a < 0 || b < 0) throw new Error('child failed: ' + out.slice(-400));
     const hits = out.slice(a, b).split('\n').filter(l => l.includes('bailout') && names.test(l)), during = out.slice(0, a).split('\n').filter(l => l.includes('bailout') && names.test(l));
     cnt[which] = hits.length; say('  ' + name + ': ' + during.length + ' during the warm-up, ' + hits.length + ' after it');
     for (const l of hits.slice(0, 8)) say('    ' + l.replace(/0x[0-9a-f]+/g, '').replace(/\s+/g, ' ').replace(/, FP to SP.*$/, '').slice(0, 200));
   }
-  check(cnt[1] === 0 && cnt[3] === 0, 'DB5 and V8: no deoptimisation of the synthesiser once the warm-up is over', cnt[1] + ' / ' + cnt[3]);
+  check(cnt[1] === 0 && cnt[3] === 0 && cnt[4] === 0 && cnt[5] === 0, 'DB5, V8 and electric car: no deoptimisation of the synthesiser once the warm-up is over', cnt[1] + ' / ' + cnt[3] + ' / ' + cnt[4] + ' / ' + cnt[5]);
   check(cnt[0] <= cnt[2], 'Uno: no more than with the reference synthesiser and the warm-up it always had (those it has come from the first mute or pause and the first sample to reach the limiter, which that warm-up never visits)', cnt[0] + ' against ' + cnt[2]);
 });
 
