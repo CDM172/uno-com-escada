@@ -208,6 +208,46 @@ class Part:
         return f
 
 
+class RasterField:
+    """Signed distance (negative inside) to a 2D outline given as a polygon, with its corners rounded by radius r.
+
+    The polygon is rasterised, opened with a disc of radius r (which rounds convex corners) and turned into a
+    distance field with an exact Euclidean transform; queries interpolate bilinearly.
+    """
+
+    def __init__(self, poly, r=0.0, h=0.002, pad=0.15):
+        from scipy import ndimage
+        poly = np.asarray(poly, dtype=float)
+        self.h = h
+        self.u0, self.v0 = poly[:, 0].min() - pad, poly[:, 1].min() - pad
+        nu = int((poly[:, 0].max() + pad - self.u0) / h) + 2
+        nv = int((poly[:, 1].max() + pad - self.v0) / h) + 2
+        U, V = np.meshgrid(self.u0 + np.arange(nu) * h, self.v0 + np.arange(nv) * h, indexing='ij')
+        ins = np.zeros(U.shape, dtype=bool)
+        n = len(poly)
+        for i in range(n):
+            (ua, va), (ub, vb) = poly[i], poly[(i + 1) % n]
+            if va == vb:
+                continue
+            cond = (va > V) != (vb > V)
+            xi = ua + (ub - ua) * (V - va) / (vb - va)
+            ins ^= cond & (U < xi)
+        if r > 0:
+            core = ndimage.distance_transform_edt(ins) * h > r
+            ins = ndimage.distance_transform_edt(~core) * h <= r
+        self.sd = (ndimage.distance_transform_edt(~ins) - ndimage.distance_transform_edt(ins)) * h
+        self.nu, self.nv = nu, nv
+
+    def __call__(self, u, v):
+        fu, fv = (u - self.u0) / self.h, (v - self.v0) / self.h
+        if fu < 0 or fv < 0 or fu >= self.nu - 1 or fv >= self.nv - 1:
+            return 1.0
+        i, j = int(fu), int(fv)
+        a, b = fu - i, fv - j
+        g = self.sd
+        return (g[i, j] * (1 - a) + g[i + 1, j] * a) * (1 - b) + (g[i, j + 1] * (1 - a) + g[i + 1, j + 1] * a) * b
+
+
 def rrect(a, b, ha, hb, r):
     qa, qb = abs(a) - ha + r, abs(b) - hb + r
     return math.hypot(max(qa, 0), max(qb, 0)) + min(max(qa, qb), 0) - r
@@ -369,7 +409,7 @@ def split_asym(bm, faces, static_part, moving_part, mat_index):
     bmesh.ops.delete(bm, geom=faces, context='FACES')
 
 
-def export(parts, path):
+def export(parts, path, car=None):
     """Write the car as a compact binary (zlib + base64) wrapped in a JS file for the game build."""
     import base64, json, struct, zlib
     SCALE = 8000.0
@@ -413,15 +453,19 @@ def export(parts, path):
             d = MATS[name]
             target = part.target
             if d['target'] == 'glass':
-                target = 'glass' if part.target == 'body' else part.target + '_glass'
+                target = 'glass' if part.target in ('body', 'glass') else part.target + '_glass'
             elif d['target'] == 'skip':
                 target = name
             has_uv = d['id'] in (12, 20)
+            seam_uv = d['id'] == 20
             vmap, pos, nrm, uvs, idx = {}, [], [], [], []
             for pi in np.nonzero(mi == m)[0]:
                 for li in range(pi * 3, pi * 3 + 3):
                     n = nr[li]
-                    q = (int(vi[li]), int(round(n[0] * 127)), int(round(n[1] * 127)), int(round(n[2] * 127)), round(float(uv[li, 0]), 4) if has_uv else 0, round(float(uv[li, 1]), 4) if has_uv else 0)
+                    u0, u1 = float(uv[li, 0]), float(uv[li, 1])
+                    if seam_uv:
+                        u0, u1 = (u0 if u1 > 0.5 else 1.0), 0.0
+                    q = (int(vi[li]), int(round(n[0] * 127)), int(round(n[1] * 127)), int(round(n[2] * 127)), round(u0, 4) if has_uv else 0, round(u1, 4) if has_uv else 0)
                     k = vmap.get(q)
                     if k is None:
                         k = vmap[q] = len(pos)
@@ -430,9 +474,16 @@ def export(parts, path):
                         uvs.append(q[4:6])
                     idx.append(k)
             nv, ni = len(pos), len(idx)
-            p16 = np.clip(np.round(np.array(pos) * SCALE), -32767, 32767).astype('<i2')
+            pa = np.array(pos)
+            na = np.array(nrm, dtype=np.float64)
+            if part.mirror:
+                on = np.abs(pa[:, 2]) < 2e-4
+                na[on, 2] = 0.0
+                ln = np.linalg.norm(na[on], axis=1)
+                na[on] = na[on] / np.maximum(ln, 1e-6)[:, None] * 127.0
+            p16 = np.clip(np.round(pa * SCALE), -32767, 32767).astype('<i2')
             n8 = np.zeros((nv, 4), dtype=np.int8)
-            n8[:, :3] = np.array(nrm, dtype=np.int8)
+            n8[:, :3] = np.clip(np.round(na), -127, 127).astype(np.int8)
             blob.extend(p16.tobytes()); pad()
             blob.extend(n8.tobytes())
             if has_uv:
@@ -441,7 +492,7 @@ def export(parts, path):
             blob.extend(np.array(idx, dtype='<u4' if i32 else '<u2').tobytes()); pad()
             chunks.append(dict(t=target, m=1 if part.mirror else 0, id=d['id'], a=d['a'], c=[round(c, 4) for c in d['col']], nv=nv, ni=ni, uv=1 if has_uv else 0, i32=1 if i32 else 0))
         bpy.data.meshes.remove(me)
-    meta = dict(scale=SCALE, targets=targets, chunks=chunks)
+    meta = dict(scale=SCALE, car=car or {}, targets=targets, chunks=chunks)
     z = zlib.compress(bytes(blob), 9)
     with open(path, 'w') as f:
         f.write('// Aston Martin DB5 mesh, generated by source/blender/db5_build.py (Blender). Do not edit by hand.\n')
