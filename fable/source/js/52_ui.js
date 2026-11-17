@@ -31,6 +31,12 @@ function uiInit() {
     const g = b.dataset.gfx, sel = g === gfxNow; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
     b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('gfx', g); location.search = q.toString(); };
   }
+  // Handling chooser, under the graphics: Easy (driving aids, the default) or Realistic. It applies at once and is saved
+  // (40_assist.js); the autopilot, the demo lap and the benchmark always drive without the aids.
+  UI.hand = $('hand');
+  const handMark = () => { for (const b of document.querySelectorAll('#hand .car')) { const sel = (b.dataset.hand === 'easy') === HAND.easy; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false'); } };
+  for (const b of document.querySelectorAll('#hand .car')) b.onclick = () => { handSet(b.dataset.hand === 'easy'); handMark(); };
+  handMark();
   if (GAD.on) { $(CARSEL === 'v8' ? 'gcolv8' : 'gcol').style.display = ''; $('pk').textContent = '1 to ' + POSES.length; }
   UI.b0.onclick = () => { if (UI.st === ST.INICIO) { sndStart(); uiSet(ST.JOGO); } else uiResume(); };
   UI.b1.onclick = () => benchStart();
