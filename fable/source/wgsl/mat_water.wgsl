@@ -28,7 +28,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
   c = mix(c, vec3f(0.035, 0.05, 0.05), lake * 0.7);
   c *= 0.9 + 0.2 * w2.b;
   // foam: a broken white line where the water is shallowest
-  let foam = (1.0 - smoothstep(0.0, 0.07, dm + (w3.b - 0.5) * 0.05)) * smoothstep(0.4, 0.7, w2.b + w3.r * 0.4) * (1.0 - lake);
+  let foam = (1.0 - smoothstep(0.0, 0.035, dm + (w3.b - 0.5) * 0.03)) * smoothstep(0.55, 0.8, w2.b + w3.r * 0.4) * (1.0 - lake) * 0.7 * (1.0 - smoothstep(150.0, 600.0, dist));
   c = mix(c, vec3f(0.55, 0.55, 0.52), foam);
   s.albedo = c; s.rough = mix(0.035, 0.6, foam); s.wet = 1.0 - foam; s.ao = 1.0;
   return s;

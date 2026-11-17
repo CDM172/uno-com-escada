@@ -381,12 +381,14 @@ function townBuilding(mb, b) {
     const X = (i, j) => { const u = P.u0 + (P.u1 - P.u0) * i / (gu - 1), v = P.v0 + (P.v1 - P.v0) * j / (gv - 1); return [u * ca - v * sa, u * sa + v * ca]; };
     const Hg = (i, j) => P.grid[Math.min(gv - 1, Math.max(0, j)) * gu + Math.min(gu - 1, Math.max(0, i))] * 0.1;
     mb.mat(13, 90).color(0.7, 0.71, 0.7, 1);
-    const vid = new Int32Array(gu * gv).fill(-1);
-    const V = (i, j) => { const k = j * gu + i; if (vid[k] < 0) { const [x, z] = X(i, j), du = (P.u1 - P.u0) / (gu - 1), dv = (P.v1 - P.v0) / (gv - 1); const gx = (Hg(i + 1, j) - Hg(i - 1, j)) / (2 * du), gz = (Hg(i, j + 1) - Hg(i, j - 1)) / (2 * dv); vid[k] = mb.v(x, dy + Math.max(0.6, Hg(i, j)), z, -(gx * ca - gz * sa), 1, -(gx * sa + gz * ca), i, j); } return vid[k]; };
-    for (let j = 0; j < gv - 1; j++) for (let i = 0; i < gu - 1; i++) {
-      const [cx2, cz2] = X(i + 0.5, j + 0.5), hc = (Hg(i, j) + Hg(i + 1, j) + Hg(i, j + 1) + Hg(i + 1, j + 1)) / 4;
-      if (hc < 2.5 || !townInRing(ring, cx2, cz2)) continue;
-      townQuad(mb, V(i, j), V(i + 1, j), V(i + 1, j + 1), V(i, j + 1), 0, 1, 0);
+    const prof = TOWNW.pavProf, jlo = TOWNW.pavJ0, jhi = TOWNW.pavJ1;
+    for (let i = 0; i < gu - 1; i++) {
+      if (!(prof[i] > 2.5 && prof[i + 1] > 2.5)) continue;
+      const j0 = Math.max(jlo[i], jlo[i + 1]), j1 = Math.min(jhi[i], jhi[i + 1]); if (j1 <= j0) continue;
+      const cam = (j, i2) => prof[i2] + 0.9 * (1 - Math.pow((j - (j0 + j1) / 2) / ((j1 - j0) / 2 + 0.5), 2));   // camber across the hall
+      const m = 6, vv = [];
+      for (let q = 0; q <= m; q++) { const j = j0 + (j1 - j0) * q / m; for (const i2 of [i, i + 1]) { const [x, z] = X(i2, j); vv.push(mb.v(x, dy + cam(j, i2), z, 0, 1, 0, i2, j)); } }
+      for (let q = 0; q < m; q++) { const a = vv[q * 2], b = vv[q * 2 + 1], c = vv[q * 2 + 3], d = vv[q * 2 + 2]; townQuad(mb, a, b, c, d, 0, 1, 0); }
     }
     townPavTowers(mb, base, eaveY, u0, u1, v0, v1, toX, toZ);
     return;
@@ -472,13 +474,25 @@ function townPavTowers(mb, base, eaveY, u0, u1, v0, v1, toX, toZ) {
     mb.cyl(x, ycap + 3.0, z, 0.08, top + 0.6, 0.02, 6, false, false);
   }
 }
-// the pavilion's roof height above its deck (DSM grid, bilinear), 0 outside the grid
+// The pavilion's roof from the DSM grid: for each step along the pier, the median height of the hall across it (the
+// towers and the noise drop out), smoothed, and the extent of the hall across. Heights are above the deck.
+function townPavProfile() {
+  const P = TOWN.pav, gu = P.gu, gv = P.gv, G = P.grid, prof = new Float32Array(gu), j0 = new Float32Array(gu), j1 = new Float32Array(gu), tmp = [];
+  for (let i = 0; i < gu; i++) {
+    tmp.length = 0; let lo = -1, hi = -1;
+    for (let j = 0; j < gv; j++) { const h = G[j * gu + i] * 0.1; if (h > 2.5) { tmp.push(h); if (lo < 0) lo = j; hi = j; } }
+    tmp.sort((a, b) => a - b); prof[i] = tmp.length >= 3 ? tmp[tmp.length >> 1] : 0; j0[i] = lo; j1[i] = hi;
+  }
+  const sm = prof.slice(); for (let i = 1; i < gu - 1; i++) if (prof[i - 1] > 2.5 && prof[i] > 2.5 && prof[i + 1] > 2.5) sm[i] = (prof[i - 1] + 2 * prof[i] + prof[i + 1]) / 4;
+  TOWNW.pavProf = sm; TOWNW.pavJ0 = j0; TOWNW.pavJ1 = j1;
+}
+// the pavilion's roof height above its deck at (x, z) (the profile), a parapet where the deck is open
 function townPavH(x, z) {
   const P = TOWN.pav, ca = Math.cos(P.ang), sa = Math.sin(P.ang), u = x * ca + z * sa, v = -x * sa + z * ca;
-  const fi = clamp((u - P.u0) / (P.u1 - P.u0) * (P.gu - 1), 0, P.gu - 1.001), fj = clamp((v - P.v0) / (P.v1 - P.v0) * (P.gv - 1), 0, P.gv - 1.001);
-  const i = fi | 0, j = fj | 0, a = fi - i, b = fj - j, G = P.grid, w = P.gu;
-  const h = ((G[j * w + i] * (1 - a) + G[j * w + i + 1] * a) * (1 - b) + (G[(j + 1) * w + i] * (1 - a) + G[(j + 1) * w + i + 1] * a) * b) * 0.1;
-  return h < 2.5 ? 1.1 : h;   // below a storey: a parapet round the open deck
+  const fi = clamp((u - P.u0) / (P.u1 - P.u0) * (P.gu - 1), 0, P.gu - 1.001), fj = (v - P.v0) / (P.v1 - P.v0) * (P.gv - 1);
+  const i = fi | 0, a = fi - i, pr = TOWNW.pavProf, h = pr[i] * (1 - a) + pr[i + 1] * a;
+  if (h < 2.5 || fj < Math.min(TOWNW.pavJ0[i], TOWNW.pavJ0[i + 1]) - 0.6 || fj > Math.max(TOWNW.pavJ1[i], TOWNW.pavJ1[i + 1]) + 0.6) return 1.1;   // open deck: a parapet
+  return h;
 }
 function townInRing(ring, x, z) {
   let inside = false; const n = ring.length / 2;
@@ -792,6 +806,7 @@ function townWorldBuild() {
   // piers first (the pier pavilion stands on its deck), then the town tile by tile
   const mb = new MeshBuilder(1 << 20), rs = TOWNW.town;
   townPiersBuild(mb, rs);
+  if (T.pav) townPavProfile();
   const TS = TOWN_TILE, tw = Math.ceil((T.x1 - T.x0) / TS), th = Math.ceil((T.z1 - T.z0) / TS), tiles = [];
   for (let k = 0; k < tw * th; k++) tiles.push([[], []]);
   const tileOf = (x, z) => clamp(Math.floor((x - T.x0) / TS), 0, tw - 1) + clamp(Math.floor((z - T.z0) / TS), 0, th - 1) * tw;

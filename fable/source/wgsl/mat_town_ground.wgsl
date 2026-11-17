@@ -46,7 +46,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
   // ---- sand: dry and pale at the top of the beach, darker and wet towards the water
   let wetS = 1.0 - smoothstep(1.2, 4.5, hs + (nB.r - 0.5) * 1.5);
   var sd = mix(vec3f(0.46, 0.36, 0.22), vec3f(0.22, 0.17, 0.11), wetS) * (0.88 + 0.2 * nC.r) * (0.94 + 0.12 * nD.b * near2);
-  let ripple = sin(dot(xz, vec2f(0.6, 0.8)) * 9.0 + nB.r * 12.0) * wetS * near;
+  let ripple = sin(dot(xz, vec2f(0.6, 0.8)) * 7.0 + nB.r * 20.0 + nC.g * 6.0) * wetS * near * 0.35;
   // ---- mud flats: grey-brown silt, shining where the tide has just gone out, with channels
   let wetM = 1.0 - smoothstep(0.0, 3.5, hs + (nA.g - 0.5) * 2.0);
   var md = mix(vec3f(0.15, 0.13, 0.1), vec3f(0.075, 0.068, 0.055), wetM) * (0.85 + 0.3 * nB.b) * (0.9 + 0.2 * nC.r);
