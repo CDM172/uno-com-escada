@@ -21,6 +21,29 @@ blender -b -P fable/source/blender/db5_build.py -- --render /tmp/db5 --views f34
 All geometry is authored in the game's car frame: origin on the ground under the middle of the wheelbase,
 **X forward, Y up, Z to the right**, metres.
 
+## Aston Martin V8 Vantage (1987)
+
+The V8 is built by the same toolkit and exported into `../js/29_v8_data.js` (`V8_META` / `V8_B64`, same format):
+
+```bash
+blender -b -P fable/source/blender/v8_build.py -- --export fable/source/js/29_v8_data.js
+blender -b -P fable/source/blender/v8_build.py -- --studio --render /tmp/v8 --views f34,r34,side
+# orthographic views at the reference drawing's scale, for overlays: add --ortho --transparent
+```
+
+| File | What it holds |
+|---|---|
+| `v8_shape.py` | The body surface (same section machinery as the DB5), fitted to the 1983 V8 Vantage drawing |
+| `v8_fields.py` | Measured outlines: arches, glass, grille mouth and headlamp bezels, air-dam intakes, strakes, tail lamps, shut lines |
+| `v8_build.py` | Entry point: body cut-outs, materials (Cumberland Grey paint), render, export |
+| `v8_parts.py` | Five-spoke alloys on 255/60 VR15 tyres, bumpers, mesh grille, lamps, mirrors, wipers, plates, exhausts |
+| `v8_interior.py` | Cabin (right-hand drive 2+2, walnut fascia, binnacle, console) and the gadget parts |
+
+V8 gadget targets: `foglamp` (the driving lamps, hinged at their bottom edge), `missile`, `laser` and `spikes` (wheel
+frame), `ski`, `plateR` (hinged rear plate), `rocket` (with its flame, exported as `muzzle`), `hud` (windscreen decal).
+Sources: the "1983 Aston Martin V8 Vantage" scale drawing from getoutlines.com (CC BY 4.0), scaled by the 2.610 m
+wheelbase, and published specifications (length ~4.67 m, width 1.83 m, height ~1.33 m, tracks ~1.50 m).
+
 ## Sources
 
 - FIA/RAC homologation form no. 186 (Aston Martin DB5, 1963): dimensions, wheels and tyres, gearbox, engine.
