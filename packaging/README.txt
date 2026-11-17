@@ -2,9 +2,12 @@ UNO WITH A LADDER - DB5 EDITION
 ===============================
 
 A racing game in a single HTML file that draws on your graphics card with WebGPU.
-Drive a 1964 Aston Martin DB5 in Silver Birch, with its Goldfinger-style gadgets,
-around the Serra da Mata circuit. You can also pick the original 1996 Fiat Uno Mille EP
-with a ladder on the roof (choose the car in the menu: press Esc).
+Three cars: a 1964 Aston Martin DB5 in Silver Birch and a 1987 Aston Martin V8 Vantage
+in Cumberland Grey, both with film-style gadgets, and the original 1996 Fiat Uno Mille EP
+with a ladder on the roof. Two maps: the Serra da Mata mountain circuit, and
+Weston-super-Mare, built from OpenStreetMap - a 3.5 km street circuit along the seafront,
+and the rest of the town to drive around freely.
+Pick the car and the map on the start screen (press Esc for the menu).
 
 
 WHAT YOU NEED
@@ -68,6 +71,17 @@ DB5 gadgets
   Q (hold)          horn                        (L3, hold)
   L                 headlamps
 
+V8 Vantage gadgets
+  G (hold)          hubcap lasers               (B, hold)
+  K                 missiles from behind the driving lamps, two per load (D-pad up)
+  T                 spiked tyres                (D-pad right)
+  U                 outrigger skis              (Back)
+  J                 rocket booster: 3 s of thrust, then 15 s to recharge (LB)
+  E (hold 2 s)      self-destruct (the car comes back on the track) (R3, hold)
+  Q (hold)          horn                        (L3, hold)
+  L                 headlamps
+  The head-up display shows in the cockpit view while the weapons are in use.
+
 Other
   M  sound on/off     H  performance stats     B  benchmark lap
   F  watch the demo lap      1 to 6  fixed camera views
@@ -80,21 +94,31 @@ macOS: double-click  Play-macOS.command  (the first time: right-click > Open).
 Linux: run  ./Play-Linux.sh  (add  --install  to put it in your applications menu).
 
 
-ABOUT THE CAR
--------------
-The DB5 was modelled in Blender from measured data: the FIA homologation form no. 186
-(wheelbase 2489 mm, tracks 1378/1359 mm, length 4572 mm, width 1676 mm, 6.70x15 tyres
-on 15-inch wire wheels), published specifications, and scale drawings. Its physics use
-the homologated figures (3995 cc straight-six, 282 bhp at 5500 rpm, ZF 5-speed gearbox,
-rear-wheel drive), and all engine and gadget sounds are synthesised live as you drive.
+ABOUT THE CARS AND THE MAP
+--------------------------
+The DB5 and the V8 Vantage were modelled in Blender from measured data. DB5: FIA
+homologation form no. 186 (wheelbase 2489 mm, 3995 cc straight-six, 282 bhp, ZF
+five-speed). V8 Vantage: a scale drawing and published figures (wheelbase 2610 mm,
+5340 cc V8 with four Weber carburettors, about 400 bhp, ZF five-speed, 255/60 VR15
+tyres). Every engine and gadget sound is synthesised live as you drive.
+Weston-super-Mare is built from OpenStreetMap (streets and building footprints) and
+elevation data; the street circuit runs Royal Parade, Knightstone Road, the Boulevard,
+Alexandra Parade, Station Road, Walliscote Road and back along Beach Road.
 
 Credits
-- Body proportions were measured from the "1965 Aston Martin DB5 Coupe" blueprint
-  by getoutlines.com, licensed CC BY 4.0:
+- Body proportions were measured from the "1965 Aston Martin DB5 Coupe" and
+  "1983 Aston Martin V8 Vantage" blueprints by getoutlines.com, licensed CC BY 4.0:
   https://getoutlines.com/blueprints/12592/1965-aston-martin-db5-coupe-blueprints
+  https://getoutlines.com/blueprints/13815/1983-aston-martin-v8-vantage-coupe-blueprints
+- Weston-super-Mare: map data (c) OpenStreetMap contributors, ODbL
+  (https://www.openstreetmap.org/copyright). Contains Environment Agency information
+  (c) Environment Agency and/or database right (LIDAR, Open Government Licence v3.0).
+  Terrain: AWS Terrain Tiles (Mapzen/Tilezen) - UK terrain data (c) Environment Agency
+  copyright and/or database right 2015; SRTM and GMTED2010 courtesy of the U.S.
+  Geological Survey; ETOPO1 from NOAA; EU-DEM produced using Copernicus data.
 - The game engine, the circuit and the Fiat Uno come from the original
   "Uno com Escada" game (see LICENSE.md: PolyForm Noncommercial 1.0.0).
 
-This is an unofficial, non-commercial fan project. Aston Martin and DB5 are trademarks
+This is an unofficial, non-commercial fan project. Aston Martin, DB5 and Vantage are trademarks
 of Aston Martin Lagonda Ltd; the project is not affiliated with or endorsed by
 Aston Martin or by the makers of the James Bond films.
