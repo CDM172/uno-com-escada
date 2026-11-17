@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// game.js — carga, laço principal, entrada, câmeras, modos, ganchos de teste
+// game.js — loading, main loop, input, cameras, modes, test hooks
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -10,56 +10,56 @@ const GAME = (() => {
   const msg = (t) => { msgEl.textContent = t; msgEl.style.display = t ? 'flex' : 'none'; };
   G.params = params;
   G.ready = false;
-  // interface (tela de início, menu, painel, som): só no jogo aberto por uma pessoa.
-  // Captura, teste e medição (?manual, ?replay, ?perf) ficam como eram; ?ui força a interface (testes).
+  // interface (start screen, menu, dashboard, sound): only in the game opened by a person.
+  // Capture, test and measurement (?manual, ?replay, ?perf) stay as they were; ?ui forces the interface (tests).
   const UION = params.has('ui') || !(params.has('manual') || params.has('replay') || params.has('perf'));
   const $ = (id) => document.getElementById(id);
   const fs = { cam: { x: 0, y: 5, z: 10, tx: 0, ty: 0, tz: 0, fovy: 0.75 }, time: 0, dt: 1 / 60, taa: true, hud: !params.has('nohud') && !UION, cubeCenter: null,
     speedKmh: 0, lapTime: 0, camIndex: 0, motionBlur: 1, allShadows: false, allCubeFaces: false, cut: true };
   G.frameState = fs;
 
-  // ------------------------------------------------ estado do jogo
+  // ------------------------------------------------ game state
   const car = new Car();
   G.car = car;
   const input = { up: false, down: false, left: false, right: false, hand: false, analog: false, stick: false, a: new Float64Array(3) };
   const keysDown = { up: false, down: false, left: false, right: false, hand: false };
   G.input = keysDown;
   G.mode = params.has('replay') || params.has('perf') ? 'replay' : 'play';
-  G.camMode = 0;             // 0 perseguição, 1 capô, 2 TV
+  G.camMode = 0;             // 0 chase, 1 hood, 2 TV
   G.debugCam = false;
-  // escalares mutáveis por quadro em memória fixa (variáveis de closure com double alocam HeapNumber a cada escrita)
+  // per-frame mutable scalars in fixed memory (closure variables holding doubles allocate a HeapNumber on every write)
   const F = new Float64Array(8);   // 0 simTime, 1 acc, 2 lapStart, 3 lastS, 4 lapDist, 5 lastT, 6 lastFrameT
   let simFrame = 0, lapRunning = true;
-  const CAM_NAMES = ['perseguição', 'capô', 'TV'];
+  const CAM_NAMES = ['chase', 'hood', 'TV'];
   const UI = { on: UION, screen: UION ? 'inicio' : 'jogo', stats: false, pose: 0, bench: false, watch: false, result: null };
   G.ui = UI;
   let paused = UION, frozen = false, hudOn = false;
-  // cronômetro: 0 volta em curso, 1 última, 2 melhor (−1 = sem tempo), 3 início, 4 distância desde a linha, 5 correndo, 6 volta toda do jogador, 7 voltas
+  // lap timer: 0 current lap, 1 last, 2 best (−1 = no time), 3 start, 4 distance since the line, 5 running, 6 whole lap by the player, 7 laps
   const LT = new Float64Array(8);
   const lapReset = () => { LT[0] = 0; LT[3] = 0; LT[4] = 0; LT[5] = 0; LT[6] = 0; };
   LT[1] = -1; LT[2] = -1;
-  // estatísticas na tela: 0 quadros/s, 1 ms por quadro, 2 ms de GPU, 3 tempo acumulado, 4 quadros, 5 hora de apagar o aviso
+  // on-screen stats: 0 frames/s, 1 ms per frame, 2 GPU ms, 3 accumulated time, 4 frames, 5 time to clear the notice
   const ST = new Float64Array(8);
-  const SCHED = [[0, 0], [13.2, 2], [24.5, 0], [37.5, 1], [47.5, 0]];   // câmeras da volta roteirizada (as do vídeo)
+  const SCHED = [[0, 0], [13.2, 2], [24.5, 0], [37.5, 1], [47.5, 0]];   // cameras of the scripted lap (the ones in the video)
 
-  // ------------------------------------------------ entrada: teclado
+  // ------------------------------------------------ input: keyboard
   const KEYMAP = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'hand' };
   let lookKey = false, padLook = false, padHand = false, stickLast = false, padN = 0;
-  // comando de direção com a volta roteirizada rodando: o jogador assume; numa pose, sai dela
+  // driving input while the scripted lap is running: the player takes over; in a pose, leaves it
   function drive() {
     if (G.mode === 'replay' && (G.takeOverOnKey || UI.watch)) takeOver();
     if (UI.pose) leavePose();
   }
   function takeOver() {
     G.mode = 'play';
-    if (UI.watch) { UI.watch = false; G.camSchedule = null; G.camMode = 0; camInit = false; fs.cut = true; say('Você no controle'); }
+    if (UI.watch) { UI.watch = false; G.camSchedule = null; G.camMode = 0; camInit = false; fs.cut = true; say('You have control'); }
   }
   function camKey() {
     if (UI.bench) return;
     if (UI.pose) { leavePose(); return; }
     if (UI.watch) G.camSchedule = null;
     G.cycleCamera();
-    if (UI.on) say('Câmera: ' + CAM_NAMES[G.camMode]);
+    if (UI.on) say('Camera: ' + CAM_NAMES[G.camMode]);
   }
   function resetKey() {
     if (UI.bench) return;
@@ -70,7 +70,7 @@ const GAME = (() => {
   function onKey(e, down) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const c = e.code;
-    if (UI.on && paused) {       // menus: só Esc, M, H e B; Enter/Espaço ficam com o botão em foco
+    if (UI.on && paused) {       // menus: only Esc, M, H and B; Enter/Space belong to the focused button
       if (down && !e.repeat && uiKey(c)) e.preventDefault();
       return;
     }
@@ -85,7 +85,7 @@ const GAME = (() => {
   }
   function uiKey(c) {
     if (c === 'Escape') { if (UI.screen === 'jogo') G.pause(); else G.resume(); }
-    else if (c === 'KeyM') { SND.setMute(!SND.muted); say(SND.muted ? 'Som desligado' : 'Som ligado'); }
+    else if (c === 'KeyM') { SND.setMute(!SND.muted); say(SND.muted ? 'Sound off' : 'Sound on'); }
     else if (c === 'KeyH') { UI.stats = !UI.stats; RENDER.tsLive = UI.stats; ST[3] = 0; ST[4] = 0; hudVis(); }
     else if (UI.screen === 'inicio') return false;
     else if (c === 'KeyB') G.startBench();
@@ -101,9 +101,9 @@ const GAME = (() => {
   window.addEventListener('keyup', (e) => onKey(e, false));
   window.addEventListener('blur', () => { for (const k in keysDown) keysDown[k] = false; lookKey = false; });
 
-  // ------------------------------------------------ entrada: controle (Gamepad API, layout padrão)
-  // gatilho direito acelera, esquerdo freia/ré (analógicos); analógico esquerdo faz curvas; A freio de mão; Y câmera; X volta à pista; RB olha para trás; Start menu
-  const PADV = new Float64Array(3);                             // direção −1..1, acelerador 0..1, freio 0..1
+  // ------------------------------------------------ input: gamepad (Gamepad API, standard layout)
+  // right trigger throttle, left trigger brake/reverse (analog); left stick steers; A handbrake; Y camera; X back to track; RB looks back; Start menu
+  const PADV = new Float64Array(3);                             // steering −1..1, throttle 0..1, brake 0..1
   const padNow = new Uint8Array(17), padWas = new Uint8Array(17);
   const padCount = () => { padN = 0; const g = navigator.getGamepads ? navigator.getGamepads() : []; for (let i = 0; i < g.length; i++) if (g[i] && g[i].connected) padN++; if (!padN) { PADV.fill(0); padNow.fill(0); padHand = padLook = false; } };
   window.addEventListener('gamepadconnected', padCount);
@@ -115,7 +115,7 @@ const GAME = (() => {
     for (let i = 0; i < gps.length; i++) { const g = gps[i]; if (g && g.connected && (!gp || (g.mapping === 'standard' && gp.mapping !== 'standard'))) gp = g; }
     if (!gp) return;
     const b = gp.buttons, nb = b.length;
-    // zona morta de 14% e curva suave no centro
+    // 14% dead zone and a gentle curve around the centre
     let x = gp.axes.length ? gp.axes[0] : 0;
     const ax = Math.abs(x);
     x = ax < 0.14 ? 0 : (ax > 1 ? 1 : (ax - 0.14) / 0.86) * (x < 0 ? -1 : 1);
@@ -141,13 +141,13 @@ const GAME = (() => {
   G.cycleCamera = () => { G.camMode = (G.camMode + 1) % 3; camInit = false; fs.cut = true; G.debugCam = false; };
   const tmp3 = new Float64Array(3);
   G.resetCar = () => {
-    // volta ao ponto mais próximo da pista, alinhado, parado
+    // back to the nearest point on the track, aligned, stationary
     TRACK.project(car.x, car.z, -1, tmp3);
     car.placeOnTrack(tmp3[0], clamp(tmp3[1], -3, 3));
     copyPrev(); camInit = false; fs.cut = true;
   };
 
-  // ------------------------------------------------ pose visual (interpolada)
+  // ------------------------------------------------ visual pose (interpolated)
   const pose = { x: 0, y: 0, z: 0, fx: 1, fy: 0, fz: 0, ux: 0, uy: 1, uz: 0, roll: 0, pitch: 0, heave: 0, steer: 0, spin: new Float32Array(4), drop: new Float32Array(4), brake: 0, reverse: 0, lights: 0 };
   G.pose = pose;
   const prevSt = { x: 0, y: 0, z: 0, psi: 0, roll: 0, pitch: 0, pg: 0, rg: 0, spin: new Float64Array(4) };
@@ -164,7 +164,7 @@ const GAME = (() => {
     const c = Math.cos(psi), s = Math.sin(psi);
     const cp = Math.cos(pg), sp = Math.sin(pg);
     pose.fx = c * cp; pose.fy = sp; pose.fz = s * cp;
-    // direita horizontal; cima = direita x frente; depois rolagem do terreno em torno da frente
+    // horizontal right; up = right x forward; then terrain roll about the forward axis
     const rx = -s, rz = c;
     const ux = -rz * pose.fy, uy = rz * pose.fx - rx * pose.fz, uz = rx * pose.fy;
     const cr = Math.cos(rg), sr = Math.sin(rg);
@@ -178,7 +178,7 @@ const GAME = (() => {
     pose.reverse = car.reverse && car.thr > 0.05 ? 1 : 0;
   }
 
-  // ------------------------------------------------ câmeras
+  // ------------------------------------------------ cameras
   let camInit = false;
   const ch = { x: 0, y: 0, z: 0, yaw: 0, tx: 0, ty: 0, tz: 0 };
   const tvCams = [];
@@ -189,7 +189,7 @@ const GAME = (() => {
       TRACK.sampleS(s0, ts);
       const i = Math.floor(s0 / TRACK.ds) % TRACK.N;
       let sg = 0; for (let k = -30; k <= 30; k++) sg += TRACK.curv[(i + k + TRACK.N) % TRACK.N];
-      const side = sg > 0 ? -1 : 1;           // lado externo da curva
+      const side = sg > 0 ? -1 : 1;           // outer side of the corner
       const wall = side < 0 ? TRACK.wallL[i] : TRACK.wallR[i];
       const u = side * (wall + 4.5);
       const x = ts[0] - ts[4] * u, z = ts[2] + ts[3] * u;
@@ -203,7 +203,7 @@ const GAME = (() => {
     const c = fs.cam;
     const hx = pose.fx, hz = pose.fz, hl = Math.hypot(hx, hz) || 1;
     const fx = hx / hl, fz = hz / hl;
-    const lb = G.lookBack ? -1 : 1;              // olhar para trás espelha a câmera (a de TV vira perseguição)
+    const lb = G.lookBack ? -1 : 1;              // looking back mirrors the camera (the TV one becomes chase)
     if (G.camMode === 0 || (lb < 0 && G.camMode === 2)) {
       const yawT = Math.atan2(fz, fx);
       if (!camInit) { ch.yaw = yawT; ch.y = pose.y; camInit = true; }
@@ -218,7 +218,7 @@ const GAME = (() => {
       c.fovy = (44 + Math.min(spd, 40) * 0.12) * PI / 180;
       fs.camIndex = 0;
     } else if (G.camMode === 1) {
-      // capô: preso à carroceria (inclui arfagem e rolagem)
+      // hood: attached to the body (includes pitch and roll)
       const rx = -fz, rz = fx;
       const ax = lb > 0 ? 0.58 : -2.0, ay = lb > 0 ? 1.25 : 1.0;
       c.x = pose.x + pose.fx * ax + pose.ux * ay; c.y = pose.y + pose.fy * ax + pose.uy * ay + pose.heave; c.z = pose.z + pose.fz * ax + pose.uz * ay;
@@ -248,7 +248,7 @@ const GAME = (() => {
     }
   }
 
-  // tela de início: órbita lenta em volta do carro parado no grid
+  // start screen: slow orbit around the car parked on the grid
   function orbitCamera() {
     const a = fs.time * 0.11 + 2.3, c = fs.cam;
     c.x = pose.x + Math.cos(a) * 6.6; c.z = pose.z + Math.sin(a) * 6.6;
@@ -256,7 +256,7 @@ const GAME = (() => {
     c.tx = pose.x; c.ty = pose.y + 0.72; c.tz = pose.z; c.fovy = 40 * PI / 180; fs.camIndex = 0;
   }
 
-  // ------------------------------------------------ simulação
+  // ------------------------------------------------ simulation
   function simStep() {
     if (G.mode === 'replay' && LAP.keys) {
       const f = Math.floor(simFrame / 2);
@@ -269,7 +269,7 @@ const GAME = (() => {
       input.up = a.up; input.down = a.down; input.left = a.left; input.right = a.right; input.hand = a.hand;
       input.analog = false;
     } else {
-      // teclado e controle somados; com teclas (0/1) o resultado é idêntico ao da entrada digital
+      // keyboard and gamepad summed; with keys (0/1) the result is identical to the digital input
       const ks = (keysDown.right ? 1 : 0) - (keysDown.left ? 1 : 0), A = input.a;
       input.up = keysDown.up; input.down = keysDown.down; input.left = keysDown.left; input.right = keysDown.right; input.hand = keysDown.hand || padHand;
       if (ks !== 0) stickLast = false;
@@ -281,7 +281,7 @@ const GAME = (() => {
     simFrame++;
     F[0] += PHYS.DT;
     let ds = car.s - F[3]; if (ds < -TRACK.L / 2) ds += TRACK.L; if (ds > TRACK.L / 2) ds -= TRACK.L;
-    // cronômetro do painel: a volta conta ao cruzar a linha de largada, para a frente, depois de dar a volta inteira
+    // dashboard lap timer: a lap counts when crossing the start line, forwards, after going all the way round
     {
       let r0 = F[3] - TRACK.sStart; if (r0 > TRACK.L / 2) r0 -= TRACK.L; else if (r0 < -TRACK.L / 2) r0 += TRACK.L;
       LT[4] += ds;
@@ -311,9 +311,9 @@ const GAME = (() => {
     while (F[1] >= PHYS.DT - 1e-9 && n < 24) { simStep(); F[1] -= PHYS.DT; n++; }
     if (n === 24) F[1] = 0;
   };
-  G.simFrame = (dt) => { F[7] = dt; G.advance(); };     // só a simulação, sem imagem (som fora do tempo real)
+  G.simFrame = (dt) => { F[7] = dt; G.advance(); };     // simulation only, no picture (off-real-time sound)
 
-  // ------------------------------------------------ quadro
+  // ------------------------------------------------ frame
   const cubeC = new Float32Array(3);
   function frame() {
     const dt = F[7];
@@ -331,7 +331,7 @@ const GAME = (() => {
     RENDER.renderFrame(fs);
     fs.cut = false;
   }
-  // um quadro do jogo: entrada do controle, quadro, painel e som (tudo sem alocar)
+  // one game frame: gamepad input, frame, dashboard and sound (all without allocating)
   function tick() {
     if (padN > 0) pollPad();
     const lb = lookKey || padLook;
@@ -349,7 +349,7 @@ const GAME = (() => {
     if (ST[5] > 0 && fs.time > ST[5]) { ST[5] = 0; avisoEl.className = ''; }
   }
 
-  // ------------------------------------------------ interface: telas, avisos, poses, volta para assistir, benchmark
+  // ------------------------------------------------ interface: screens, notices, poses, lap to watch, benchmark
   const menuEl = $('menu'), avisoEl = $('aviso');
   function say(t) { if (!UI.on) return; avisoEl.textContent = t; avisoEl.className = 'on'; ST[5] = fs.time + 2.4; }
   function hudVis() {
@@ -357,7 +357,7 @@ const GAME = (() => {
     hudOn = UI.screen !== 'inicio' && UI.screen !== 'resultado' && !UI.bench && !UI.pose;
     HUD.show(hudOn, UI.stats && UI.screen !== 'inicio' && !UI.bench);
   }
-  // telas: inicio → jogo ⇄ pausa; resultado (fim do benchmark) → jogo
+  // screens: inicio → jogo ⇄ pausa; resultado (end of the benchmark) → jogo
   function setScreen(s) {
     UI.screen = s; paused = s !== 'jogo';
     if (!UI.on) return;
@@ -378,9 +378,9 @@ const GAME = (() => {
     if (G.mode === 'replay') G.mode = 'play';
     hudVis();
   }
-  // 1 a 6: as seis poses fixas da captura (mesmo carro, mesma câmera; a 4 é a câmera de TV no grampo, aos 14 s da volta)
+  // 1 to 6: the six fixed capture poses (same car, same camera; 4 is the TV camera at the hairpin, 14 s into the lap)
   const POSES = [[5.6, -4.4, 1.25, 0, 0, 0.62, 33], [-5.8, 4.2, 2.5, -0.2, 0, 0.9, 34], [0.2, -4.6, 1.4, -0.1, 0, 0.95, 36], null, [-120, 7.5, -3, 60, 1.5, 2, 52], [-10, 38, 70, -170, 0, -190, 55]];
-  const POSE_NAMES = ['frente ¾', 'traseira ¾ e escada', 'lateral e interior', 'TV no grampo', 'reta de largada', 'paisagem'];
+  const POSE_NAMES = ['front ¾', 'rear ¾ and ladder', 'side and interior', 'TV at the hairpin', 'start straight', 'landscape'];
   const ts6 = new Float64Array(6);
   G.gotoPose = (n) => {
     if (UI.bench || !(n >= 1 && n <= 6)) return;
@@ -392,7 +392,7 @@ const GAME = (() => {
       frozen = true;
     } else {
       G.mode = 'play'; G.camMode = 0; frozen = false; fs.hud = false;
-      let best = 380, bd = -9; const sd = RENDER.sun.dir;      // trecho aberto, de frente para o sol
+      let best = 380, bd = -9; const sd = RENDER.sun.dir;      // open stretch, facing the sun
       for (let s = 360; s < 430; s += 1) { TRACK.sampleS(s, ts6); const d = ts6[3] * sd[0] + ts6[4] * sd[2]; if (d > bd) { bd = d; best = s; } }
       car.placeOnTrack(best, 1.5); F[3] = car.s; F[1] = 0; copyPrev(); updatePose();
       const q = POSES[n - 1], p = pose;
@@ -402,13 +402,13 @@ const GAME = (() => {
     UI.pose = n; camInit = false; fs.cut = true; lapReset();
     hudVis(); say('Pose ' + n + ' — ' + POSE_NAMES[n - 1]);
   };
-  // F: a volta roteirizada, só para assistir (qualquer comando de direção devolve o carro ao jogador)
+  // F: the scripted lap, just to watch (any driving input hands the car back to the player)
   G.watchLap = () => {
     if (UI.bench) return;
     leavePose(); G.startScripted(); G.camMode = 0; G.camSchedule = SCHED; G.debugCam = false; UI.watch = true;
-    say('Volta roteirizada — acelere ou faça uma curva para assumir');
+    say('Scripted lap — throttle or steer to take over');
   };
-  // B: a mesma volta medida de ?perf, em 2560×1440; no fim mostra os números
+  // B: the same measured lap as ?perf, at 2560×1440; shows the numbers at the end
   G.startBench = () => {
     if (!UI.on || UI.bench || UI.screen === 'inicio' || !G.ready) return;
     leavePose(); UI.watch = false; G.camSchedule = null; G.debugCam = false;
@@ -416,22 +416,22 @@ const GAME = (() => {
     canvas.style.objectFit = 'contain'; RENDER.resize(2560, 1440);
     setScreen('jogo');
     startPerf();
-    say('Benchmark: 60 s — Esc cancela');
+    say('Benchmark: 60 s — Esc to cancel');
   };
   function benchClose() { UI.bench = false; fs.hud = false; canvas.style.objectFit = ''; fit(); toGrid(); }
   function benchCancel() { perf.on = false; RENDER.stopTimestampLog(); benchClose(); }
   function benchEnd(r) {
     const st = (a) => { if (!a.length) return null; const v = Float64Array.from(a).sort(); let m = 0; for (let i = 0; i < v.length; i++) m += v[i]; return { media: m / v.length, p99: v[Math.min(v.length - 1, Math.floor(0.99 * v.length))], max: v[v.length - 1] }; };
     const over = (a, lim) => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] > lim) n++; return n; };
-    // como em perf.py: descarta as 5 primeiras amostras; 16,75 = 16,7 mais o arredondamento de 0,1 ms do relógio do navegador
+    // as in perf.py: drops the first 5 samples; 16.75 = 16.7 plus the 0.1 ms rounding of the browser clock
     const fi = r.frameIntervals.slice(5), g = r.gpu.slice(5);
     const res = { quadros: r.frames, segundos: r.seconds, volta: r.lap, largura: RENDER.W, altura: RENDER.H, quadro: st(fi), gpu: st(g), acima16_7: over(fi, 16.75), gpuAcima16_7: g.length ? over(g, 16.7) : null };
     UI.result = res;
-    const n = (x) => x.toFixed(2).replace('.', ','), row = (t, o) => `<tr><th>${t}</th>` + (o ? `<td>${n(o.media)}</td><td>${n(o.p99)}</td><td>${n(o.max)}</td>` : '<td colspan="3">indisponível neste navegador</td>') + '</tr>';
-    $('res').innerHTML = `<h2>Benchmark — volta roteirizada, ${res.largura}×${res.altura}</h2><table><tr><th></th><th>média</th><th>percentil 99</th><th>máximo</th></tr>` +
-      row('Tempo de quadro (ms)', res.quadro) + row('Tempo de GPU (ms)', res.gpu) + '</table>' +
-      `<p>${res.quadros} quadros em ${n(res.segundos)} s (${n(res.quadros / res.segundos)} quadros/s). Passaram de 16,7 ms: <b>${res.acima16_7}</b> quadros no tempo de quadro` +
-      (res.gpu ? ` e <b>${res.gpuAcima16_7}</b> no tempo de GPU.` : '.') + '</p>';
+    const n = (x) => x.toFixed(2), row = (t, o) => `<tr><th>${t}</th>` + (o ? `<td>${n(o.media)}</td><td>${n(o.p99)}</td><td>${n(o.max)}</td>` : '<td colspan="3">unavailable in this browser</td>') + '</tr>';
+    $('res').innerHTML = `<h2>Benchmark — scripted lap, ${res.largura}×${res.altura}</h2><table><tr><th></th><th>average</th><th>99th percentile</th><th>maximum</th></tr>` +
+      row('Frame time (ms)', res.quadro) + row('GPU time (ms)', res.gpu) + '</table>' +
+      `<p>${res.quadros} frames in ${n(res.segundos)} s (${n(res.quadros / res.segundos)} frames/s). Over 16.7 ms: <b>${res.acima16_7}</b> frames by frame time` +
+      (res.gpu ? ` and <b>${res.gpuAcima16_7}</b> by GPU time.` : '.') + '</p>';
     benchClose();
     setScreen('resultado');
   }
@@ -453,7 +453,7 @@ const GAME = (() => {
   async function main() {
     canvas = document.getElementById('c');
     try {
-      msg('gerando circuito…');
+      msg('generating circuit…');
       await new Promise(r => setTimeout(r, 0));
       await RENDER.init(canvas);
       RENDER.addMesh(WORLD.buildTrack().pack(), { name: 'track', shadow: false });
@@ -484,18 +484,18 @@ const GAME = (() => {
       if (params.has('perf')) startPerf();
     } catch (e) {
       console.error(e);
-      msg('Erro: ' + e.message);
+      msg('Error: ' + e.message);
       G.error = String(e.stack || e);
     }
   }
 
-  // ------------------------------------------------ captura / testes (passo manual)
+  // ------------------------------------------------ capture / tests (manual stepping)
   G.setPose = (x, y, z, tx, ty, tz, fovDeg) => {
     G.debugCam = true;
     const c = fs.cam; c.x = x; c.y = y; c.z = z; c.tx = tx; c.ty = ty; c.tz = tz; c.fovy = fovDeg * PI / 180;
   };
   G.step = (dt) => { F[7] = dt; tick(); };
-  // programação de câmeras da volta capturada: [tempo, câmera]
+  // camera schedule of the captured lap: [time, camera]
   G.camSchedule = null;
   G.applySchedule = () => {
     if (!G.camSchedule) return;
@@ -509,7 +509,7 @@ const GAME = (() => {
     screen: UI.screen, paused, frozen, pose: UI.pose, bench: UI.bench, watch: UI.watch, stats: UI.stats, muted: SND.muted, audio: SND.ctx ? SND.ctx.state : 'nenhum', hud: hudOn, shaderHud: fs.hud,
     lapNow: LT[0], lapLast: LT[1], lapBest: LT[2], laps: LT[7], frame: simFrame });
 
-  // ------------------------------------------------ laço em tempo real
+  // ------------------------------------------------ real-time loop
   function loop(t) {
     F[7] = F[5] ? Math.min((t - F[5]) / 1000, 0.1) : 1 / 60;
     F[5] = t;
@@ -517,10 +517,10 @@ const GAME = (() => {
     if (perf.on) perfTick(t);
     requestAnimationFrame(loop);
   }
-  // ------------------------------------------------ medição (volta de 60 s em tempo real)
+  // ------------------------------------------------ measurement (60 s lap in real time)
   const perf = { on: false, t0: 0, frames: 0, cpu: null };
   function startPerf() {
-    // aquecimento (compila pipelines, enche históricos) antes da volta medida
+    // warm-up (compiles pipelines, fills histories) before the measured lap
     FX.warm(car);
     fs.allShadows = true; fs.allCubeFaces = true;
     F[7] = 1 / 60;

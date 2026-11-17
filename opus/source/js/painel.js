@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
-// painel.js — painel do jogo em canvas 2D por cima da imagem: velocímetro,
-// conta-giros, marcha, cronômetro, melhor volta e estatísticas de desempenho.
-// Só existe no jogo aberto por uma pessoa. Desenho por quadro sem alocação:
-// fundos e glifos pré-desenhados, só inteiros nas chamadas do canvas.
+// painel.js — game dashboard on a 2D canvas over the picture: speedometer,
+// tachometer, gear, lap timer, best lap and performance stats.
+// Only exists in the game opened by a person. Per-frame drawing with no allocation:
+// pre-drawn backgrounds and glyphs, only integers in the canvas calls.
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -11,10 +11,10 @@ const HUD = (() => {
   const FF = '"Helvetica Neue", Helvetica, Arial, sans-serif', GL = '0123456789:.-RN,';
   const A0 = 135 * PI / 180, SW = 270 * PI / 180;
   let cvP, cvT, cvS, gP, gT, gS, bgP, bgT, bgS, fB, fM, fS, u = 1, made = false;
-  const L = new Int32Array(12).fill(-1);       // últimos valores desenhados
-  const D = new Int32Array(8);                 // centros e raios dos mostradores (px)
+  const L = new Int32Array(12).fill(-1);       // last values drawn
+  const D = new Int32Array(8);                 // centres and radii of the dials (px)
   const mk = (id) => { const c = document.createElement('canvas'); c.className = 'hud'; c.id = id; c.style.display = 'none'; document.body.appendChild(c); return c; };
-  // fonte em mosaico: uma célula por glifo de GL
+  // tiled font: one cell per glyph of GL
   function font(px) {
     const cw = Math.ceil(px * 0.66), ch = Math.ceil(px * 1.2), cv = document.createElement('canvas');
     cv.width = cw * GL.length; cv.height = ch;
@@ -22,17 +22,17 @@ const HUD = (() => {
     for (let i = 0; i < GL.length; i++) g.fillText(GL[i], i * cw + cw / 2, ch / 2 + px * 0.04);
     return { cv, cw, ch, ad: Math.round(px * 0.58), ap: Math.round(px * 0.3) };
   }
-  // desenha o glifo i com o canto em (x, y) e devolve o novo x (inteiros)
+  // draws glyph i with its corner at (x, y) and returns the new x (integers)
   function gl(g, f, i, x, y) {
     const a = (i >= 10 && i <= 12) || i === 15 ? f.ap : f.ad;
     g.drawImage(f.cv, i * f.cw, 0, f.cw, f.ch, x - ((f.cw - a) >> 1), y, f.cw, f.ch);
     return x + a;
   }
-  // inteiro alinhado à direita em x
+  // integer right-aligned at x
   function num(g, f, v, x, y) {
     do { x -= f.ad; gl(g, f, v % 10, x, y); v = (v / 10) | 0; } while (v > 0);
   }
-  // tempo em centésimos (inteiro) como m:ss.cc; negativo = sem tempo
+  // time in hundredths (integer) as m:ss.cc; negative = no time
   function time(g, f, c, x, y) {
     if (c < 0) { x = gl(g, f, 12, x, y); x = gl(g, f, 10, x, y); x = gl(g, f, 12, x, y); x = gl(g, f, 12, x, y); x = gl(g, f, 11, x, y); x = gl(g, f, 12, x, y); gl(g, f, 12, x, y); return; }
     const m = (c / 6000) | 0, s = ((c - m * 6000) / 100) | 0, h = c % 100;
@@ -59,37 +59,37 @@ const HUD = (() => {
 
   H.resize = () => {
     if (!made) { cvP = mk('hp'); cvT = mk('ht'); cvS = mk('hs'); made = true; }
-    u = clamp(Math.min(innerWidth / 1280, innerHeight / 720), 0.6, 2) * devicePixelRatio;   // 1 unidade = 1 px num quadro de 720p
+    u = clamp(Math.min(innerWidth / 1280, innerHeight / 720), 0.6, 2) * devicePixelRatio;   // 1 unit = 1 px in a 720p frame
     fB = font(Math.round(34 * u)); fM = font(Math.round(26 * u)); fS = font(Math.round(15 * u));
-    // ---- painel: conta-giros (esq.) e velocímetro (dir.)
+    // ---- dashboard: tachometer (left) and speedometer (right)
     gP = size(cvP, 420, 208);
     bgP = bg(cvP); let g = bgP.getContext('2d');
     dial(g, 104 * u, 110 * u, 88 * u, 7000, 1000, 500, 1000, 6300, 'rpm ×1000');
     dial(g, 312 * u, 104 * u, 100 * u, 200, 20, 10, 1, 0, 'km/h');
     g.fillStyle = 'rgba(255,255,255,.12)'; g.beginPath(); g.roundRect(84 * u, 142 * u, 40 * u, 44 * u, 6 * u); g.fill();
-    // ---- cronômetro
+    // ---- lap timer
     gT = size(cvT, 250, 112);
     bgT = bg(cvT); g = bgT.getContext('2d');
     plate(g, 0, 0, cvT.width, cvT.height);
     g.font = `600 ${Math.round(11 * u)}px ${FF}`; g.fillStyle = 'rgba(255,255,255,.72)'; g.textBaseline = 'middle';
-    g.fillText('VOLTA', 14 * u, 30 * u); g.fillText('ÚLTIMA', 14 * u, 68 * u); g.fillText('MELHOR', 14 * u, 92 * u);
-    // ---- estatísticas
+    g.fillText('LAP', 14 * u, 30 * u); g.fillText('LAST', 14 * u, 68 * u); g.fillText('BEST', 14 * u, 92 * u);
+    // ---- stats
     gS = size(cvS, 170, 86);
     bgS = bg(cvS); g = bgS.getContext('2d');
     plate(g, 0, 0, cvS.width, cvS.height);
     g.font = `600 ${Math.round(11 * u)}px ${FF}`; g.fillStyle = 'rgba(255,255,255,.72)'; g.textBaseline = 'middle';
-    g.fillText('QUADROS/S', 12 * u, 20 * u); g.fillText('QUADRO  ms', 12 * u, 44 * u); g.fillText('GPU  ms', 12 * u, 68 * u);
+    g.fillText('FRAMES/S', 12 * u, 20 * u); g.fillText('FRAME  ms', 12 * u, 44 * u); g.fillText('GPU  ms', 12 * u, 68 * u);
     D[0] = 104 * u; D[1] = 110 * u; D[2] = 88 * u; D[3] = 312 * u; D[4] = 104 * u; D[5] = 100 * u;
     L.fill(-1);
   };
   H.show = (panel, stats) => { if (!made) return; cvP.style.display = cvT.style.display = panel ? 'block' : 'none'; cvS.style.display = stats ? 'block' : 'none'; };
 
-  function needle(g, cx, cy, r, f) {      // tudo inteiro; f em 1/4096 do fundo de escala
+  function needle(g, cx, cy, r, f) {      // all integer; f in 1/4096 of full scale
     const a = A0 + SW * (f > 4180 ? 4180 : f) / 4096, c = Math.cos(a), s = Math.sin(a);
     g.beginPath(); g.moveTo((cx - c * r * 0.16) | 0, (cy - s * r * 0.16) | 0); g.lineTo((cx + c * r * 0.86) | 0, (cy + s * r * 0.86) | 0); g.stroke();
     g.beginPath(); g.arc(cx | 0, cy | 0, (r * 0.085) | 0, 0, 7); g.fill();
   }
-  // LT: [volta em curso (s), última (s), melhor (s)] (−1 = sem tempo); lê o carro e o giro do som direto dos arrays
+  // LT: [current lap (s), last (s), best (s)] (−1 = no time); reads the car and the sound revs straight from the arrays
   H.draw = (car, LT) => {
     const kmh = Math.abs(car.u) * 3.6, rpm = SND.M[0], gear = car.reverse ? 13 : car.gear;
     const k10 = (kmh * 4) | 0, r10 = (rpm / 12) | 0;
@@ -112,7 +112,7 @@ const HUD = (() => {
       time(g, fS, c1, (84 * u) | 0, (59 * u) | 0); time(g, fS, c2, (84 * u) | 0, (83 * u) | 0);
     }
   };
-  // ST: [quadros/s, ms por quadro, ms de GPU (−1 = indisponível)], atualizado 2×/s
+  // ST: [frames/s, ms per frame, GPU ms (−1 = unavailable)], updated 2×/s
   H.stats = (ST) => {
     const a = (ST[0] + 0.5) | 0, b = (ST[1] * 10 + 0.5) | 0, c = ST[2] < 0 ? -1 : (ST[2] * 10 + 0.5) | 0;
     if (a === L[6] && b === L[7] && c === L[8]) return;
@@ -123,8 +123,8 @@ const HUD = (() => {
     dec(g, b, x, (35 * u) | 0);
     if (c < 0) gl(g, fS, 12, x - fS.ad, (59 * u) | 0); else dec(g, c, x, (59 * u) | 0);
   };
-  function dec(g, v, x, y) {      // décimos, com vírgula decimal
-    x -= fS.ad; gl(g, fS, v % 10, x, y); x -= fS.ap; gl(g, fS, 15, x, y); num(g, fS, (v / 10) | 0, x, y);
+  function dec(g, v, x, y) {      // tenths, with a decimal point
+    x -= fS.ad; gl(g, fS, v % 10, x, y); x -= fS.ap; gl(g, fS, 11, x, y); num(g, fS, (v / 10) | 0, x, y);
   }
   return H;
 })();

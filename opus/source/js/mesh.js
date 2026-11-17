@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// mesh.js — construtor de malhas (apenas em tempo de carga)
-// Vértice: pos f32x3 | nrm snorm16x4 (w = extra) | uv f32x2 | attr u8x4  = 32 B
+// mesh.js — mesh builder (load time only)
+// Vertex: pos f32x3 | nrm snorm16x4 (w = extra) | uv f32x2 | attr u8x4  = 32 B
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -8,13 +8,13 @@ const MAT = {
   TERRAIN: 1, ASPHALT: 2, KERB: 3, CONCRETE: 4, ARMCO: 5, TYRE_BARRIER: 6, PAINT_WHITE: 7,
   METAL_GALV: 8, ROOF_METAL: 9, SEAT_PLASTIC: 10, SIGN: 11, GLASS_DARK: 12, BRICK: 13, FENCE: 14, POLE: 15,
   GRANDSTAND: 16, PIT_WALL: 17, CROWD: 23, GANTRY: 18, LIGHTPANEL: 19, CANVAS: 20, WOOD: 21, RUNOFF_ASPHALT: 22,
-  // carro (>= 40)
+  // car (>= 40)
   CAR_PAINT: 40, CAR_PLASTIC: 41, CAR_CHROME: 42, CAR_TYRE: 43, CAR_HUBCAP: 44, CAR_HEADLIGHT: 45,
   CAR_TAILLIGHT: 46, CAR_INTERIOR: 47, CAR_SEAT: 48, CAR_DASH: 49, CAR_RUBBER: 50, CAR_ALU: 51,
   CAR_STRAP: 52, CAR_RACK: 53, CAR_PLATE: 54, CAR_BADGE: 55, CAR_INDICATOR: 56, CAR_GRILLE: 57,
   CAR_UNDER: 58, CAR_EXHAUST: 59, CAR_REFLECTOR: 60, CAR_WHEEL_STEEL: 61, CAR_MIRROR: 62, CAR_INNER_PAINT: 63,
   CAR_BRAKE: 64, CAR_GLASS_BLACK: 65, CAR_STEER: 66, CAR_PAINT_SOLID: 67,
-  // vegetação
+  // vegetation
   BARK: 80, LEAF: 81,
 };
 
@@ -24,7 +24,7 @@ class MB {
   setTransform(m) {
     this.xf = m;
     if (!m) { this.nxf = null; return; }
-    // matriz normal (inversa transposta 3x3)
+    // normal matrix (inverse transpose 3x3)
     const inv = new Float32Array(16); M4.invert(inv, m);
     this.nxf = [inv[0], inv[1], inv[2], inv[4], inv[5], inv[6], inv[8], inv[9], inv[10]];
   }
@@ -42,7 +42,7 @@ class MB {
   }
   tri(a, b, c) { this.ix.push(a, b, c); }
   quad(a, b, c, d) { this.ix.push(a, b, c, a, c, d); }
-  // grade paramétrica: f(u,v) -> [x,y,z]; normais por diferenças finitas
+  // parametric grid: f(u,v) -> [x,y,z]; normals by finite differences
   param(nu, nv, f, mat, uvScale = [1, 1], a = [0, 0, 0], flip = false, wfn = null) {
     const base = this.count, P = [];
     for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) P.push(f(i / nu, j / nv));
@@ -59,7 +59,7 @@ class MB {
       if (flip) this.quad(v0, v2, v3, v1); else this.quad(v0, v1, v3, v2);
     }
   }
-  // caixa alinhada (centro, meias-dimensões), normais planas
+  // aligned box (centre, half-extents), flat normals
   box(cx, cy, cz, hx, hy, hz, mat, a = [0, 0, 0], uvs = 1) {
     const F = [
       [[1, 0, 0], [0, 0, -1], [0, 1, 0]], [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
@@ -79,7 +79,7 @@ class MB {
       this.quad(idx[0], idx[1], idx[2], idx[3]);
     }
   }
-  // caixa orientada por 3 eixos (cada eixo já com meia-dimensão)
+  // box oriented by 3 axes (each axis already at half-extent)
   obox(c, ax, ay, az, mat, a = [0, 0, 0]) {
     const F = [[ax, ay, az], [neg3(ax), az, ay], [ay, az, ax], [neg3(ay), ax, az], [az, ax, ay], [neg3(az), ay, ax]];
     for (const [n, t, b] of F) {
@@ -89,13 +89,13 @@ class MB {
         const p = [0, 1, 2].map(k => c[k] + n[k] + t[k] * su + b[k] * sv);
         idx.push(this.vert(p[0], p[1], p[2], nn[0], nn[1], nn[2], su * 0.5 + 0.5, sv * 0.5 + 0.5, mat, a[0], a[1], a[2]));
       }
-      // garante orientação para fora
+      // ensures outward orientation
       const e1 = sub3(this.pos(idx[1]), this.pos(idx[0])), e2 = sub3(this.pos(idx[2]), this.pos(idx[0]));
       if (dot3(cross3(e1, e2), nn) < 0) this.quad(idx[0], idx[3], idx[2], idx[1]); else this.quad(idx[0], idx[1], idx[2], idx[3]);
     }
   }
   pos(i) { return [this.v[i * 13], this.v[i * 13 + 1], this.v[i * 13 + 2]]; }
-  // tubo ao longo de uma polilinha (perfil circular ou fornecido em 2D)
+  // tube along a polyline (circular profile or one supplied in 2D)
   sweep(path, profile, mat, opts = {}) {
     const n = path.length, m = profile.length;
     const up0 = opts.up || [0, 1, 0];
@@ -125,7 +125,7 @@ class MB {
       if (opts.flip) this.quad(v0, v3, v2, v1); else this.quad(v0, v1, v2, v3);
     }
   }
-  // revolução em torno do eixo X local: profile [[r, x, nr, nx], ...]; seg = nº de segmentos
+  // revolution about the local X axis: profile [[r, x, nr, nx], ...]; seg = number of segments
   lathe(profile, seg, mat, opts = {}) {
     const base = this.count, m = profile.length;
     for (let s = 0; s <= seg; s++) {
@@ -188,7 +188,7 @@ class MB {
     return { vb: buf, ib: new Uint32Array(this.ix), count: this.ix.length, nverts: n, min: mn, max: mx };
   }
 }
-// vetores 3D com arrays (somente carga)
+// 3D vectors with arrays (load only)
 function sub3(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
 function add3(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
 function scale3(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
@@ -199,7 +199,7 @@ function norm3(a) { const l = len3(a) || 1; return [a[0] / l, a[1] / l, a[2] / l
 function neg3(a) { return [-a[0], -a[1], -a[2]]; }
 function lerp3(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
 function m4Trs(tx, ty, tz, ry = 0, rx = 0, rz = 0, s = 1) {
-  // rotação Y*X*Z, escala uniforme
+  // rotation Y*X*Z, uniform scale
   const cy = Math.cos(ry), sy = Math.sin(ry), cx = Math.cos(rx), sx = Math.sin(rx), cz = Math.cos(rz), sz = Math.sin(rz);
   const o = new Float32Array(16);
   const Ry = [cy, 0, -sy, 0, 0, 1, 0, 0, sy, 0, cy, 0, 0, 0, 0, 1];

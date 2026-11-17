@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// lap.js — volta roteirizada: teclas gravadas por quadro de 1/60 s (RLE base36)
-// bits: 1 W, 2 S, 4 A, 8 D, 16 Espaço
+// lap.js — scripted lap: keys recorded per 1/60 s frame (RLE base36)
+// bits: 1 W, 2 S, 4 A, 8 D, 16 Space
 // ---------------------------------------------------------------------------
 'use strict';
 

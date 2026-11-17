@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// world.js — malhas estáticas do circuito: pista, zebras, terreno, barreiras,
-// pórtico, arquibancada, boxes, postes, torres de TV
+// world.js — static meshes of the circuit: track, kerbs, terrain, barriers,
+// gantry, grandstand, pits, posts, TV towers
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -9,7 +9,7 @@ const WORLD = {};
 WORLD.buildTrack = () => {
   const T = TRACK, mb = new MB();
   const N = T.N;
-  // asfalto: seção transversal com 11 vértices
+  // asphalt: cross-section with 11 vertices
   const US = [-1, -0.9, -0.7, -0.45, -0.2, 0, 0.2, 0.45, 0.7, 0.9, 1];
   const cols = US.length;
   const rowStart = [];
@@ -23,7 +23,7 @@ WORLD.buildTrack = () => {
       const u = US[c] * hw;
       const y = T.surfaceY(s, u) + 0.0;
       const wet = Math.round(T.wet[k] * 255);
-      // normal aproximada (coroamento)
+      // approximate normal (crown)
       const dydu = -0.06 * u / (hw * hw);
       const nx = -rx * dydu, nz = -rz * dydu;
       mb.vert(x + rx * u, y, z + rz * u, nx, 1, nz, u, s, MAT.ASPHALT, wet, 0, 0, clamp(T.racing[k] / 10, -1, 1));
@@ -33,7 +33,7 @@ WORLD.buildTrack = () => {
     const a = rowStart[i] + c, b = a + 1, d = rowStart[i + 1] + c, e = d + 1;
     mb.quad(a, d, e, b);
   }
-  // saias laterais (borda do asfalto)
+  // side skirts (asphalt edge)
   for (const side of [-1, 1]) {
     const top = [], bot = [];
     for (let i = 0; i <= N; i++) {
@@ -47,14 +47,14 @@ WORLD.buildTrack = () => {
     }
     for (let i = 0; i < N; i++) { if (side > 0) mb.quad(top[i], bot[i], bot[i + 1], top[i + 1]); else mb.quad(top[i], top[i + 1], bot[i + 1], bot[i]); }
   }
-  // zebras
+  // kerbs
   for (const side of [-1, 1]) {
     const kb = side < 0 ? T.kerbL : T.kerbR;
     let i = 0;
     while (i < N) {
       if (kb[i] <= 0) { i++; continue; }
       let j = i; while (j < N && kb[j] > 0) j++;
-      // perfil: plano inclinado subindo para fora, com borda
+      // profile: inclined plane rising outwards, with a lip
       const prof = [[0, 0.0], [0.15, 0.012], [0.85, 0.035], [1, 0.035], [1.0, -0.05]];
       const rows = [];
       for (let q = i - 1; q <= j; q++) {
@@ -109,7 +109,7 @@ WORLD.buildTerrain = () => {
   add(inner, false);
   const innerCount = mb.ix.length;
   add(outer, true);
-  // versão grossa (16 m) da região interna para o cubo de reflexo
+  // coarse version (16 m) of the inner region for the reflection cube
   const coarse = new MB();
   const CN = 101, st = 16;
   for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
@@ -121,9 +121,9 @@ WORLD.buildTerrain = () => {
   return { mb, innerCount, coarse };
 };
 
-// guard-rail (perfil W) varrido ao longo de um offset lateral
+// guard rail (W profile) swept along a lateral offset
 function railProfile() {
-  // perfil W (meia altura 0.16 m), espessura visual
+  // W profile (half-height 0.16 m), visual thickness
   const P = [];
   const pts = [[0, -0.17], [0.04, -0.12], [0.0, -0.06], [0.0, 0.06], [0.04, 0.12], [0, 0.17]];
   for (let k = 0; k < pts.length; k++) {
@@ -140,7 +140,7 @@ WORLD.buildBarriers = () => {
     const wall = side < 0 ? T.wallL : T.wallR;
     const wtype = side < 0 ? T.wallTypeL : T.wallTypeR;
     const tyre = side < 0 ? T.tyreL : T.tyreR;
-    // segmentos contínuos por tipo
+    // continuous segments by type
     let i = 0;
     while (i < N) {
       const type = wtype[i];
@@ -155,12 +155,12 @@ WORLD.buildBarriers = () => {
         pathBase.push([x, y, z, rx * side, rz * side, s]);
       }
       if (type === 0) {
-        // duas lâminas W
+        // two W blades
         for (const hgt of [0.55, 1.05]) {
           const path = pathBase.map(p => [p[0], p[1] + hgt, p[2]]);
           const prof = railProfile().map(([a, b, na, nb]) => [a * -side, b, na * -side, nb]);
           mb.sweep(path, prof, MAT.ARMCO, { closed: false, vScale: 1, up: [0, 1, 0], uvU: (k) => k / 5, flip: side > 0 });
-          // face de trás
+          // back face
           const back = path.map((p, idx) => [p[0] + pathBase[idx][3] * 0.06, p[1], p[2] + pathBase[idx][4] * 0.06]);
           mb.sweep(back, [[0, -0.17, 1, 0], [0, 0.17, 1, 0]].map(([a, b, na, nb]) => [a, b, na * side, nb]), MAT.ARMCO, { closed: false, flip: side < 0 });
         }
@@ -169,11 +169,11 @@ WORLD.buildBarriers = () => {
           posts.push([p[0] + p[3] * 0.12, p[1], p[2] + p[4] * 0.12]);
         }
       } else {
-        // muro de concreto (1.1 m) com tela acima (só como geometria simples)
+        // concrete wall (1.1 m) with fence above (simple geometry only)
         const prof = [[0, 0, -side, 0], [0, 1.15, -side, 0], [0.18 * side, 1.15, 0, 1], [0.18 * side, 0, side, 0]];
         const path = pathBase.map(p => [p[0], p[1] - 0.1, p[2]]);
         const flat = [[0, 0, -1, 0], [0, 1.25, -1, 0]];
-        // muro: duas faces + topo
+        // wall: two faces + top
         for (let f = 0; f < 3; f++) {
           const pa = prof[f], pb = prof[f + 1];
           const base = mb.count;
@@ -190,12 +190,12 @@ WORLD.buildBarriers = () => {
             if (f === 1) mb.quad(a, b, d, c); else if (f === 0) mb.quad(a, c, d, b); else mb.quad(a, b, d, c);
           }
         }
-        // tela/alambrado: postes
+        // fence/chain-link: posts
         for (let q = 0; q < pathBase.length; q += 3) {
           const p = pathBase[q];
           mb.cylinder([p[0] + p[3] * 0.09, p[1] + 1.1, p[2] + p[4] * 0.09], [p[0] + p[3] * 0.09, p[1] + 3.6, p[2] + p[4] * 0.09], 0.035, 0.035, 6, MAT.POLE);
         }
-        // cabos horizontais
+        // horizontal cables
         for (const hh of [1.6, 2.4, 3.4]) {
           const path2 = pathBase.map(p => [p[0] + p[3] * 0.09, p[1] + hh, p[2] + p[4] * 0.09]);
           const prof2 = []; for (let a = 0; a < 4; a++) { const an = a / 4 * TAU; prof2.push([Math.cos(an) * 0.012, Math.sin(an) * 0.012, Math.cos(an), Math.sin(an)]); }
@@ -204,17 +204,17 @@ WORLD.buildBarriers = () => {
       }
       i = j;
     }
-    // barreiras de pneus (pilhas) na frente do guard-rail onde há brita
+    // tyre barriers (stacks) in front of the guard rail where there is gravel
     for (let q = 0; q < N; q += 1) {
       if (!tyre[q]) continue;
     }
   }
-  // postes do guard-rail
+  // guard rail posts
   for (const p of posts) mb.box(p[0], p[1] + 0.45, p[2], 0.05, 0.6, 0.05, MAT.METAL_GALV);
   return mb;
 };
 
-// pilhas de pneus: retorna lista de instâncias [x,y,z,yaw,painted]
+// tyre stacks: returns list of instances [x,y,z,yaw,painted]
 WORLD.tyreStacks = () => {
   const T = TRACK, N = T.N, out = [];
   for (const side of [-1, 1]) {
@@ -239,7 +239,7 @@ WORLD.tyreStacks = () => {
 WORLD.buildTyreStacks = () => {
   const mb = new MB();
   const stacks = WORLD.tyreStacks();
-  // pilha de 4 pneus como um único sólido de revolução com 4 bojos (8 segmentos)
+  // stack of 4 tyres as a single solid of revolution with 4 bulges (8 segments)
   const prof = [];
   const R = 0.30, r0 = 0.25;
   const pts = [[0.17, -0.02]];
@@ -258,15 +258,15 @@ WORLD.buildTyreStacks = () => {
   return mb;
 };
 
-// ---------------- pórtico, arquibancada, boxes, placas, torres de TV ----------------
+// ---------------- gantry, grandstand, pits, boards, TV towers ----------------
 WORLD.buildProps = () => {
   const mb = new MB(), M = MAT;
-  const mbC = new MB();   // assentos + público (malha separada, sombra só de perto)
+  const mbC = new MB();   // seats + crowd (separate mesh, shadow only up close)
   WORLD.crowdMesh = mbC;
   const T = TRACK;
   const ts = new Float64Array(6);
   const groundY = (x, z) => TERRAIN.heightAt(x, z);
-  // ---- pórtico de largada (linha em x≈-40, reta ao longo de +X)
+  // ---- start gantry (line at x≈-40, straight along +X)
   T.sampleS(T.sStart, ts);
   const gx = ts[0], gy = ts[1];
   for (const z of [-10.6, 11.6]) {
@@ -287,26 +287,26 @@ WORLD.buildProps = () => {
     mb.quad(b, b + 1, b + 2, b + 3);
   }
   mb.box(gx - 0.42, gy + 8.25, 0.5, 0.05, 0.5, 11.2, M.SIGN);
-  // ---- arquibancada (lado +Z)
+  // ---- grandstand (+Z side)
   const xa = -150, xb = -15;
   const baseY = groundY(-80, 14);
   const rows = 14;
   for (let r = 0; r < rows; r++) {
     const z0 = 13.5 + r * 1.25, h = 1.2 + r * 0.62;
     mb.box((xa + xb) / 2, baseY + h / 2 - 1, z0 + 0.62, (xb - xa) / 2, h / 2 + 1, 0.625, M.GRANDSTAND);
-    // assentos individuais (encosto + assento)
+    // individual seats (backrest + seat)
     for (let x = xa + 0.6; x < xb - 0.4; x += 0.52) {
-      if (((x - xa - 15) % 22 + 22) % 22 < 1.0) continue;   // corredores das escadas
+      if (((x - xa - 15) % 22 + 22) % 22 < 1.0) continue;   // stair aisles
       const mb = mbC;
       mb.box(x, baseY + h + 0.26, z0 + 0.98, 0.21, 0.2, 0.025, M.SEAT_PLASTIC, [r, 0, 0]);
       mb.box(x, baseY + h + 0.07, z0 + 0.78, 0.21, 0.03, 0.18, M.SEAT_PLASTIC, [r, 0, 0]);
-      // público (~40% dos assentos, mais perto da linha de chegada)
+      // crowd (~40% of the seats, more near the finish line)
       const hh = hash2i(Math.round(x * 10), r * 31 + 7);
       if (hh < 0.48 - Math.abs(x + 50) / 400) {
         const col = Math.floor(hash2i(Math.round(x * 10), r) * 8), skin = hash2i(r, Math.round(x * 7)) < 0.5 ? 1 : 2;
         const lean = (hash2i(Math.round(x * 3), r * 5) - 0.5) * 0.06;
         const by0 = baseY + h + 0.12 + (hash2i(r, Math.round(x * 13)) - 0.5) * 0.08, zc = z0 + 0.86;
-        // tronco afunilado (ombros mais largos), braços, cabeça arredondada, pernas
+        // tapered torso (wider shoulders), arms, rounded head, legs
         mb.cylinder([x + lean, by0 + 0.08, zc], [x + lean * 1.4, by0 + 0.56, zc], 0.13, 0.17, 5, M.CROWD, { attr: [col, 0, 0] });
         mb.cylinder([x + lean * 1.4 - 0.17, by0 + 0.52, zc], [x + lean - 0.2, by0 + 0.22, zc - 0.12], 0.04, 0.035, 5, M.CROWD, { attr: [col, 0, 0] });
         mb.cylinder([x + lean * 1.4 + 0.17, by0 + 0.52, zc], [x + lean + 0.2, by0 + 0.22, zc - 0.12], 0.04, 0.035, 5, M.CROWD, { attr: [col, 0, 0] });
@@ -320,7 +320,7 @@ WORLD.buildProps = () => {
   const topY = baseY + 1.2 + rows * 0.62;
   mb.box((xa + xb) / 2, topY / 2 + baseY / 2, 13.5 + rows * 1.25 + 0.2, (xb - xa) / 2, (topY - baseY) / 2 + 1.5, 0.2, M.CONCRETE, [1, 0, 0]);
   for (const x of [xa, xb]) mb.box(x, (topY + baseY) / 2, 13.5 + rows * 0.625, 0.25, (topY - baseY) / 2 + 1.2, rows * 0.625 + 0.4, M.CONCRETE);
-  // parede de fundo: nervuras verticais e painéis coloridos (sem marcas)
+  // back wall: vertical ribs and coloured panels (no brands)
   const zb = 13.5 + rows * 1.25 + 0.42;
   for (let x = xa + 2.5; x < xb; x += 5) mb.box(x, (topY + baseY) / 2, zb, 0.12, (topY - baseY) / 2 + 1.4, 0.08, M.CONCRETE);
   for (let x = xa + 6; x < xb - 6; x += 18) mb.box(x, baseY + 3.0, zb + 0.1, 6.0, 1.1, 0.04, M.SIGN, [Math.floor(hash2i(x, 3) * 4), 0, 0]);
@@ -338,7 +338,7 @@ WORLD.buildProps = () => {
     mb.quad(b2, b2 + 3, b2 + 2, b2 + 1);
     mb.box((xa + xb) / 2, y0 - 0.35, z0, (xb - xa) / 2 + 2, 0.35, 0.12, M.SIGN);
   }
-  // fachada traseira da arquibancada: pilastras, vigas, portas, torres de escada e calhas
+  // rear façade of the grandstand: pilasters, beams, doors, stair towers and gutters
   {
     const wz = 13.5 + rows * 1.25 + 0.4;
     for (let x = xa + 5; x < xb - 1; x += 10) mb.box(x, baseY + 4.7, wz + 0.3, 0.35, 6.2, 0.3, M.CONCRETE, [1, 0, 0]);
@@ -353,23 +353,23 @@ WORLD.buildProps = () => {
         mb.box(x, baseY + 1.5, wz + 0.05, 2.0, 1.5, 0.05, M.ROOF_METAL);
         mb.box(x, baseY + 3.15, wz + 0.15, 2.15, 0.15, 0.15, M.METAL_GALV);
       }
-      // janelas altas em fita
+      // high ribbon windows
       mb.box(x, baseY + 7.3, wz + 0.03, 3.6, 0.55, 0.03, M.GLASS_DARK);
     }
     for (let x = xa + 7.5; x < xb; x += 20) {
       mb.cylinder([x, baseY - 0.5, wz + 0.12], [x, topY + 6.6, wz + 0.12], 0.06, 0.06, 8, M.POLE);
     }
     for (let x = xa + 15; x < xb; x += 44) {
-      // torre de escada saliente com fenda de vidro
+      // protruding stair tower with glass slit
       mb.box(x, baseY + 5.2, wz + 1.9, 1.7, 6.9, 1.5, M.PAINT_WHITE);
       mb.box(x, baseY + 6.0, wz + 3.42, 0.35, 4.8, 0.03, M.GLASS_DARK);
       mb.box(x, baseY + 12.25, wz + 1.9, 1.85, 0.15, 1.65, M.ROOF_METAL);
       mb.box(x, baseY + 1.2, wz + 3.41, 0.9, 1.2, 0.03, M.GLASS_DARK);
     }
-    // laterais: pilastras
+    // sides: pilasters
     for (const x of [xa - 0.3, xb + 0.3]) for (let z = 15; z < wz; z += 5) mb.box(x, (topY + baseY) / 2, z, 0.12, (topY - baseY) / 2 + 1.0, 0.25, M.CONCRETE);
   }
-  // ---- boxes (lado -Z)
+  // ---- pits (-Z side)
   const pxa = -190, pxb = 30;
   {
     const b = mb.count, y0 = groundY(-80, -9) + 0.02;
@@ -402,7 +402,7 @@ WORLD.buildProps = () => {
   mb.box(-8, by + 18.2, -31, 0.08, 1.0, 0.08, M.POLE);
   mb.box(-8, by + 15.5, -31, 6.4, 1.6, 6.4, M.GLASS_DARK);
   mb.box(-8, by + 17.3, -31, 6.8, 0.2, 6.8, M.ROOF_METAL);
-  // detalhes: equipamentos e guarda-corpo no teto dos boxes, fachada traseira, torre
+  // details: equipment and railing on the pit roof, rear façade, tower
   {
     const ry = by + 9.8;
     for (let x = gxa + 8, k = 0; x < gxb - 4; x += 17, k++) {
@@ -421,7 +421,7 @@ WORLD.buildProps = () => {
       mb.cylinder([x, ry, -36], [x, ry + 5.5, -36], 0.05, 0.03, 6, M.POLE);
       for (const hy of [3.0, 4.2, 5.2]) mb.box(x, ry + hy, -36, 0.5, 0.02, 0.02, M.POLE);
     }
-    // fachada traseira: pilastras, portas de serviço e luminárias
+    // rear façade: pilasters, service doors and light fittings
     for (let i = 0; i <= nG; i++) mb.box(gxa + i * gw, by + 3.4, -38.75, 0.3, 3.6, 0.18, M.CONCRETE, [1, 0, 0]);
     for (let i = 0; i < nG; i++) {
       const cx = gxa + (i + 0.5) * gw;
@@ -429,7 +429,7 @@ WORLD.buildProps = () => {
       mb.box(cx + 1.0, by + 4.8, -38.65, 1.6, 0.35, 0.03, M.GLASS_DARK);
       mb.box(cx, by + 2.8, -38.7, 0.12, 0.06, 0.12, M.METAL_GALV);
     }
-    // torre de controle: laje/varanda, guarda-corpo, montantes do vidro, aletas e mastro
+    // control tower: slab/balcony, railing, glass mullions, fins and mast
     mb.box(-8, by + 13.85, -31, 7.3, 0.14, 7.3, M.CONCRETE);
     for (const sgn of [-1, 1]) for (let t = -7.2; t <= 7.21; t += 1.2) {
       mb.box(-8 + t, by + 14.5, -31 + sgn * 7.2, 0.025, 0.5, 0.025, M.POLE);
@@ -447,7 +447,7 @@ WORLD.buildProps = () => {
     mb.cylinder([-6, by + 17.5, -33], [-6, by + 23, -33], 0.06, 0.03, 6, M.POLE);
     mb.cylinder([-10.5, by + 17.5, -29.5], [-10.5, by + 19.5, -29.5], 0.3, 0.3, 10, M.METAL_GALV, { caps: true });
   }
-  // ---- placas de distância antes do grampo
+  // ---- distance boards before the hairpin
   for (const [d, n] of [[150, 3], [100, 2], [50, 1]]) {
     const s = 365 - d;
     T.sampleS(s, ts);
@@ -461,7 +461,7 @@ WORLD.buildProps = () => {
     for (let k = 0; k < n; k++) mb.box(-0.055, 1.25 + k * 0.22, 0, 0.005, 0.05, 0.38, M.GANTRY);
     mb.setTransform(null);
   }
-  // ---- torres de TV e postos de fiscal
+  // ---- TV towers and marshal posts
   const camS = [70, 250, 400, 520, 640, 760, 880, 1000, 1120];
   for (const s0 of camS) {
     T.sampleS(s0, ts);

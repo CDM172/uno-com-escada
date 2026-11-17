@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// motionblur.wgsl — desfoque por velocidade (tile max + neighbor max + gather)
+// motionblur.wgsl — velocity blur (tile max + neighbor max + gather)
 // ---------------------------------------------------------------------------
 @group(0) @binding(0) var<uniform> V: View;
 @group(0) @binding(1) var<uniform> G: Globals;
@@ -7,7 +7,7 @@
 @group(0) @binding(3) var tileOut: texture_storage_2d<rgba16float, write>;
 const TILE: i32 = 16;
 
-// escala de velocidade: obturador de 1/120 s independente da taxa de quadros
+// velocity scale: 1/120 s shutter independent of the frame rate
 fn velScale() -> f32 { return clamp((1.0 / 160.0) / max(G.time.y, 1e-4), 0.0, 2.0) * G.hud2.x; }
 
 @compute @workgroup_size(8, 8)

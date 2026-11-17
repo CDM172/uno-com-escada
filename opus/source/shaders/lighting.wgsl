@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// lighting.wgsl — resolução do G-buffer (compute) -> HDR
+// lighting.wgsl — G-buffer resolve (compute) -> HDR
 // ---------------------------------------------------------------------------
 @group(0) @binding(0) var<uniform> V: View;
 @group(0) @binding(1) var<uniform> G: Globals;
@@ -32,7 +32,7 @@ fn sampleSkyHi(rd: vec3f) -> vec3f {
   let u = fract(atan2(rd.z, rd.x) / TAU + 0.5 + rot);
   if (elev < -0.012) { return textureSampleLevel(skyLoTex, linClamp, dirToPano(rd), 0.0).rgb; }
   let v = sqrt(clamp((elev + 0.012) / (PI * 0.5), 0.0, 1.0));
-  // filtro bicúbico (B-spline) leve para nitidez sem blocos
+  // light bicubic (B-spline) filter for sharpness without blockiness
   let dim = vec2f(textureDimensions(skyHiTex));
   let st = vec2f(u, v) * dim - 0.5;
   let i = floor(st); let f = fract(st);
@@ -48,7 +48,7 @@ fn sampleSkyHi(rd: vec3f) -> vec3f {
 }
 fn skyLo(d: vec3f, lod: f32) -> vec3f { return textureSampleLevel(skyLoTex, linClamp, dirToPano(d), lod).rgb; }
 
-// disco de Poisson (16)
+// Poisson disc (16)
 const PD = array<vec2f, 16>(
   vec2f(-0.9420, -0.3991), vec2f(0.9456, -0.7689), vec2f(-0.0942, -0.9294), vec2f(0.3450, 0.2939),
   vec2f(-0.9159, 0.4577), vec2f(-0.8154, -0.8791), vec2f(-0.3828, 0.2768), vec2f(0.9748, 0.7565),
@@ -59,7 +59,7 @@ fn cascadeFor(viewZ: f32, noise: f32) -> i32 {
   var c = 3;
   for (var k = 2; k >= 0; k--) {
     let sp = G.cascadeSplits[k];
-    // faixa de transição com dither
+    // transition band with dither
     if (viewZ < sp * mix(0.88, 1.0, noise)) { c = k; }
   }
   return c;
@@ -77,9 +77,9 @@ fn shadowPCSS(wp: vec3f, n: vec3f, viewZ: f32, noise: f32, rot: f32) -> f32 {
   let dimS = f32(textureDimensions(shadowTex).x);
   let zr = sp.z;
   let cs = cos(rot); let sn = sin(rot);
-  // profundidade ortográfica: 1 no near, 0 no far; alcance em metros
+  // orthographic depth: 1 at near, 0 at far; range in metres
   let depthRange = 600.0;
-  // busca de bloqueadores
+  // blocker search
   var bsum = 0.0; var bn = 0.0;
   let searchR = select(10.0, 5.0, c >= 2) / dimS;
   for (var k = 0; k < 8; k++) {
@@ -90,7 +90,7 @@ fn shadowPCSS(wp: vec3f, n: vec3f, viewZ: f32, noise: f32, rot: f32) -> f32 {
   }
   if (bn < 0.5) { return 1.0; }
   let blockerDist = max((bsum / bn - zr) * depthRange, 0.0);
-  // penumbra: diâmetro angular do sol (~0.53°) + mínimo por texel
+  // penumbra: angular diameter of the sun (~0.53°) + per-texel minimum
   let pen = blockerDist * 0.0093 * 1.6;
   let radTex = clamp(pen / texel, select(1.0, 2.5, c >= 2), select(14.0, 6.0, c >= 2));
   var sum = 0.0;
@@ -108,7 +108,7 @@ fn fogFactor(rd: vec3f, dist: f32, camY: f32) -> f32 {
   let h0 = camY - G.fog.z;
   let k = max(rd.y * hf, 1e-5) * select(1.0, -1.0, rd.y < 0.0);
   let a = min(dist, G.fog.w);
-  // integra de a (fim do volumétrico) até dist
+  // integrates from a (end of the volumetric) to dist
   var od: f32;
   if (abs(rd.y * hf) < 1e-5) { od = dens * exp(-h0 * hf) * (dist - a); }
   else { let kk = rd.y * hf; od = dens * exp(-h0 * hf) * (exp(-a * kk) - exp(-dist * kk)) / kk; }
@@ -120,7 +120,7 @@ fn fogColor(rd: vec3f) -> vec3f {
   return fc * 1.05 + G.sunColor.rgb * sunAmt * 0.035;
 }
 
-// SSR para asfalto molhado
+// SSR for wet asphalt
 fn ssr(wp: vec3f, R: vec3f, noise: f32) -> vec4f {
   var t = 0.15 + noise * 0.25;
   var hit = vec4f(0.0);
@@ -133,13 +133,13 @@ fn ssr(wp: vec3f, R: vec3f, noise: f32) -> vec4f {
     let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { break; }
     let sd = textureLoad(gDepth, vec2i(uv * V.res.xy), 0);
-    // profundidades lineares (reverse-Z): z = near/d
+    // linear depths (reverse-Z): z = near/d
     let near = V.camPos.w;
     let rayZ = near / max(ndc.z, 1e-7);
     let sceneZ = near / max(sd, 1e-7);
     let thick = 0.35 + t * 0.06;
     if (rayZ > sceneZ && rayZ < sceneZ + thick) {
-      // refino binário
+      // binary refinement
       var a = lastT; var b = t;
       for (var k = 0; k < 5; k++) {
         let m = (a + b) * 0.5;
@@ -185,7 +185,7 @@ fn csLight(@builtin(global_invocation_id) gid: vec3u) {
 
   if (d <= 0.0) {
     var c = sampleSkyHi(rd);
-    // disco solar com escurecimento de borda
+    // solar disc with limb darkening
     let cs = dot(rd, G.sunDir.xyz);
     let ang = acos(clamp(cs, -1.0, 1.0));
     let rS = G.sunColor.w;
@@ -211,7 +211,7 @@ fn csLight(@builtin(global_invocation_id) gid: vec3u) {
   if (G.misc.z == 1.0) { ssao = 1.0; }
   var ao = m0.x * select(ssao, mix(1.0, ssao, 0.6), cls == 2u || cls == 4u);
   var contact = 0.0;
-  // oclusão de contato sob o carro (caixa suave no chão)
+  // contact occlusion under the car (soft box on the ground)
   if (G.carNow.w > 0.5) {
     let dxz = wp.xz - G.carNow.xz;
     let fwd = vec2f(G.hud2.y, G.hud2.z);
@@ -241,36 +241,36 @@ fn csLight(@builtin(global_invocation_id) gid: vec3u) {
   let sunC = G.sunColor.rgb;
   var col = vec3f(0.0);
   let nl = max(NoL, 0.0);
-  // sol direto
+  // direct sun
   let F = F_Schlick(f0, VoH);
   var spec = D_GGX(NoH, a) * V_SmithGGX(NoV, nl, a) * F;
-  // grama/terra muito ásperas: sem o lóbulo rasante do GGX (micro-sombreamento das folhas)
+  // very rough grass/dirt: without the GGX grazing lobe (micro-shadowing of the blades)
   spec *= mix(1.0, 0.15, smoothstep(0.89, 0.92, rough) * (1.0 - metal));
   col += (diffC * (1.0 - F) / PI + spec) * sunC * nl * sh;
-  // translucidez da folhagem (contraluz do sol baixo)
+  // foliage translucency (backlight from the low sun)
   if (cls == 1u) {
     let back = pow(clamp(dot(rd, L), 0.0, 1.0), 3.0) * 0.8 + 0.2;
     let tr = max(-NoL, 0.0) * 0.5 + 0.35;
     col += diffC * vec3f(1.0, 1.08, 0.55) * sunC * tr * back * sh * 0.8;
   }
-  // ambiente difuso (SH) com oclusão; leve rebatimento do chão
+  // diffuse ambient (SH) with occlusion; slight ground bounce
   let irr = shIrradiance(n, G.sh) * 1.6;
   let bounce = vec3f(0.05, 0.055, 0.035) * sunC.g * 0.08 * max(-n.y, 0.0);
   col += diffC * (irr + bounce) * ao;
-  // reflexo especular de ambiente
+  // ambient specular reflection
   let R = reflect(rd, n);
   let useCube = G.carPos.w > 0.5 && G.carNow.w > 0.5 && length(wp - G.carNow.xyz) < 4.0;
   var env: vec3f;
   let lod = sqrt(rough) * 6.0;
   if (useCube) { env = textureSampleLevel(cubeTex, linClamp, R, sqrt(rough) * 5.0).rgb; }
   else { env = skyLo(R, lod) * mix(0.5, 1.0, sh * 0.5 + 0.5); }
-  // horizonte: reflexos abaixo do horizonte escurecem (sem cubo)
+  // horizon: reflections below the horizon darken (no cube)
   if (!useCube) { env *= mix(0.25, 1.0, smoothstep(-0.25, 0.05, R.y)); }
   let specOcc = clamp(pow(NoV + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
   var envW = envBRDF(f0, rough, NoV) * specOcc;
-  // micro-sombreamento: superfícies muito ásperas (grama, terra, brita) quase não refletem o céu em ângulo rasante
+  // micro-shadowing: very rough surfaces (grass, dirt, gravel) barely reflect the sky at grazing angles
   envW *= mix(1.0, 0.18, smoothstep(0.7, 0.92, rough) * (1.0 - metal));
-  // SSR no molhado
+  // SSR on wet surfaces
   if (cls == 3u && wet > 0.02) {
     let s = ssr(wp + n * 0.02, R, noise);
     env = mix(env * 0.55, s.rgb, s.a);
@@ -278,7 +278,7 @@ fn csLight(@builtin(global_invocation_id) gid: vec3u) {
   }
   if (cls == 2u) { envW *= mix(1.0, 0.45, (1.0 - NoV) * (1.0 - NoV)) * mix(0.5, 1.0, smoothstep(1.0, 3.0, dist)); }
   col += env * envW;
-  // verniz da pintura (camada transparente)
+  // paint clear coat (transparent layer)
   if (clear > 0.01) {
     let ac = 0.05 * 0.05;
     let Fc = min(F_Schlick1(0.06, NoV), 0.42) * clear * mix(0.45, 1.0, smoothstep(1.0, 3.0, dist));
@@ -289,13 +289,13 @@ fn csLight(@builtin(global_invocation_id) gid: vec3u) {
     if (useCube) { envC = textureSampleLevel(cubeTex, linClamp, R, 1.0 + 1.6 * (1.0 - smoothstep(1.5, 4.5, dist))).rgb * 1.6; } else { envC = skyLo(R, 0.0); }
     if (G.misc.z == 3.0) { envC = vec3f(0.0); }
     col += envC * Fc * specOcc;
-    // flocos metálicos (brilho pontual)
+    // metallic flakes (point sparkle)
     let fl = emis;
     col += sunC * sh * nl * fl * pow(NoH, 40.0) * 0.5 * (1.0 - Fc) * (1.0 - smoothstep(4.0, 12.0, dist));
   } else {
     col += albedo * emis;
   }
-  // névoa analítica + volumétrica
+  // analytic + volumetric fog
   let ff = fogFactor(rd, dist, cam.y);
   col = mix(col, fogColor(rd), ff);
   col = col * vol.a + vol.rgb;

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// ao.wgsl — GTAO em meia resolução + filtro bilateral
+// ao.wgsl — half-resolution GTAO + bilateral filter
 // ---------------------------------------------------------------------------
 @group(0) @binding(0) var<uniform> V: View;
 @group(0) @binding(1) var<uniform> G: Globals;
@@ -7,13 +7,13 @@
 @group(0) @binding(3) var gNrm: texture_2d<f32>;
 @group(0) @binding(4) var aoOut: texture_storage_2d<rgba16float, write>;
 
-// posição no espaço de vista direto da profundidade linear (sem passar por coordenadas de mundo:
-// evita o erro de arredondamento que virava ruído/manchas)
+// view-space position straight from linear depth (without going through world coordinates:
+// avoids the rounding error that turned into noise/blotches)
 fn viewPos(px: vec2i) -> vec3f {
   let d = max(textureLoad(gDepth, px, 0), 1e-7);
   let uv = (vec2f(px) + 0.5) * V.res.zw;
   let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-  let z = V.camPos.w / d;                       // distância ao longo do eixo (positiva)
+  let z = V.camPos.w / d;                       // distance along the axis (positive)
   let f = 1.0 / tan(0.5 * V.params.w);
   let aspect = V.res.x / V.res.y;
   return vec3f(ndc.x * z * aspect / f, ndc.y * z / f, -z);
@@ -30,7 +30,7 @@ fn csAO(@builtin(global_invocation_id) gid: vec3u) {
   let N = normalize((V.view * vec4f(nw, 0.0)).xyz);
   let Vv = normalize(-P);
   let frame = G.time.z;
-  // ruído estruturado 4x4 (cancelado pelo filtro 5x5) + leve rotação temporal
+  // structured 4x4 noise (cancelled by the 5x5 filter) + slight temporal rotation
   let bay = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
   let bi = (gid.x & 3u) + (gid.y & 3u) * 4u;
   let noise = fract(bay[bi] / 16.0 + fract(frame * 0.618) * 0.25);
@@ -79,7 +79,7 @@ fn csAO(@builtin(global_invocation_id) gid: vec3u) {
   textureStore(aoOut, gid.xy, vec4f(pow(ao, 1.8), -P.z, 0.0, 0.0));
 }
 
-// filtro bilateral 5x5 (meia resolução)
+// 5x5 bilateral filter (half resolution)
 @group(0) @binding(5) var aoIn: texture_2d<f32>;
 @group(0) @binding(6) var aoBlurOut: texture_storage_2d<rgba16float, write>;
 @compute @workgroup_size(8, 8)

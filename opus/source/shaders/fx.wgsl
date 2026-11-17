@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// fx.wgsl — marcas de pneu (multiplicam o albedo do G-buffer) e fumaça
+// fx.wgsl — tyre marks (multiply the G-buffer albedo) and smoke
 // ---------------------------------------------------------------------------
 struct DIn { @location(0) pos: vec3f, @location(1) p: vec2f };
 struct DOut { @builtin(position) clip: vec4f, @location(0) p: vec2f, @location(1) w: vec3f };
@@ -36,7 +36,7 @@ fn vsSmoke(@builtin(vertex_index) vi: u32, s: SIn) -> SOut2 {
   o.uv = c; o.prm = vec4f(s.b.x, s.b.z, s.b.w, s.a.w);
   o.vz = -(V.view * vec4f(wp, 1.0)).z;
   o.nuv = q * 0.22 + vec2f(s.b.z * 0.137, s.b.z * 0.311) + vec2f(s.b.w * 0.05, 0.0);
-  // iluminação por partícula (constante): sol com dispersão frontal + céu + névoa
+  // per-particle lighting (constant): sun with forward scattering + sky + fog
   let Vd = normalize(V.camPos.xyz - s.a.xyz);
   let cosT = dot(-Vd, G.sunDir.xyz);
   let g = 0.55; let ph = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * cosT, 1.5) * 0.25;

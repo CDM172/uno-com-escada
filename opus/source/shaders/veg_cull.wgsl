@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// veg_cull.wgsl — culling de árvores por vista + seleção de LOD (desenho indireto)
+// veg_cull.wgsl — per-view tree culling + LOD selection (indirect draw)
 // ---------------------------------------------------------------------------
 struct CullU { planes: array<vec4f, 6>, cam: vec4f, lod: vec4f, cap: vec4f };
 @group(0) @binding(0) var<uniform> CU: CullU;
@@ -28,7 +28,7 @@ fn csCull(@builtin(global_invocation_id) id: vec3u) {
     if (dot(pl.xyz, c) + pl.w < -rr) { return; }
   }
   if (kind == 1u) {
-    // sombras: limita pela distância horizontal à câmera
+    // shadows: limited by horizontal distance to the camera
     if (length(c.xz - CU.cam.xz) > CU.lod.z + rr) { return; }
   }
   var l = 2u;

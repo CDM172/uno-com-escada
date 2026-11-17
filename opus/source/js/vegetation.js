@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// vegetation.js — árvores (3 espécies x 3 LODs) com culling na GPU e grama
+// vegetation.js — trees (3 species x 3 LODs) with GPU culling, and grass
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -7,10 +7,10 @@ const VEG = (() => {
   const V = {};
   const GRASS_VERTS_C = 72;
   const NSP = 4, NLOD = 3;
-  // ---------------- geração das malhas
+  // ---------------- mesh generation
   let leafTile = 1;
   function leafCard(mb, c, n, size, cell, wind, crownC, rnd, sphereMix) {
-    // quadrado orientado por n com rotação aleatória
+    // square oriented by n with random rotation
     let up = Math.abs(n[1]) < 0.95 ? [0, 1, 0] : [1, 0, 0];
     let t = norm3(cross3(up, n)), b = cross3(n, t);
     const a = rnd() * TAU, ca = Math.cos(a), sa = Math.sin(a);
@@ -21,10 +21,10 @@ const VEG = (() => {
       const p = add3(c, add3(scale3(t2, su * size * 0.5), scale3(b2, sv * size * 0.5)));
       const sn = norm3(sub3(p, crownC));
       const nn = norm3(lerp3(n, sn, sphereMix));
-      // uv: v=0 em cima no atlas; "sv=1" é a ponta (cima) da textura
+      // uv: v=0 at the top of the atlas; "sv=1" is the tip (top) of the texture
       mb.vert(p[0], p[1], p[2], nn[0], nn[1], nn[2], cu + (su * 0.5 + 0.5) * 0.5, cv + (0.5 - sv * 0.5) * 0.5, MAT.LEAF, leafTile, 0, 0, wind);
     }
-    // centro elevado (cartão em pirâmide): quebra a planaridade vista de lado
+    // raised centre (pyramid card): breaks the planarity seen from the side
     const cc2 = add3(c, scale3(n, size * 0.16));
     const snc = norm3(sub3(cc2, crownC)), nnc = norm3(lerp3(n, snc, sphereMix));
     const ci = mb.vert(cc2[0], cc2[1], cc2[2], nnc[0], nnc[1], nnc[2], cu + 0.25, cv + 0.25, MAT.LEAF, leafTile, 0, 0, wind);
@@ -42,7 +42,7 @@ const VEG = (() => {
     const mb = new MB(), rnd = makeRng(seed);
     leafTile = lod === 0 ? 1 : lod === 1 ? 2 : 3;
     const segT = lod === 0 ? 10 : lod === 1 ? 6 : 4;
-    if (species === 0 || species === 3) { // copa larga (3 = variante baixa e esparramada)
+    if (species === 0 || species === 3) { // broad crown (3 = low, sprawling variant)
       const v3 = species === 3;
       const H = v3 ? 10.5 : 12.5, trunkH = v3 ? 2.2 : 3.0;
       branch(mb, [0, -0.3, 0], [0.1, trunkH, 0.05], 0.36, 0.26, segT, 0, 0.05, 0);
@@ -63,7 +63,7 @@ const VEG = (() => {
       const nCards = lod === 0 ? 440 : lod === 1 ? 120 : 22;
       const size = lod === 0 ? 1.25 : lod === 1 ? 2.4 : 5.6;
       for (let i = 0; i < nCards; i++) {
-        // pontos num elipsóide irregular (mais na casca externa)
+        // points on an irregular ellipsoid (more in the outer shell)
         const u = rnd() * TAU, v = Math.acos(rnd() * 1.6 - 0.6), r = Math.pow(rnd(), 0.35);
         const lob = 1 + 0.25 * Math.sin(u * 3 + seed) * Math.sin(v * 2);
         const d = [Math.sin(v) * Math.cos(u), Math.cos(v), Math.sin(v) * Math.sin(u)];
@@ -71,7 +71,7 @@ const VEG = (() => {
         const c = [cc[0] + d[0] * wR * r * lob, cc[1] + d[1] * hR * r * lob, cc[2] + d[2] * wR * r * lob];
         leafCard(mb, c, norm3(add3(d, [(rnd() - .5) * .8, (rnd() - .5) * .8, (rnd() - .5) * .8])), size * (0.8 + rnd() * 0.4), 0, 0.5 + 0.5 * r, cc, rnd, 0.7);
       }
-    } else if (species === 1) { // eucalipto
+    } else if (species === 1) { // eucalyptus
       const H = 21;
       branch(mb, [0, -0.3, 0], [0.3, H * 0.62, 0.2], 0.28, 0.15, segT, 0, 0.12, 1);
       branch(mb, [0.3, H * 0.62, 0.2], [0.5, H - 1, 0.1], 0.15, 0.05, segT, 0.12, 0.4, 1);
@@ -90,7 +90,7 @@ const VEG = (() => {
         const c = [cc[0] + d[0] * 4.2 * r, cc[1] + d[1] * 7.0 * r - 1.5, cc[2] + d[2] * 4.2 * r];
         leafCard(mb, c, norm3(add3(d, [0, -0.3, 0])), size * (0.8 + rnd() * 0.4), 1, 0.6 + 0.4 * r, cc, rnd, 0.6);
       }
-    } else { // arbusto / arvoreta de borda
+    } else { // shrub / edge sapling
       const H = 4.2;
       if (lod < 2) for (let i = 0; i < 4; i++) {
         const a = rnd() * TAU;
@@ -109,7 +109,7 @@ const VEG = (() => {
     return mb;
   }
 
-  // ---------------- posicionamento
+  // ---------------- placement
   function placeTrees() {
     const T = TERRAIN, out = [];
     const rnd = makeRng(1234);
@@ -120,22 +120,22 @@ const VEG = (() => {
       const f = T.maskAt(x, z, 3) / 255;
       const g = T.maskAt(x, z, 1) / 255;
       let p = f * 0.9;
-      // árvores isoladas em campo aberto (longe da pista)
+      // isolated trees in open field (far from the track)
       T.rasterAt(x, z, tmp);
       const far = tmp[2] > 35;
       if (f < 0.05 && far && g > 0.3) p = 0.012;
-      // clareiras e recortes na linha de árvores (quebra a 'parede' contínua)
+      // clearings and notches in the tree line (breaks the continuous 'wall')
       const gap = fbm2(x * 0.02 + 31, z * 0.02 - 7, 3);
       if (f > 0.05 && f < 0.85) p *= smoothstep(0.12, 0.32, gap + 0.25);
       if (rnd() > p) continue;
       const y = T.heightAt(x, z);
-      // espécie
+      // species
       const ns = fbm2(x * 0.01 + 50, z * 0.01, 3);
       let sp = ns > 0.34 ? 1 : (rnd() < 0.45 ? 3 : 0);
-      if (f < 0.7 && rnd() < 0.75) sp = 2;                 // borda: arbustos
-      if (rnd() < 0.4) sp = 2;                             // sub-bosque
+      if (f < 0.7 && rnd() < 0.75) sp = 2;                 // edge: shrubs
+      if (rnd() < 0.4) sp = 2;                             // understorey
       let sc = sp === 2 ? 0.75 + rnd() * 1.1 : 0.6 + rnd() * 0.8;
-      if (sp !== 2 && rnd() < 0.06) sc *= 1.45;   // árvores emergentes
+      if (sp !== 2 && rnd() < 0.06) sc *= 1.45;   // emergent trees
       out.push(x, y - 0.1, z, sc, rnd() * TAU, sp, rnd(), rnd() * TAU);
     }
     return new Float32Array(out);
@@ -147,8 +147,8 @@ const VEG = (() => {
   let treePipeG, treePipeZ, treePipeS, treePipeC, treeBGL, treeBG;
   let grassPipeG, grassPipeS, clumpBuf, gArgs, grassBG, gCullPipe, gCullBG;
   const gArgsInit = new Uint32Array([GRASS_VERTS_C, 0, 0, 0]);
-  const VIEWS = 11;   // 0 principal, 1-4 sombras, 5-10 cubo
-  const CAP = [10000, 32000, 110000];   // capacidade por LOD (por vista, somando espécies)
+  const VIEWS = 11;   // 0 main, 1-4 shadows, 5-10 cube
+  const CAP = [10000, 32000, 110000];   // capacity per LOD (per view, summing species)
   V.init = () => {
     const R = RENDER, device = R.device;
     const inst = placeTrees();
@@ -156,7 +156,7 @@ const VEG = (() => {
     V.count = nTrees;
     treeBuf = device.createBuffer({ size: inst.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(treeBuf, 0, inst);
-    // malhas: um VB/IB por espécie/LOD
+    // meshes: one VB/IB per species/LOD
     for (let sp = 0; sp < NSP; sp++) for (let l = 0; l < NLOD; l++) {
       const p = makeTree(sp, l, 77 + sp * 13 + (sp === 3 ? 500 : 0)).pack();
       const vb = device.createBuffer({ size: p.vb.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
@@ -164,10 +164,10 @@ const VEG = (() => {
       device.queue.writeBuffer(vb, 0, p.vb); device.queue.writeBuffer(ib, 0, p.ib);
       meshes.push({ vb, ib, count: p.count });
     }
-    // lista visível: por vista, [LOD][espécie] regiões
+    // visible list: per view, [LOD][species] regions
     const perView = (CAP[0] + CAP[1] + CAP[2]) * NSP;
     visBuf = device.createBuffer({ size: perView * VIEWS * 4, usage: GPUBufferUsage.STORAGE });
-    // args indiretos: por vista, 9 draws x 5 u32
+    // indirect args: per view, 9 draws x 5 u32
     const nArgs = VIEWS * NSP * NLOD;
     argsBuf = device.createBuffer({ size: nArgs * 20, usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     argsInit = new Uint32Array(nArgs * 5);
@@ -184,7 +184,7 @@ const VEG = (() => {
     for (let v = 0; v < VIEWS; v++) cullBG.push(device.createBindGroup({ layout: cullPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: cullUB, offset: v * 256, size: 160 } }, { binding: 1, resource: { buffer: treeBuf } },
       { binding: 2, resource: { buffer: visBuf } }, { binding: 3, resource: { buffer: argsBuf } }] }));
-    // pipelines de desenho
+    // draw pipelines
     treeBGL = device.createBindGroupLayout({ entries: [
       { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }] });
@@ -196,7 +196,7 @@ const VEG = (() => {
     treePipeG = device.createRenderPipeline({ layout, vertex: { module: mod, entryPoint: 'vsTree', buffers: R.VB_LAYOUT }, fragment: { module: mod, entryPoint: 'fsTreeG', targets: R.GT }, primitive: { cullMode: 'none' }, depthStencil: { format: 'depth32float', depthWriteEnabled: false, depthCompare: 'equal' } });
     treePipeS = device.createRenderPipeline({ layout, vertex: { module: mod, entryPoint: 'vsTreeShadow', buffers: R.VB_LAYOUT }, fragment: { module: mod, entryPoint: 'fsTreeShadow', targets: [] }, primitive: { cullMode: 'none' }, depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater', depthBias: -2, depthBiasSlopeScale: -2 } });
     treePipeC = device.createRenderPipeline({ layout, vertex: { module: mod, entryPoint: 'vsTree', buffers: R.VB_LAYOUT }, fragment: { module: mod, entryPoint: 'fsTreeCube', targets: [{ format: 'rgba16float' }] }, primitive: { cullMode: 'none' }, depthStencil: ds });
-    // grama (procedural, sem vertex buffer)
+    // grass (procedural, no vertex buffer)
     const ggbl = device.createBindGroupLayout({ entries: [{ binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }] });
     clumpBuf = device.createBuffer({ size: GRASS_INST * 32, usage: GPUBufferUsage.STORAGE });
     gArgs = device.createBuffer({ size: 16, usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -211,7 +211,7 @@ const VEG = (() => {
     grassPipeG = device.createRenderPipeline({ layout: glayout, vertex: { module: mod, entryPoint: 'vsGrass' }, fragment: { module: mod, entryPoint: 'fsGrassG', targets: R.GT }, primitive: { cullMode: 'none' }, depthStencil: ds });
     grassPipeS = device.createRenderPipeline({ layout: glayout, vertex: { module: mod, entryPoint: 'vsGrassShadow' }, primitive: { cullMode: 'none' }, depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater', depthBias: -2, depthBiasSlopeScale: -2 } });
 
-    // ganchos no renderer
+    // renderer hooks
     const prevBefore = R.beforeEncode;
     R.beforeEncode = (st) => { if (prevBefore) prevBefore(st); writeCullUniforms(); };
     const prevExtra = R.drawExtra;
@@ -246,11 +246,11 @@ const VEG = (() => {
     const prevCompute = R.encodeCompute;
     R.encodeCompute = (enc, f0, nf) => { if (prevCompute) prevCompute(enc, f0, nf); V.encodeCull(enc, f0, nf); };
   };
-  const GRASS_VERTS = 7 * 3 * 2 * 4;     // 4 lâminas x 3 segmentos (tiras)
+  const GRASS_VERTS = 7 * 3 * 2 * 4;     // 4 blades x 3 segments (strips)
   const GRASS_INST = 200 * 200;
   V.GRASS_INST = GRASS_INST;
 
-  // uniformes de culling por vista: planos (6 vec4) + câmera + params
+  // per-view culling uniforms: planes (6 vec4) + camera + params
   const cu = new Float32Array(VIEWS * 64);
   function writeCullUniforms() {
     const R = RENDER;
@@ -262,12 +262,12 @@ const VEG = (() => {
       else { fr = R.frustumCube[v - 5]; cx = R.viewData[v * 128 + 80]; cy = R.viewData[v * 128 + 81]; cz = R.viewData[v * 128 + 82]; kind = 2; }
       for (let i = 0; i < 24; i++) cu[o + i] = fr[i];
       cu[o + 24] = cx; cu[o + 25] = cy; cu[o + 26] = cz; cu[o + 27] = kind;
-      // distâncias de LOD (escala por fov) e alcance máximo
+      // LOD distances (scaled by fov) and maximum range
       const fovS = Math.tan(R.cam.fovy * 0.5) / Math.tan(0.36);
       cu[o + 28] = 27 * (kind === 0 ? 1 / fovS : 1); cu[o + 29] = 95 * (kind === 0 ? 1 / fovS : 1);
       cu[o + 30] = kind === 1 ? (v === 1 ? 30 : v === 2 ? 80 : v === 3 ? 200 : 330) : kind === 2 ? 220 : 1150;
       cu[o + 31] = kind === 1 ? (v - 1) : 0;
-      // capacidade/base por lod+espécie
+      // capacity/base per lod+species
       cu[o + 32] = CAP[0]; cu[o + 33] = CAP[1]; cu[o + 34] = CAP[2]; cu[o + 35] = v;
     }
     R.device.queue.writeBuffer(cullUB, 0, cu);

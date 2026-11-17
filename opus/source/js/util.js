@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// util.js — matemática sem alocação (tudo escreve em arrays de saída)
+// util.js — allocation-free maths (everything writes into output arrays)
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -9,7 +9,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const sat = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
-// RNG determinístico
+// deterministic RNG
 function makeRng(seed) {
   let s = seed >>> 0;
   return function () {
@@ -27,7 +27,7 @@ function hash2i(x, y) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-// value noise 2D suave (quíntica)
+// smooth 2D value noise (quintic)
 function vnoise2(x, y) {
   const xi = Math.floor(x), yi = Math.floor(y);
   const xf = x - xi, yf = y - yi;
@@ -47,7 +47,7 @@ function ridge2(x, y, oct) {
   return s;
 }
 
-// ---------------- mat4 (coluna-maior, como WGSL) ----------------
+// ---------------- mat4 (column-major, like WGSL) ----------------
 const M4 = {
   identity(o) { o.fill(0); o[0] = o[5] = o[10] = o[15] = 1; return o; },
   copy(o, a) { for (let i = 0; i < 16; i++) o[i] = a[i]; return o; },
@@ -83,14 +83,14 @@ const M4 = {
     o[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det; o[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
     return o;
   },
-  // perspectiva reverse-Z, far infinito, RH (olha para -Z)
+  // reverse-Z perspective, infinite far, RH (looks down -Z)
   perspRevInf(o, fovy, aspect, near) {
     const f = 1 / Math.tan(fovy * 0.5);
     o.fill(0);
     o[0] = f / aspect; o[5] = f; o[11] = -1; o[14] = near;
     return o;
   },
-  // ortográfica reverse-Z (depth 1 no near, 0 no far), RH
+  // reverse-Z orthographic (depth 1 at near, 0 at far), RH
   orthoRev(o, l, r, b, t, n, f) {
     o.fill(0);
     o[0] = 2 / (r - l); o[5] = 2 / (t - b); o[10] = 1 / (f - n); o[15] = 1;
@@ -110,7 +110,7 @@ const M4 = {
     o[12] = -(xx * ex + xy * ey + xz * ez); o[13] = -(yx * ex + yy * ey + yz * ez); o[14] = -(zx * ex + zy * ey + zz * ez); o[15] = 1;
     return o;
   },
-  // matriz a partir de base (colunas X,Y,Z) + translação
+  // matrix from a basis (columns X,Y,Z) + translation
   fromBasis(o, xx, xy, xz, yx, yy, yz, zx, zy, zz, tx, ty, tz) {
     o[0] = xx; o[1] = xy; o[2] = xz; o[3] = 0;
     o[4] = yx; o[5] = yy; o[6] = yz; o[7] = 0;
@@ -127,10 +127,10 @@ const M4 = {
   },
 };
 
-// Planos do frustum a partir de viewProj (Gribb-Hartmann), reverse-Z: 0<=z<=w
+// Frustum planes from viewProj (Gribb-Hartmann), reverse-Z: 0<=z<=w
 function _setPlane(planes, i, a, b, c, d) { const l = 1 / Math.sqrt(a * a + b * b + c * c); planes[i * 4] = a * l; planes[i * 4 + 1] = b * l; planes[i * 4 + 2] = c * l; planes[i * 4 + 3] = d * l; }
 function extractFrustum(planes, m) {
-  // planes: Float32Array(24)  (a,b,c,d) x 6 — sem closures (zero alocação)
+  // planes: Float32Array(24)  (a,b,c,d) x 6 — no closures (zero allocation)
   const r0x = m[0], r0y = m[4], r0z = m[8], r0w = m[12];
   const r1x = m[1], r1y = m[5], r1z = m[9], r1w = m[13];
   const r2x = m[2], r2y = m[6], r2z = m[10], r2w = m[14];
@@ -149,5 +149,5 @@ function sphereInFrustum(planes, x, y, z, r, nplanes) {
   return true;
 }
 
-// Halton para jitter TAA
+// Halton for TAA jitter
 function halton(i, b) { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; }

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mille EP — Circuito da Serra</title>
+<title>Mille EP — Serra Circuit</title>
 <style>
 html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:-apple-system,Helvetica,Arial,sans-serif}
 canvas{width:100vw;height:100vh;display:block}
@@ -35,42 +35,42 @@ button:hover,button:focus-visible{background:rgba(255,255,255,.18);outline:2px s
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="msg">carregando…</div>
+<div id="msg">loading…</div>
 <div id="aviso"></div>
 <div id="menu" hidden><div>
-<h1>Mille EP<small>Circuito da Serra · Fiat Uno Mille EP 1996</small></h1>
-<p id="pz">Pausado</p>
+<h1>Mille EP<small>Serra Circuit · 1996 Fiat Uno Mille EP</small></h1>
+<p id="pz">Paused</p>
 <div id="res"></div>
 <div id="ctr">
-<table><caption>Teclado</caption>
-<tr><th>W ou ↑</th><td>acelera</td></tr>
-<tr><th>S ou ↓</th><td>freia e dá ré</td></tr>
-<tr><th>A D ou ← →</th><td>faz curvas</td></tr>
-<tr><th>Espaço</th><td>freio de mão</td></tr>
-<tr><th>C</th><td>troca a câmera</td></tr>
-<tr><th>V (segurar)</th><td>olha para trás</td></tr>
-<tr><th>R</th><td>devolve o carro à pista</td></tr>
-<tr><th>Esc</th><td>pausa e abre o menu</td></tr>
-<tr><th>M</th><td>liga e desliga o som</td></tr>
+<table><caption>Keyboard</caption>
+<tr><th>W or ↑</th><td>throttle</td></tr>
+<tr><th>S or ↓</th><td>brake and reverse</td></tr>
+<tr><th>A D or ← →</th><td>steer</td></tr>
+<tr><th>Space</th><td>handbrake</td></tr>
+<tr><th>C</th><td>change camera</td></tr>
+<tr><th>V (hold)</th><td>look back</td></tr>
+<tr><th>R</th><td>reset car to track</td></tr>
+<tr><th>Esc</th><td>pause and open menu</td></tr>
+<tr><th>M</th><td>mute sound</td></tr>
 </table>
-<table><caption>Controle</caption>
-<tr><th>Gatilho direito</th><td>acelera</td></tr>
-<tr><th>Gatilho esquerdo</th><td>freia e dá ré</td></tr>
-<tr><th>Analógico esquerdo</th><td>faz curvas</td></tr>
-<tr><th>A</th><td>freio de mão</td></tr>
-<tr><th>Y</th><td>troca a câmera</td></tr>
-<tr><th>RB (segurar)</th><td>olha para trás</td></tr>
-<tr><th>X</th><td>devolve o carro à pista</td></tr>
-<tr><th>Start</th><td>abre o menu</td></tr>
+<table><caption>Gamepad</caption>
+<tr><th>Right trigger</th><td>throttle</td></tr>
+<tr><th>Left trigger</th><td>brake and reverse</td></tr>
+<tr><th>Left stick</th><td>steer</td></tr>
+<tr><th>A</th><td>handbrake</td></tr>
+<tr><th>Y</th><td>change camera</td></tr>
+<tr><th>RB (hold)</th><td>look back</td></tr>
+<tr><th>X</th><td>reset car to track</td></tr>
+<tr><th>Start</th><td>open menu</td></tr>
 </table>
-<table><caption>Ferramentas</caption>
-<tr><th>H</th><td>estatísticas de desempenho</td></tr>
-<tr><th>B</th><td>benchmark (volta de 60 s)</td></tr>
-<tr><th>F</th><td>assistir à volta roteirizada</td></tr>
-<tr><th>1 a 6</th><td>poses fixas</td></tr>
+<table><caption>Tools</caption>
+<tr><th>H</th><td>performance stats</td></tr>
+<tr><th>B</th><td>benchmark (60 s scripted lap)</td></tr>
+<tr><th>F</th><td>watch the scripted lap</td></tr>
+<tr><th>1 to 6</th><td>fixed camera poses</td></tr>
 </table>
 </div>
-<div id="bts"><button id="bS">Começar</button><button id="bC">Continuar</button><button id="bB">Benchmark</button></div>
+<div id="bts"><button id="bS">Start</button><button id="bC">Resume</button><button id="bB">Benchmark</button></div>
 </div></div>
 <script type="module">
 'use strict';
@@ -298,11 +298,11 @@ let iStart = 0, best = 1e9;
 for (let i = 0; i < N; i++) { const d = Math.hypot(px[i] + 40, pz[i]); if (d < best) { best = d; iStart = i; } }
 T.iStart = iStart; T.sStart = iStart * ds;
 const hw = new Float32Array(N);
-const kerbL = new Float32Array(N), kerbR = new Float32Array(N); // largura da zebra (0 = sem)
-const gravL = new Float32Array(N), gravR = new Float32Array(N); // largura da brita após grama curta
-const wallL = new Float32Array(N), wallR = new Float32Array(N); // distância do centro até a barreira
-const tyreL = new Uint8Array(N), tyreR = new Uint8Array(N);     // barreira de pneus na frente do guard-rail
-const wallTypeL = new Uint8Array(N), wallTypeR = new Uint8Array(N); // 0 guard-rail, 1 muro concreto
+const kerbL = new Float32Array(N), kerbR = new Float32Array(N); // kerb width (0 = none)
+const gravL = new Float32Array(N), gravR = new Float32Array(N); // gravel width after the short grass
+const wallL = new Float32Array(N), wallR = new Float32Array(N); // distance from the centre to the barrier
+const tyreL = new Uint8Array(N), tyreR = new Uint8Array(N);     // tyre barrier in front of the guard rail
+const wallTypeL = new Uint8Array(N), wallTypeR = new Uint8Array(N); // 0 guard rail, 1 concrete wall
 const wetMask = new Float32Array(N);
 const absC = new Float64Array(N);
 for (let i = 0; i < N; i++) absC[i] = Math.abs(curv[i]);
@@ -355,7 +355,7 @@ wetMask[i] = w;
 T.hw = hw; T.kerbL = kerbL; T.kerbR = kerbR; T.gravL = gravL; T.gravR = gravR;
 T.wallL = wallL; T.wallR = wallR; T.tyreL = tyreL; T.tyreR = tyreR; T.wallTypeL = wallTypeL; T.wallTypeR = wallTypeR;
 T.wet = wetMask;
-T.racing = new Float32Array(N); // offset da trajetória (preenchido pelo ai.js)
+T.racing = new Float32Array(N); // racing line offset (filled in by ai.js)
 T.idx = (i) => ((i % N) + N) % N;
 T.sampleS = (s, out) => {
 let f = s / ds; f = ((f % N) + N) % N;
@@ -401,10 +401,10 @@ return T;
 
 const TERRAIN = (() => {
 const T = {};
-const CX = -62, CZ = -98;          // centro da região interna
-const HALF = 800;                  // região interna 1600 m
-const R1 = 1600;                   // raster 1 m
-const HN = 801, HS = 2;            // grade de alturas 2 m
+const CX = -62, CZ = -98;          // centre of the inner region
+const HALF = 800;                  // inner region 1600 m
+const R1 = 1600;                   // 1 m raster
+const HN = 801, HS = 2;            // 2 m height grid
 T.CX = CX; T.CZ = CZ; T.HALF = HALF; T.R1 = R1; T.HN = HN; T.HS = HS;
 T.X0 = CX - HALF; T.Z0 = CZ - HALF;
 const TR = TRACK;
@@ -434,9 +434,9 @@ return h;
 }
 T.natural = natural;
 const N1 = R1 * R1;
-const rU = new Float32Array(N1).fill(1e4);   // u assinado do ponto mais próximo
+const rU = new Float32Array(N1).fill(1e4);   // signed u of the nearest point
 const rS = new Float32Array(N1);             // s
-const rD = new Float32Array(N1).fill(1e8);   // dist² horizontal
+const rD = new Float32Array(N1).fill(1e8);   // horizontal dist²
 const RAD = 85;
 for (let i = 0; i < TR.N; i++) {
 const ax = TR.px[i], az = TR.pz[i], j = (i + 1) % TR.N;
@@ -487,8 +487,8 @@ const hw = TR.lerpArr(TR.hw, s);
 const wall = u > 0 ? TR.lerpArr(TR.wallR, s) : TR.lerpArr(TR.wallL, s);
 const au = Math.abs(u);
 let hp;
-if (au < hw + 0.32) hp = ty - 0.3;                        // sob o asfalto
-else hp = ty - 0.048 - smoothstep(hw + 1.0, hw + 3.0, au) * 0.02 - (au - hw) * 0.006;   // escape rente à borda do asfalto
+if (au < hw + 0.32) hp = ty - 0.3;                        // under the asphalt
+else hp = ty - 0.048 - smoothstep(hw + 1.0, hw + 3.0, au) * 0.02 - (au - hw) * 0.006;   // run-off flush with the asphalt edge
 const w = 1 - smoothstep(wall + 3, wall + 38, au);
 return lerp(hNat, hp, w);
 }
@@ -544,7 +544,7 @@ if (gx < 0 || gz < 0 || gx >= R1 || gz >= R1) return ch === 3 ? 255 : 0;
 return MASK[(gz * R1 + gx) * 4 + ch];
 };
 T.buildInnerMesh = () => {
-const CH = 32;              // bloco de 64 m (32 células de 2 m)
+const CH = 32;              // 64 m block (32 cells of 2 m)
 const NC = (HN - 1) / CH;   // 25
 const lod = new Int32Array(NC * NC);
 for (let cj = 0; cj < NC; cj++) for (let ci = 0; ci < NC; ci++) {
@@ -603,8 +603,8 @@ const NA = ring0.length, NR = 90;
 const rMax = 18000;
 for (let rj = 0; rj <= NR; rj++) {
 const t = rj / NR;
-const scale = Math.pow(rMax / HALF, t);           // multiplica a distância
-const circ = smoothstep(0.0, 0.45, t);            // quadrado -> círculo
+const scale = Math.pow(rMax / HALF, t);           // multiplies the distance
+const circ = smoothstep(0.0, 0.45, t);            // square -> circle
 for (let a = 0; a < NA; a++) {
 const gi = ring0[a][0], gj = ring0[a][1];
 const sx = T.X0 + gi * HS - CX, sz = T.Z0 + gj * HS - CZ;
@@ -1520,7 +1520,7 @@ return mb;
 };
 WORLD.buildProps = () => {
 const mb = new MB(), M = MAT;
-const mbC = new MB();   // assentos + público (malha separada, sombra só de perto)
+const mbC = new MB();   // seats + crowd (separate mesh, shadow only up close)
 WORLD.crowdMesh = mbC;
 const T = TRACK;
 const ts = new Float64Array(6);
@@ -1552,7 +1552,7 @@ for (let r = 0; r < rows; r++) {
 const z0 = 13.5 + r * 1.25, h = 1.2 + r * 0.62;
 mb.box((xa + xb) / 2, baseY + h / 2 - 1, z0 + 0.62, (xb - xa) / 2, h / 2 + 1, 0.625, M.GRANDSTAND);
 for (let x = xa + 0.6; x < xb - 0.4; x += 0.52) {
-if (((x - xa - 15) % 22 + 22) % 22 < 1.0) continue;   // corredores das escadas
+if (((x - xa - 15) % 22 + 22) % 22 < 1.0) continue;   // stair aisles
 const mb = mbC;
 mb.box(x, baseY + h + 0.26, z0 + 0.98, 0.21, 0.2, 0.025, M.SEAT_PLASTIC, [r, 0, 0]);
 mb.box(x, baseY + h + 0.07, z0 + 0.78, 0.21, 0.03, 0.18, M.SEAT_PLASTIC, [r, 0, 0]);
@@ -1760,7 +1760,7 @@ function makeTree(species, lod, seed) {
 const mb = new MB(), rnd = makeRng(seed);
 leafTile = lod === 0 ? 1 : lod === 1 ? 2 : 3;
 const segT = lod === 0 ? 10 : lod === 1 ? 6 : 4;
-if (species === 0 || species === 3) { // copa larga (3 = variante baixa e esparramada)
+if (species === 0 || species === 3) { // broad crown (3 = low, sprawling variant)
 const v3 = species === 3;
 const H = v3 ? 10.5 : 12.5, trunkH = v3 ? 2.2 : 3.0;
 branch(mb, [0, -0.3, 0], [0.1, trunkH, 0.05], 0.36, 0.26, segT, 0, 0.05, 0);
@@ -1788,7 +1788,7 @@ const wR = v3 ? 6.8 : 5.6, hR = v3 ? 3.4 : 4.4;
 const c = [cc[0] + d[0] * wR * r * lob, cc[1] + d[1] * hR * r * lob, cc[2] + d[2] * wR * r * lob];
 leafCard(mb, c, norm3(add3(d, [(rnd() - .5) * .8, (rnd() - .5) * .8, (rnd() - .5) * .8])), size * (0.8 + rnd() * 0.4), 0, 0.5 + 0.5 * r, cc, rnd, 0.7);
 }
-} else if (species === 1) { // eucalipto
+} else if (species === 1) { // eucalyptus
 const H = 21;
 branch(mb, [0, -0.3, 0], [0.3, H * 0.62, 0.2], 0.28, 0.15, segT, 0, 0.12, 1);
 branch(mb, [0.3, H * 0.62, 0.2], [0.5, H - 1, 0.1], 0.15, 0.05, segT, 0.12, 0.4, 1);
@@ -1807,7 +1807,7 @@ const d = [Math.sin(v) * Math.cos(u), Math.cos(v), Math.sin(v) * Math.sin(u)];
 const c = [cc[0] + d[0] * 4.2 * r, cc[1] + d[1] * 7.0 * r - 1.5, cc[2] + d[2] * 4.2 * r];
 leafCard(mb, c, norm3(add3(d, [0, -0.3, 0])), size * (0.8 + rnd() * 0.4), 1, 0.6 + 0.4 * r, cc, rnd, 0.6);
 }
-} else { // arbusto / arvoreta de borda
+} else { // shrub / edge sapling
 const H = 4.2;
 if (lod < 2) for (let i = 0; i < 4; i++) {
 const a = rnd() * TAU;
@@ -1844,10 +1844,10 @@ if (rnd() > p) continue;
 const y = T.heightAt(x, z);
 const ns = fbm2(x * 0.01 + 50, z * 0.01, 3);
 let sp = ns > 0.34 ? 1 : (rnd() < 0.45 ? 3 : 0);
-if (f < 0.7 && rnd() < 0.75) sp = 2;                 // borda: arbustos
-if (rnd() < 0.4) sp = 2;                             // sub-bosque
+if (f < 0.7 && rnd() < 0.75) sp = 2;                 // edge: shrubs
+if (rnd() < 0.4) sp = 2;                             // understorey
 let sc = sp === 2 ? 0.75 + rnd() * 1.1 : 0.6 + rnd() * 0.8;
-if (sp !== 2 && rnd() < 0.06) sc *= 1.45;   // árvores emergentes
+if (sp !== 2 && rnd() < 0.06) sc *= 1.45;   // emergent trees
 out.push(x, y - 0.1, z, sc, rnd() * TAU, sp, rnd(), rnd() * TAU);
 }
 return new Float32Array(out);
@@ -1857,8 +1857,8 @@ let treeBuf, visBuf, argsBuf, argsInit, cullPipe, cullBG = [], cullUB, nTrees = 
 let treePipeG, treePipeZ, treePipeS, treePipeC, treeBGL, treeBG;
 let grassPipeG, grassPipeS, clumpBuf, gArgs, grassBG, gCullPipe, gCullBG;
 const gArgsInit = new Uint32Array([GRASS_VERTS_C, 0, 0, 0]);
-const VIEWS = 11;   // 0 principal, 1-4 sombras, 5-10 cubo
-const CAP = [10000, 32000, 110000];   // capacidade por LOD (por vista, somando espécies)
+const VIEWS = 11;   // 0 main, 1-4 shadows, 5-10 cube
+const CAP = [10000, 32000, 110000];   // capacity per LOD (per view, summing species)
 V.init = () => {
 const R = RENDER, device = R.device;
 const inst = placeTrees();
@@ -1948,7 +1948,7 @@ pass.drawIndirect(gArgs, 0);
 const prevCompute = R.encodeCompute;
 R.encodeCompute = (enc, f0, nf) => { if (prevCompute) prevCompute(enc, f0, nf); V.encodeCull(enc, f0, nf); };
 };
-const GRASS_VERTS = 7 * 3 * 2 * 4;     // 4 lâminas x 3 segmentos (tiras)
+const GRASS_VERTS = 7 * 3 * 2 * 4;     // 4 blades x 3 segments (strips)
 const GRASS_INST = 200 * 200;
 V.GRASS_INST = GRASS_INST;
 const cu = new Float32Array(VIEWS * 64);
@@ -1991,14 +1991,14 @@ return V;
 const PHYS = {
 DT: 1 / 120, SUB: 4,
 mass: 845, Iz: 1150, g: 9.81,
-cgA: 0.944,                 // CG -> eixo dianteiro
-cgB: 1.416,                 // CG -> eixo traseiro
+cgA: 0.944,                 // CG -> front axle
+cgB: 1.416,                 // CG -> rear axle
 cgH: 0.50,
 R: 0.292, Iw: 0.9,
 gears: [3.909, 2.157, 1.480, 1.121, 0.902], final: 4.071, revGear: 3.818,
 idle: 900, redline: 6300,
 brakeF: 1000, brakeR: 360, handbrake: 1700,
-maxSteer: 0.62,             // rad nas rodas (batente)
+maxSteer: 0.62,             // rad at the wheels (lock)
 dragK: 0.40, roll: 0.013,
 };
 function engineTorque(rpm) {
@@ -2012,8 +2012,8 @@ return 45;
 class Car {
 constructor() {
 this.x = 0; this.z = 0; this.y = 0; this.psi = 0;
-this.u = 0; this.v = 0; this.r = 0;       // velocidades locais e guinada
-this.w = new Float64Array(4);             // vel. angular das rodas (DE, DD, TE, TD)
+this.u = 0; this.v = 0; this.r = 0;       // local velocities and yaw
+this.w = new Float64Array(4);             // wheel angular vel. (FL, FR, RL, RR)
 this.spin = new Float64Array(4);
 this.steer = 0; this.thr = 0; this.brk = 0; this.hb = 0; this.steerIn = 0;
 this.gear = 1; this.rpm = 900; this.reverse = false; this.shiftT = 0;
@@ -2021,10 +2021,10 @@ this.ax = 0; this.ay = 0;
 this.roll = 0; this.rollV = 0; this.pitch = 0; this.pitchV = 0; this.heave = 0; this.heaveV = 0;
 this.pitchG = 0; this.rollG = 0;
 this.hint = -1; this.s = 0; this.u_lat = 0;
-this.slip = new Float64Array(4);          // velocidade de escorregamento (m/s)
-this.sn = new Float64Array(4);            // escorregamento normalizado (1 = pico de aderência) — só leitura (som)
+this.slip = new Float64Array(4);          // slip velocity (m/s)
+this.sn = new Float64Array(4);            // normalised slip (1 = peak grip) — read-only (sound)
 this.load = new Float64Array(4);
-this.surf = new Uint8Array(4);            // 0 asfalto, 1 zebra, 2 grama, 3 brita
+this.surf = new Uint8Array(4);            // 0 asphalt, 1 kerb, 2 grass, 3 gravel
 this.wetW = new Float64Array(4);
 this.wx = new Float64Array(4); this.wz = new Float64Array(4); this.wy = new Float64Array(4);
 this.onAsphalt = true; this.offTrackWheels = 0;
@@ -2334,7 +2334,7 @@ return L;
 
 const FX = (() => {
 const F = {};
-const MAXSEG = 6144, SEGF = 4 * 5;           // 4 vértices x (x,y,z,int,lat)
+const MAXSEG = 6144, SEGF = 4 * 5;           // 4 vertices x (x,y,z,int,lat)
 const seg = new Float32Array(MAXSEG * SEGF);
 let segHead = 0, dirtyA = -1, dirtyB = -1, segCount = 0;
 const last = new Float64Array(4 * 3), lastOn = new Uint8Array(4), lastN = new Float64Array(4 * 2);
@@ -2475,7 +2475,7 @@ return F;
 const RENDER = (() => {
 const R = {};
 let device, ctx, canvas, swapFormat;
-const VIEW_FLOATS = 128, VIEW_BYTES = 512, N_VIEWS = 12;   // 0 principal, 1-4 sombras, 5-10 cubo
+const VIEW_FLOATS = 128, VIEW_BYTES = 512, N_VIEWS = 12;   // 0 main, 1-4 shadows, 5-10 cube
 const OBJ_BYTES = 256, N_OBJ = 32;
 const SHADOW_RES = 3072, CUBE_RES = 384, CUBE_MIPS = 6;
 const G_FLOATS = 160;
@@ -2505,9 +2505,9 @@ return m;
 const S = (...names) => names.map(n => SHADERS[n]).join('\n');
 R.init = async (cv, opts) => {
 canvas = cv;
-if (!navigator.gpu) throw new Error('WebGPU indisponível neste navegador.');
+if (!navigator.gpu) throw new Error('WebGPU is not available in this browser.');
 const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-if (!adapter) throw new Error('Sem adaptador WebGPU.');
+if (!adapter) throw new Error('No WebGPU adapter.');
 const feats = [];
 for (const f of ['timestamp-query', 'dual-source-blending', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance']) if (adapter.features.has(f)) feats.push(f);
 R.hasTimestamps = adapter.features.has('timestamp-query');
@@ -2540,7 +2540,7 @@ globBuf = device.createBuffer({ size: G_FLOATS * 4, usage: GPUBufferUsage.UNIFOR
 objBuf = device.createBuffer({ size: OBJ_BYTES * N_OBJ, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 for (let i = 0; i < N_OBJ; i++) { const o = i * 64; M4.identity(objData.subarray(o, o + 16)); M4.identity(objData.subarray(o + 16, o + 32)); }
 }
-R.objMatrix = (slot) => objData.subarray(slot * 64, slot * 64 + 16);       // (só na carga)
+R.objMatrix = (slot) => objData.subarray(slot * 64, slot * 64 + 16);       // (load only)
 R.setObj = (slot, model, prevModel, p0, p1, p2, p3) => {
 const o = slot * 64;
 for (let i = 0; i < 16; i++) { objData[o + i] = model[i]; objData[o + 16 + i] = prevModel[i]; }
@@ -2549,7 +2549,7 @@ objData[o + 32] = p0; objData[o + 33] = p1; objData[o + 34] = p2; objData[o + 35
 let noise3D, skyHi, skyLo, shBuf, detailTex, leafAlb, leafNrm, maskTex, heightTex, textTex, tdBuf;
 async function bakeAll() {
 const t0 = performance.now();
-const el = 9.5 * Math.PI / 180, az = -38 * Math.PI / 180;     // az a partir de +X em direção a -Z
+const el = 9.5 * Math.PI / 180, az = -38 * Math.PI / 180;     // az from +X towards -Z
 R.sun.el = el; R.sun.az = az;
 R.sun.dir[0] = Math.cos(el) * Math.cos(az); R.sun.dir[1] = Math.sin(el); R.sun.dir[2] = Math.cos(el) * Math.sin(az);
 const bpBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -3024,7 +3024,7 @@ const tv = Math.tan(fovy / 2), th = tv * aspect, k2 = tv * tv + th * th;
 let cd = (f + n) * (1 + k2) / 2;
 if (cd > f) cd = f;
 const rad = Math.sqrt((f - cd) * (f - cd) + f * f * k2) * 1.04;
-const r = Math.ceil(rad * 4) / 4;   // quantiza o raio (estável)
+const r = Math.ceil(rad * 4) / 4;   // quantises the radius (stable)
 const px = cx + fx * cd, py = cy + fy * cd, pz = cz + fz * cd;
 const sd = R.sun.dir;
 M4.lookAt(tm.view, 0, 0, 0, -sd[0], -sd[1], -sd[2], 0, 1, 0);
@@ -3319,13 +3319,13 @@ d[i0 + i] += (Math.sin(ph) + 0.18 * Math.sin(2 * ph)) * e * e * a;
 let x = 0.5 + r() * 1.5;
 while (x < secs - 2.2) {
 const k = (r() * 3) | 0, lv = 0.4 + r() * 0.6;
-if (k === 0) {            // frase aflautada: 3 a 5 notas com glissando
+if (k === 0) {            // fluty phrase: 3 to 5 notes with glissando
 const c = 3 + ((r() * 3) | 0);
 for (let i = 0; i < c; i++) { const dn = 0.11 + r() * 0.1, f0 = 1900 + r() * 1300; note(x, dn, f0, f0 * (0.8 + r() * 0.45), lv); x += dn + 0.05 + r() * 0.07; }
-} else if (k === 1) {     // trinado descendente
+} else if (k === 1) {     // descending trill
 const c = 7 + ((r() * 8) | 0), f0 = 4300 + r() * 1200;
 for (let i = 0; i < c; i++) { note(x, 0.036, f0 * (1 - i * 0.012), f0 * (0.84 - i * 0.012), lv * 0.7); x += 0.062; }
-} else {                  // três notas: média, aguda, longa caindo
+} else {                  // three notes: mid, high, long falling
 note(x, 0.1, 2350, 2500, lv); note(x + 0.16, 0.09, 2850, 3000, lv); note(x + 0.31, 0.3, 3500, 2950, lv); x += 0.61;
 }
 x += 1.1 + r() * 3.4;
@@ -3344,7 +3344,7 @@ const car = gain(ac, 0), amb = gain(ac, AMBIENTE);
 car.connect(out); amb.connect(out);
 const to = (node, name, bus) => node.connect(!solo || solo === name ? bus : nil);
 V.mute = mute.gain; V.out = mute;
-const lfo = (rate, off) => loop(ac, nz, rate / ac.sampleRate, off);   // ruído lento: `rate` valores por segundo, interpolados
+const lfo = (rate, off) => loop(ac, nz, rate / ac.sampleRate, off);   // slow noise: `rate` values per second, interpolated
 const ctl = (i, scale, fc, ...dst) => {
 const s = ac.createConstantSource(), f = biq(ac, 'lowpass', fc, 0.5);
 s.offset.value = 0; s.start(0); chain(s, gain(ac, scale), f);
@@ -3352,9 +3352,9 @@ for (const d of dst) f.connect(d);
 V.c[i] = s.offset; return f;
 };
 const zg = () => gain(ac, 0);
-const jit = lfo(34, 0.3), jc = gain(ac, 11);       // irregularidade de ciclo (± cents)
+const jit = lfo(34, 0.3), jc = gain(ac, 11);       // cycle irregularity (± cents)
 jit.connect(jc);
-const cyc = ctl(0, 1 / 120, 13);                   // giro → Hz do ciclo (720°)
+const cyc = ctl(0, 1 / 120, 13);                   // revs → Hz of the cycle (720°)
 const osc = (w) => { const o = ac.createOscillator(); o.setPeriodicWave(w); o.frequency.value = 0; cyc.connect(o.frequency); jc.connect(o.detune); o.start(0); return o; };
 const gOn = zg(), gOff = zg(), pre = zg(), sh = ac.createWaveShaper();
 sh.curve = curve((x) => Math.tanh(1.7 * x + 0.4 * x * x)); sh.oversample = '2x';
@@ -3405,7 +3405,7 @@ const cg = gain(ac, 0.5), cs = gain(ac, 0.011), co = ac.createOscillator();
 co.type = 'sawtooth'; co.frequency.value = 47; co.start(0); chain(co, gain(ac, 0.5), cg.gain);
 chain(lfo(0.35, 3.6), gain(ac, 0.009), cs.gain);
 to(chain(loop(ac, nz, 1, 3.7), biq(ac, 'bandpass', 5300, 22), cg, cs, pan(ac, 0.45)), 'ambiente', amb);
-const dl = ac.createDelay(0.5), el = biq(ac, 'lowpass', 2400, 0.5), bb = gain(ac, 1), bo = gain(ac, 1);   // eco curto da mata
+const dl = ac.createDelay(0.5), el = biq(ac, 'lowpass', 2400, 0.5), bb = gain(ac, 1), bo = gain(ac, 1);   // short forest echo
 dl.delayTime.value = 0.21; chain(bb, dl, el, gain(ac, 0.3), dl); chain(el, gain(ac, 0.5), bo); bb.connect(bo);
 to(bo, 'ambiente', amb);
 for (const [seed, secs, p] of [[11, 17, -0.6], [23, 23, 0.5]]) { const s = ac.createBufferSource(); s.buffer = birdBuf(ac, seed, secs); s.loop = true; s.start(0); chain(s, gain(ac, 0.04), pan(ac, p), bb); }
@@ -3423,23 +3423,23 @@ const T = new Int32Array(NC);
 function targets(quiet) {
 const rpm = M[0], L = M[1], rn = clamp((rpm - 900) / 5400, 0, 1), v = M[6], vn = v > 50 ? 50 / 45 : v / 45, K = 4096;
 T[0] = rpm;
-T[1] = K * Math.pow(L, 0.7) * (0.6 + 0.4 * rn);                 // onda em carga
-T[2] = K * (0.15 + 0.8 * Math.pow(1 - L, 1.5));                 // onda aliviada
-T[3] = K * (0.45 + 0.75 * L);                                   // saturação
-T[4] = K * (0.06 + 0.5 * L * (0.3 + 0.7 * rn) + 0.14 * rn);     // ruído de combustão
-T[5] = 900 + 1900 * rn + L * (1900 + 1900 * rn);                // passa-baixas (Hz)
-T[6] = K * 0.16 * (0.3 + 0.4 * L + 0.3 * rn * (0.4 + 0.6 * L));     // volume do motor
+T[1] = K * Math.pow(L, 0.7) * (0.6 + 0.4 * rn);                 // on-load waveform
+T[2] = K * (0.15 + 0.8 * Math.pow(1 - L, 1.5));                 // off-load waveform
+T[3] = K * (0.45 + 0.75 * L);                                   // saturation
+T[4] = K * (0.06 + 0.5 * L * (0.3 + 0.7 * rn) + 0.14 * rn);     // combustion noise
+T[5] = 900 + 1900 * rn + L * (1900 + 1900 * rn);                // low-pass (Hz)
+T[6] = K * 0.16 * (0.3 + 0.4 * L + 0.3 * rn * (0.4 + 0.6 * L));     // engine volume
 const sv = clamp(M[14] / 22, 0, 1);
 T[7] = K * M[2] * 1.15; T[8] = K * M[3] * 1.15; T[9] = 1024 * M[4]; T[10] = 1024 * M[5];
-T[11] = -160 + 420 * sv + 140 * M[2]; T[12] = -160 + 420 * sv + 140 * M[3];   // tom do canto (cents)
+T[11] = -160 + 420 * sv + 140 * M[2]; T[12] = -160 + 420 * sv + 140 * M[3];   // squeal pitch (cents)
 T[13] = K * (M[2] + M[3]) * 0.15 * (0.4 + 0.6 * sv);
-T[14] = 260 + 1500 * vn; T[15] = K * 0.5 * vn * vn;            // vento
-T[16] = K * 0.5 * Math.pow(vn, 0.8);                            // rodagem
-T[17] = K * (M[7] * 0.55 + M[8] * 0.3) * clamp(v / 14, 0, 1);   // fora da pista / zebra
+T[14] = 260 + 1500 * vn; T[15] = K * 0.5 * vn * vn;            // wind
+T[16] = K * 0.5 * Math.pow(vn, 0.8);                            // road noise
+T[17] = K * (M[7] * 0.55 + M[8] * 0.3) * clamp(v / 14, 0, 1);   // off track / kerb
 T[18] = 16 * (M[8] > 0 ? 4 + v / 0.9 : 0);
-T[19] = K * clamp((M[9] - 0.03) * 0.42, 0, 1); T[20] = 1024 * M[10];   // público
+T[19] = K * clamp((M[9] - 0.03) * 0.42, 0, 1); T[20] = 1024 * M[10];   // crowd
 T[21] = quiet ? 0 : K;
-T[22] = K * 0.9 * M[12]; T[23] = K * 1.2 * M[13];                 // estalo da troca, batida
+T[22] = K * 0.9 * M[12]; T[23] = K * 1.2 * M[13];                 // shift click, impact
 }
 function apply(V, t, quiet) {
 targets(quiet);
@@ -3494,8 +3494,8 @@ const H = {};
 const FF = '"Helvetica Neue", Helvetica, Arial, sans-serif', GL = '0123456789:.-RN,';
 const A0 = 135 * PI / 180, SW = 270 * PI / 180;
 let cvP, cvT, cvS, gP, gT, gS, bgP, bgT, bgS, fB, fM, fS, u = 1, made = false;
-const L = new Int32Array(12).fill(-1);       // últimos valores desenhados
-const D = new Int32Array(8);                 // centros e raios dos mostradores (px)
+const L = new Int32Array(12).fill(-1);       // last values drawn
+const D = new Int32Array(8);                 // centres and radii of the dials (px)
 const mk = (id) => { const c = document.createElement('canvas'); c.className = 'hud'; c.id = id; c.style.display = 'none'; document.body.appendChild(c); return c; };
 function font(px) {
 const cw = Math.ceil(px * 0.66), ch = Math.ceil(px * 1.2), cv = document.createElement('canvas');
@@ -3537,7 +3537,7 @@ function size(c, w, h) { c.width = Math.round(w * u); c.height = Math.round(h * 
 const bg = (c) => { const b = document.createElement('canvas'); b.width = c.width; b.height = c.height; return b; };
 H.resize = () => {
 if (!made) { cvP = mk('hp'); cvT = mk('ht'); cvS = mk('hs'); made = true; }
-u = clamp(Math.min(innerWidth / 1280, innerHeight / 720), 0.6, 2) * devicePixelRatio;   // 1 unidade = 1 px num quadro de 720p
+u = clamp(Math.min(innerWidth / 1280, innerHeight / 720), 0.6, 2) * devicePixelRatio;   // 1 unit = 1 px in a 720p frame
 fB = font(Math.round(34 * u)); fM = font(Math.round(26 * u)); fS = font(Math.round(15 * u));
 gP = size(cvP, 420, 208);
 bgP = bg(cvP); let g = bgP.getContext('2d');
@@ -3548,17 +3548,17 @@ gT = size(cvT, 250, 112);
 bgT = bg(cvT); g = bgT.getContext('2d');
 plate(g, 0, 0, cvT.width, cvT.height);
     g.font = `600 ${Math.round(11 * u)}px ${FF}`; g.fillStyle = 'rgba(255,255,255,.72)'; g.textBaseline = 'middle';
-    g.fillText('VOLTA', 14 * u, 30 * u); g.fillText('ÚLTIMA', 14 * u, 68 * u); g.fillText('MELHOR', 14 * u, 92 * u);
+    g.fillText('LAP', 14 * u, 30 * u); g.fillText('LAST', 14 * u, 68 * u); g.fillText('BEST', 14 * u, 92 * u);
 gS = size(cvS, 170, 86);
 bgS = bg(cvS); g = bgS.getContext('2d');
 plate(g, 0, 0, cvS.width, cvS.height);
     g.font = `600 ${Math.round(11 * u)}px ${FF}`; g.fillStyle = 'rgba(255,255,255,.72)'; g.textBaseline = 'middle';
-    g.fillText('QUADROS/S', 12 * u, 20 * u); g.fillText('QUADRO  ms', 12 * u, 44 * u); g.fillText('GPU  ms', 12 * u, 68 * u);
+    g.fillText('FRAMES/S', 12 * u, 20 * u); g.fillText('FRAME  ms', 12 * u, 44 * u); g.fillText('GPU  ms', 12 * u, 68 * u);
 D[0] = 104 * u; D[1] = 110 * u; D[2] = 88 * u; D[3] = 312 * u; D[4] = 104 * u; D[5] = 100 * u;
 L.fill(-1);
 };
 H.show = (panel, stats) => { if (!made) return; cvP.style.display = cvT.style.display = panel ? 'block' : 'none'; cvS.style.display = stats ? 'block' : 'none'; };
-function needle(g, cx, cy, r, f) {      // tudo inteiro; f em 1/4096 do fundo de escala
+function needle(g, cx, cy, r, f) {      // all integer; f in 1/4096 of full scale
 const a = A0 + SW * (f > 4180 ? 4180 : f) / 4096, c = Math.cos(a), s = Math.sin(a);
 g.beginPath(); g.moveTo((cx - c * r * 0.16) | 0, (cy - s * r * 0.16) | 0); g.lineTo((cx + c * r * 0.86) | 0, (cy + s * r * 0.86) | 0); g.stroke();
 g.beginPath(); g.arc(cx | 0, cy | 0, (r * 0.085) | 0, 0, 7); g.fill();
@@ -3595,8 +3595,8 @@ num(g, fS, a, x, (11 * u) | 0);
 dec(g, b, x, (35 * u) | 0);
 if (c < 0) gl(g, fS, 12, x - fS.ad, (59 * u) | 0); else dec(g, c, x, (59 * u) | 0);
 };
-function dec(g, v, x, y) {      // décimos, com vírgula decimal
-x -= fS.ad; gl(g, fS, v % 10, x, y); x -= fS.ap; gl(g, fS, 15, x, y); num(g, fS, (v / 10) | 0, x, y);
+function dec(g, v, x, y) {      // tenths, with a decimal point
+x -= fS.ad; gl(g, fS, v % 10, x, y); x -= fS.ap; gl(g, fS, 11, x, y); num(g, fS, (v / 10) | 0, x, y);
 }
 return H;
 })();
@@ -3619,11 +3619,11 @@ const input = { up: false, down: false, left: false, right: false, hand: false, 
 const keysDown = { up: false, down: false, left: false, right: false, hand: false };
 G.input = keysDown;
 G.mode = params.has('replay') || params.has('perf') ? 'replay' : 'play';
-G.camMode = 0;             // 0 perseguição, 1 capô, 2 TV
+G.camMode = 0;             // 0 chase, 1 hood, 2 TV
 G.debugCam = false;
 const F = new Float64Array(8);   // 0 simTime, 1 acc, 2 lapStart, 3 lastS, 4 lapDist, 5 lastT, 6 lastFrameT
 let simFrame = 0, lapRunning = true;
-const CAM_NAMES = ['perseguição', 'capô', 'TV'];
+const CAM_NAMES = ['chase', 'hood', 'TV'];
 const UI = { on: UION, screen: UION ? 'inicio' : 'jogo', stats: false, pose: 0, bench: false, watch: false, result: null };
 G.ui = UI;
 let paused = UION, frozen = false, hudOn = false;
@@ -3631,7 +3631,7 @@ const LT = new Float64Array(8);
 const lapReset = () => { LT[0] = 0; LT[3] = 0; LT[4] = 0; LT[5] = 0; LT[6] = 0; };
 LT[1] = -1; LT[2] = -1;
 const ST = new Float64Array(8);
-const SCHED = [[0, 0], [13.2, 2], [24.5, 0], [37.5, 1], [47.5, 0]];   // câmeras da volta roteirizada (as do vídeo)
+const SCHED = [[0, 0], [13.2, 2], [24.5, 0], [37.5, 1], [47.5, 0]];   // cameras of the scripted lap (the ones in the video)
 const KEYMAP = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'hand' };
 let lookKey = false, padLook = false, padHand = false, stickLast = false, padN = 0;
 function drive() {
@@ -3640,14 +3640,14 @@ if (UI.pose) leavePose();
 }
 function takeOver() {
 G.mode = 'play';
-if (UI.watch) { UI.watch = false; G.camSchedule = null; G.camMode = 0; camInit = false; fs.cut = true; say('Você no controle'); }
+if (UI.watch) { UI.watch = false; G.camSchedule = null; G.camMode = 0; camInit = false; fs.cut = true; say('You have control'); }
 }
 function camKey() {
 if (UI.bench) return;
 if (UI.pose) { leavePose(); return; }
 if (UI.watch) G.camSchedule = null;
 G.cycleCamera();
-if (UI.on) say('Câmera: ' + CAM_NAMES[G.camMode]);
+if (UI.on) say('Camera: ' + CAM_NAMES[G.camMode]);
 }
 function resetKey() {
 if (UI.bench) return;
@@ -3658,7 +3658,7 @@ G.resetCar();
 function onKey(e, down) {
 if (e.ctrlKey || e.metaKey || e.altKey) return;
 const c = e.code;
-if (UI.on && paused) {       // menus: só Esc, M, H e B; Enter/Espaço ficam com o botão em foco
+if (UI.on && paused) {       // menus: only Esc, M, H and B; Enter/Space belong to the focused button
 if (down && !e.repeat && uiKey(c)) e.preventDefault();
 return;
 }
@@ -3673,7 +3673,7 @@ else if (UI.on && uiKey(c)) e.preventDefault();
 }
 function uiKey(c) {
 if (c === 'Escape') { if (UI.screen === 'jogo') G.pause(); else G.resume(); }
-else if (c === 'KeyM') { SND.setMute(!SND.muted); say(SND.muted ? 'Som desligado' : 'Som ligado'); }
+else if (c === 'KeyM') { SND.setMute(!SND.muted); say(SND.muted ? 'Sound off' : 'Sound on'); }
 else if (c === 'KeyH') { UI.stats = !UI.stats; RENDER.tsLive = UI.stats; ST[3] = 0; ST[4] = 0; hudVis(); }
 else if (UI.screen === 'inicio') return false;
 else if (c === 'KeyB') G.startBench();
@@ -3688,7 +3688,7 @@ window.addEventListener('keydown', (e) => { SND.kick(); onKey(e, true); });
 window.addEventListener('pointerdown', SND.kick);
 window.addEventListener('keyup', (e) => onKey(e, false));
 window.addEventListener('blur', () => { for (const k in keysDown) keysDown[k] = false; lookKey = false; });
-const PADV = new Float64Array(3);                             // direção −1..1, acelerador 0..1, freio 0..1
+const PADV = new Float64Array(3);                             // steering −1..1, throttle 0..1, brake 0..1
 const padNow = new Uint8Array(17), padWas = new Uint8Array(17);
 const padCount = () => { padN = 0; const g = navigator.getGamepads ? navigator.getGamepads() : []; for (let i = 0; i < g.length; i++) if (g[i] && g[i].connected) padN++; if (!padN) { PADV.fill(0); padNow.fill(0); padHand = padLook = false; } };
 window.addEventListener('gamepadconnected', padCount);
@@ -3766,7 +3766,7 @@ for (const s0 of S) {
 TRACK.sampleS(s0, ts);
 const i = Math.floor(s0 / TRACK.ds) % TRACK.N;
 let sg = 0; for (let k = -30; k <= 30; k++) sg += TRACK.curv[(i + k + TRACK.N) % TRACK.N];
-const side = sg > 0 ? -1 : 1;           // lado externo da curva
+const side = sg > 0 ? -1 : 1;           // outer side of the corner
 const wall = side < 0 ? TRACK.wallL[i] : TRACK.wallR[i];
 const u = side * (wall + 4.5);
 const x = ts[0] - ts[4] * u, z = ts[2] + ts[3] * u;
@@ -3780,7 +3780,7 @@ const dt = F[7];
 const c = fs.cam;
 const hx = pose.fx, hz = pose.fz, hl = Math.hypot(hx, hz) || 1;
 const fx = hx / hl, fz = hz / hl;
-const lb = G.lookBack ? -1 : 1;              // olhar para trás espelha a câmera (a de TV vira perseguição)
+const lb = G.lookBack ? -1 : 1;              // looking back mirrors the camera (the TV one becomes chase)
 if (G.camMode === 0 || (lb < 0 && G.camMode === 2)) {
 const yawT = Math.atan2(fz, fx);
 if (!camInit) { ch.yaw = yawT; ch.y = pose.y; camInit = true; }
@@ -3881,7 +3881,7 @@ let n = 0;
 while (F[1] >= PHYS.DT - 1e-9 && n < 24) { simStep(); F[1] -= PHYS.DT; n++; }
 if (n === 24) F[1] = 0;
 };
-G.simFrame = (dt) => { F[7] = dt; G.advance(); };     // só a simulação, sem imagem (som fora do tempo real)
+G.simFrame = (dt) => { F[7] = dt; G.advance(); };     // simulation only, no picture (off-real-time sound)
 const cubeC = new Float32Array(3);
 function frame() {
 const dt = F[7];
@@ -3943,7 +3943,7 @@ if (G.mode === 'replay') G.mode = 'play';
 hudVis();
 }
 const POSES = [[5.6, -4.4, 1.25, 0, 0, 0.62, 33], [-5.8, 4.2, 2.5, -0.2, 0, 0.9, 34], [0.2, -4.6, 1.4, -0.1, 0, 0.95, 36], null, [-120, 7.5, -3, 60, 1.5, 2, 52], [-10, 38, 70, -170, 0, -190, 55]];
-const POSE_NAMES = ['frente ¾', 'traseira ¾ e escada', 'lateral e interior', 'TV no grampo', 'reta de largada', 'paisagem'];
+const POSE_NAMES = ['front ¾', 'rear ¾ and ladder', 'side and interior', 'TV at the hairpin', 'start straight', 'landscape'];
 const ts6 = new Float64Array(6);
 G.gotoPose = (n) => {
 if (UI.bench || !(n >= 1 && n <= 6)) return;
@@ -3955,7 +3955,7 @@ for (let i = 0; i < 840; i++) G.simFrame(1 / 60);
 frozen = true;
 } else {
 G.mode = 'play'; G.camMode = 0; frozen = false; fs.hud = false;
-let best = 380, bd = -9; const sd = RENDER.sun.dir;      // trecho aberto, de frente para o sol
+let best = 380, bd = -9; const sd = RENDER.sun.dir;      // open stretch, facing the sun
 for (let s = 360; s < 430; s += 1) { TRACK.sampleS(s, ts6); const d = ts6[3] * sd[0] + ts6[4] * sd[2]; if (d > bd) { bd = d; best = s; } }
 car.placeOnTrack(best, 1.5); F[3] = car.s; F[1] = 0; copyPrev(); updatePose();
 const q = POSES[n - 1], p = pose;
@@ -3968,7 +3968,7 @@ hudVis(); say('Pose ' + n + ' — ' + POSE_NAMES[n - 1]);
 G.watchLap = () => {
 if (UI.bench) return;
 leavePose(); G.startScripted(); G.camMode = 0; G.camSchedule = SCHED; G.debugCam = false; UI.watch = true;
-say('Volta roteirizada — acelere ou faça uma curva para assumir');
+say('Scripted lap — throttle or steer to take over');
 };
 G.startBench = () => {
 if (!UI.on || UI.bench || UI.screen === 'inicio' || !G.ready) return;
@@ -3977,7 +3977,7 @@ UI.bench = true; fs.hud = true;
 canvas.style.objectFit = 'contain'; RENDER.resize(2560, 1440);
 setScreen('jogo');
 startPerf();
-say('Benchmark: 60 s — Esc cancela');
+say('Benchmark: 60 s — Esc to cancel');
 };
 function benchClose() { UI.bench = false; fs.hud = false; canvas.style.objectFit = ''; fit(); toGrid(); }
 function benchCancel() { perf.on = false; RENDER.stopTimestampLog(); benchClose(); }
@@ -3987,11 +3987,11 @@ const over = (a, lim) => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i
 const fi = r.frameIntervals.slice(5), g = r.gpu.slice(5);
 const res = { quadros: r.frames, segundos: r.seconds, volta: r.lap, largura: RENDER.W, altura: RENDER.H, quadro: st(fi), gpu: st(g), acima16_7: over(fi, 16.75), gpuAcima16_7: g.length ? over(g, 16.7) : null };
 UI.result = res;
-    const n = (x) => x.toFixed(2).replace('.', ','), row = (t, o) => `<tr><th>${t}</th>` + (o ? `<td>${n(o.media)}</td><td>${n(o.p99)}</td><td>${n(o.max)}</td>` : '<td colspan="3">indisponível neste navegador</td>') + '</tr>';
-    $('res').innerHTML = `<h2>Benchmark — volta roteirizada, ${res.largura}×${res.altura}</h2><table><tr><th></th><th>média</th><th>percentil 99</th><th>máximo</th></tr>` +
-      row('Tempo de quadro (ms)', res.quadro) + row('Tempo de GPU (ms)', res.gpu) + '</table>' +
-      `<p>${res.quadros} quadros em ${n(res.segundos)} s (${n(res.quadros / res.segundos)} quadros/s). Passaram de 16,7 ms: <b>${res.acima16_7}</b> quadros no tempo de quadro` +
-      (res.gpu ? ` e <b>${res.gpuAcima16_7}</b> no tempo de GPU.` : '.') + '</p>';
+    const n = (x) => x.toFixed(2), row = (t, o) => `<tr><th>${t}</th>` + (o ? `<td>${n(o.media)}</td><td>${n(o.p99)}</td><td>${n(o.max)}</td>` : '<td colspan="3">unavailable in this browser</td>') + '</tr>';
+    $('res').innerHTML = `<h2>Benchmark — scripted lap, ${res.largura}×${res.altura}</h2><table><tr><th></th><th>average</th><th>99th percentile</th><th>maximum</th></tr>` +
+      row('Frame time (ms)', res.quadro) + row('GPU time (ms)', res.gpu) + '</table>' +
+      `<p>${res.quadros} frames in ${n(res.segundos)} s (${n(res.quadros / res.segundos)} frames/s). Over 16.7 ms: <b>${res.acima16_7}</b> frames by frame time` +
+      (res.gpu ? ` and <b>${res.gpuAcima16_7}</b> by GPU time.` : '.') + '</p>';
     benchClose();
 setScreen('resultado');
 }
@@ -4012,7 +4012,7 @@ setScreen('inicio');
 async function main() {
 canvas = document.getElementById('c');
 try {
-msg('gerando circuito…');
+msg('generating circuit…');
 await new Promise(r => setTimeout(r, 0));
 await RENDER.init(canvas);
 RENDER.addMesh(WORLD.buildTrack().pack(), { name: 'track', shadow: false });
@@ -4043,7 +4043,7 @@ if (!params.has('manual')) requestAnimationFrame(loop);
 if (params.has('perf')) startPerf();
 } catch (e) {
 console.error(e);
-msg('Erro: ' + e.message);
+msg('Error: ' + e.message);
 G.error = String(e.stack || e);
 }
 }

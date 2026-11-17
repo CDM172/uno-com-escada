@@ -1,24 +1,24 @@
 // ---------------------------------------------------------------------------
-// physics.js — dinâmica do Uno (tração dianteira), determinística, sem alocação
-// Local: a = frente, b = direita. Ângulo ψ: frente = (cos ψ, sin ψ) em (x, z)
+// physics.js — Uno dynamics (front-wheel drive), deterministic, no allocation
+// Local: a = forward, b = right. Angle ψ: forward = (cos ψ, sin ψ) in (x, z)
 // ---------------------------------------------------------------------------
 'use strict';
 
 const PHYS = {
   DT: 1 / 120, SUB: 4,
   mass: 845, Iz: 1150, g: 9.81,
-  cgA: 0.944,                 // CG -> eixo dianteiro
-  cgB: 1.416,                 // CG -> eixo traseiro
+  cgA: 0.944,                 // CG -> front axle
+  cgB: 1.416,                 // CG -> rear axle
   cgH: 0.50,
   R: 0.292, Iw: 0.9,
   gears: [3.909, 2.157, 1.480, 1.121, 0.902], final: 4.071, revGear: 3.818,
   idle: 900, redline: 6300,
   brakeF: 1000, brakeR: 360, handbrake: 1700,
-  maxSteer: 0.62,             // rad nas rodas (batente)
+  maxSteer: 0.62,             // rad at the wheels (lock)
   dragK: 0.40, roll: 0.013,
 };
 
-// torque do motor (Nm) por rpm — Mille preparado (~70 cv)
+// engine torque (Nm) by rpm — tuned Mille (~70 hp)
 function engineTorque(rpm) {
   const r = rpm / 1000;
   if (r < 1) return 70;
@@ -30,10 +30,10 @@ function engineTorque(rpm) {
 
 class Car {
   constructor() {
-    // estado
+    // state
     this.x = 0; this.z = 0; this.y = 0; this.psi = 0;
-    this.u = 0; this.v = 0; this.r = 0;       // velocidades locais e guinada
-    this.w = new Float64Array(4);             // vel. angular das rodas (DE, DD, TE, TD)
+    this.u = 0; this.v = 0; this.r = 0;       // local velocities and yaw
+    this.w = new Float64Array(4);             // wheel angular vel. (FL, FR, RL, RR)
     this.spin = new Float64Array(4);
     this.steer = 0; this.thr = 0; this.brk = 0; this.hb = 0; this.steerIn = 0;
     this.gear = 1; this.rpm = 900; this.reverse = false; this.shiftT = 0;
@@ -41,10 +41,10 @@ class Car {
     this.roll = 0; this.rollV = 0; this.pitch = 0; this.pitchV = 0; this.heave = 0; this.heaveV = 0;
     this.pitchG = 0; this.rollG = 0;
     this.hint = -1; this.s = 0; this.u_lat = 0;
-    this.slip = new Float64Array(4);          // velocidade de escorregamento (m/s)
-    this.sn = new Float64Array(4);            // escorregamento normalizado (1 = pico de aderência) — só leitura (som)
+    this.slip = new Float64Array(4);          // slip velocity (m/s)
+    this.sn = new Float64Array(4);            // normalised slip (1 = peak grip) — read-only (sound)
     this.load = new Float64Array(4);
-    this.surf = new Uint8Array(4);            // 0 asfalto, 1 zebra, 2 grama, 3 brita
+    this.surf = new Uint8Array(4);            // 0 asphalt, 1 kerb, 2 grass, 3 gravel
     this.wetW = new Float64Array(4);
     this.wx = new Float64Array(4); this.wz = new Float64Array(4); this.wy = new Float64Array(4);
     this.onAsphalt = true; this.offTrackWheels = 0;
@@ -68,7 +68,7 @@ class Car {
     this.hint = -1;
     this.updateGround();
   }
-  // altura e tipo de superfície num ponto do mundo
+  // height and surface type at a world point
   groundAt(x, z, k) {
     const T = TRACK, o = this._p;
     T.project(x, z, this.hint, o);
@@ -104,25 +104,25 @@ class Car {
     }
     this.offTrackWheels = off;
     this.onAsphalt = off === 0;
-    // plano pelas 4 rodas
+    // plane through the 4 wheels
     const yf = (this.wy[0] + this.wy[1]) * 0.5, yr = (this.wy[2] + this.wy[3]) * 0.5;
     const yl = (this.wy[0] + this.wy[2]) * 0.5, yrr = (this.wy[1] + this.wy[3]) * 0.5;
     this.pitchG = Math.atan2(yf - yr, 2.36);
     this.rollG = Math.atan2(yl - yrr, 1.33);
     this.y = (yf + yr) * 0.5;
   }
-  // entrada digital: up, down, left, right, hand (booleanos)
-  // entrada analógica (jogo): inp.analog + inp.a = [direção -1..1, acelerador 0..1, freio/ré 0..1]; inp.stick = direção vem do analógico
-  // (com valores 0/1 e stick falso, o caminho analógico dá exatamente os mesmos números do digital)
+  // digital input: up, down, left, right, hand (booleans)
+  // analog input (game): inp.analog + inp.a = [steering -1..1, throttle 0..1, brake/reverse 0..1]; inp.stick = steering comes from the stick
+  // (with 0/1 values and stick false, the analog path gives exactly the same numbers as the digital one)
   step(inp, dt) {
     const P = PHYS;
     const spd = this.u;
     const an = inp.analog === true, A = inp.a;
-    // ---- filtros de entrada
+    // ---- input filters
     const steerTarget = an ? A[0] : (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
     const rate = an && inp.stick ? 9.0 : steerTarget === 0 ? 4.0 : (Math.sign(steerTarget) !== Math.sign(this.steerIn) && this.steerIn !== 0 ? 6.0 : 2.6);
     this.steerIn += clamp(steerTarget - this.steerIn, -rate * dt, rate * dt);
-    // trava reduzida com a velocidade (ajuda no teclado)
+    // lock reduced with speed (helps on the keyboard)
     const lock = P.maxSteer / (1 + Math.abs(spd) * 0.045);
     this.steer = this.steerIn * lock;
     let wantThr = 0, wantBrk = 0;
@@ -136,8 +136,8 @@ class Car {
     this.thr += clamp(wantThr - this.thr, -8 * dt, 6 * dt);
     this.brk += clamp(wantBrk - this.brk, -10 * dt, 7 * dt);
     this.hb += clamp((inp.hand ? 1 : 0) - this.hb, -10 * dt, 12 * dt);
-    // ---- câmbio automático
-    // rpm pela roda motriz, mas trocas pela velocidade do carro (roda travada não reduz marcha)
+    // ---- automatic gearbox
+    // rpm from the driven wheel, but shifts by car speed (a locked wheel does not downshift)
     const wheelRpmF = Math.abs((this.w[0] + this.w[1]) * 0.5) * 60 / TAU;
     const carRpmW = Math.abs(this.u) / P.R * 60 / TAU;
     this.shiftT = Math.max(0, this.shiftT - dt);
@@ -153,14 +153,14 @@ class Car {
     let engT = engineTorque(Math.min(this.rpm, P.redline)) * this.thr * (cutting ? 0.1 : 1);
     if (this.rpm >= P.redline) engT *= 0.2;
     const driveT = engT * ratio * P.final * 0.9 * (this.reverse ? -1 : 1);
-    // ---- cargas (transferência com acelerações do passo anterior)
+    // ---- loads (transfer using the previous step's accelerations)
     const L = P.cgA + P.cgB, m = P.mass, g = P.g;
     const fzF = m * g * P.cgB / L - m * this.ax * P.cgH / L;
     const fzR = m * g * P.cgA / L + m * this.ax * P.cgH / L;
     const latF = m * this.ay * P.cgH / 1.34 * 0.6, latR = m * this.ay * P.cgH / 1.31 * 0.4;
     this.load[0] = Math.max(50, fzF * 0.5 + latF); this.load[1] = Math.max(50, fzF * 0.5 - latF);
     this.load[2] = Math.max(50, fzR * 0.5 + latR); this.load[3] = Math.max(50, fzR * 0.5 - latR);
-    // ---- forças dos pneus (subpassos para a rotação das rodas)
+    // ---- tyre forces (substeps for wheel rotation)
     const subDt = dt / P.SUB;
     let Fx = 0, Fy = 0, Mz = 0;
     for (let k = 0; k < 4; k++) { this.fx[k] = 0; this.fy[k] = 0; }
@@ -173,7 +173,7 @@ class Car {
         const d = front ? this.steer * (1 + (k & 1 ? -1 : 1) * this.steer * 0.12) : 0;
         const cd = Math.cos(d), sd = Math.sin(d);
         const vl = vxl * cd + vyl * sd, vt = -vxl * sd + vyl * cd;
-        // atrito por superfície
+        // friction by surface
         const sf = this.surf[k];
         let mu = sf === 0 ? 1.0 - this.wetW[k] * 0.22 : sf === 1 ? 0.9 : sf === 2 ? 0.6 : 0.52;
         const Fz = this.load[k];
@@ -185,7 +185,7 @@ class Car {
         const sMag = Math.hypot(sx, sy);
         let F = 0;
         if (sMag > 1e-6) {
-          // curva mágica normalizada (pico em s=1, cai para ~0.8 deslizando)
+          // normalised magic curve (peak at s=1, drops to ~0.8 when sliding)
           const B = 1.35, C = 1.65, E = 0.2;
           const bs = B * sMag;
           const peak = Math.sin(C * Math.atan(B - E * (B - Math.atan(B))));
@@ -193,20 +193,20 @@ class Car {
         }
         let fl = sMag > 1e-6 ? F * sx / sMag : 0;
         let ft = sMag > 1e-6 ? -F * sy / sMag : 0;
-        // amortecimento em baixa velocidade (evita tremor parado)
+        // low-speed damping (avoids jitter at a standstill)
         const lowS = clamp(1 - Math.abs(vl) / 1.5, 0, 1);
         ft = lerp(ft, -vt * Fz * 0.35, lowS * 0.7);
-        // resistência de rolagem + grama/brita
+        // rolling resistance + grass/gravel
         const rr = (sf >= 2 ? (sf === 3 ? 0.11 : 0.045) : P.roll) * Fz * Math.sign(vl) * Math.min(Math.abs(vl), 1);
-        // rotação da roda
+        // wheel rotation
         let T = 0;
         if (front) T += driveT * 0.5;
         const bT = (front ? P.brakeF : P.brakeR) * this.brk + (front ? 0 : P.handbrake * this.hb);
         const wNew = this.w[k] + (T - fl * P.R) / P.Iw * subDt;
-        // freio: torque oposto à rotação, sem inverter o sentido
+        // brake: torque opposing rotation, without reversing direction
         const bw = bT / P.Iw * subDt;
         if (Math.abs(wNew) <= bw) this.w[k] = 0; else this.w[k] = wNew - Math.sign(wNew) * bw;
-        // forças no carro (frame local)
+        // forces on the car (local frame)
         const fxl = (fl - rr) * cd - ft * sd, fyl = (fl - rr) * sd + ft * cd;
         this.fx[k] += fxl / P.SUB; this.fy[k] += fyl / P.SUB;
         this.slip[k] = Math.hypot(wR - vl, vt);
@@ -219,12 +219,12 @@ class Car {
       Fx += this.fx[k]; Fy += this.fy[k];
       Mz += a * this.fy[k] - b * this.fx[k];
     }
-    // arrasto + gravidade na rampa
+    // drag + gravity on the slope
     const sp = Math.hypot(this.u, this.v);
     Fx -= P.dragK * this.u * sp; Fy -= P.dragK * this.v * sp * 1.5;
     Fx -= m * g * Math.sin(this.pitchG);
     Fy += m * g * Math.sin(this.rollG) * 0.0;
-    // ---- integração (frame local girando)
+    // ---- integration (rotating local frame)
     const axl = Fx / m, ayl = Fy / m;
     this.u += (axl + this.r * this.v) * dt;
     this.v += (ayl - this.r * this.u) * dt;
@@ -238,7 +238,7 @@ class Car {
     for (let k = 0; k < 4; k++) this.spin[k] = (this.spin[k] + this.w[k] * dt) % TAU;
     this.updateGround();
     this.collide();
-    // ---- suspensão visual (rolagem/arfagem/vertical)
+    // ---- visual suspension (roll/pitch/heave)
     const ayT = ayl, axT = axl;
     const rollT = -ayT * 0.0125, pitchT = axT * 0.0058;
     this.rollV += ((rollT - this.roll) * 90 - this.rollV * 11) * dt; this.roll += this.rollV * dt;
@@ -246,7 +246,7 @@ class Car {
     this.heaveV += ((0 - this.heave) * 160 - this.heaveV * 16) * dt; this.heave += this.heaveV * dt;
     this.time += dt;
   }
-  // barreiras: cantos do carro contra a distância lateral da parede
+  // barriers: car corners against the wall's lateral distance
   collide() {
     const T = TRACK, o = this._p;
     const c = Math.cos(this.psi), sn = Math.sin(this.psi);
@@ -259,27 +259,27 @@ class Car {
       const wall = (u > 0 ? T.lerpArr(T.wallR, s) : T.lerpArr(T.wallL, s)) - 0.35;
       const pen = Math.abs(u) - wall;
       if (pen > 0) {
-        // normal da parede (para dentro da pista)
+        // wall normal (towards the inside of the track)
         const i = o[2] | 0;
         const rx = -T.tz[i], rz = T.tx[i];
         const nx = -Math.sign(u) * rx, nz = -Math.sign(u) * rz;
         this.x += nx * pen; this.z += nz * pen;
-        // velocidade do ponto (mundo)
+        // velocity of the point (world)
         const vxw = c * this.u - sn * this.v, vzw = sn * this.u + c * this.v;
         const rxp = x - this.x, rzp = z - this.z;
-        // ω × r em 2D (ψ positivo gira frente -> direita; no plano x,z: ω·(-rz, rx))
+        // ω × r in 2D (positive ψ turns forward -> right; in the x,z plane: ω·(-rz, rx))
         const pvx = vxw - this.r * rzp, pvz = vzw + this.r * rxp;
         const vn = pvx * nx + pvz * nz;
         if (vn < 0) {
           const rn = rxp * nz - rzp * nx;
           const j = -(1.25) * vn / (1 / PHYS.mass + rn * rn / PHYS.Iz);
           let ix = j * nx, iz = j * nz;
-          // atrito tangencial
+          // tangential friction
           const tx = -nz, tz = nx, vt = pvx * tx + pvz * tz;
           const jt = clamp(-vt / (1 / PHYS.mass + 1 / PHYS.Iz), -0.4 * j, 0.4 * j);
           ix += jt * tx; iz += jt * tz;
           const dvx = ix / PHYS.mass, dvz = iz / PHYS.mass;
-          // volta para local
+          // back to local
           this.u += c * dvx + sn * dvz;
           this.v += -sn * dvx + c * dvz;
           this.r += (rxp * iz - rzp * ix) / PHYS.Iz;

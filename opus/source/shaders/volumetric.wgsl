@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// volumetric.wgsl — névoa próxima com sombra do sol (raios entre as árvores)
-// meia resolução; saída rgb = luz espalhada, a = transmitância
+// volumetric.wgsl — near fog with sun shadow (shafts between the trees)
+// half resolution; output rgb = scattered light, a = transmittance
 // ---------------------------------------------------------------------------
 @group(0) @binding(0) var<uniform> V: View;
 @group(0) @binding(1) var<uniform> G: Globals;

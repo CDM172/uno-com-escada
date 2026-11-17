@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// fx.js — marcas de pneu (anel de quads) e fumaça (partículas) — sem alocação
+// fx.js — tyre marks (ring of quads) and smoke (particles) — no allocation
 // ---------------------------------------------------------------------------
 'use strict';
 
 const FX = (() => {
   const F = {};
-  const MAXSEG = 6144, SEGF = 4 * 5;           // 4 vértices x (x,y,z,int,lat)
+  const MAXSEG = 6144, SEGF = 4 * 5;           // 4 vertices x (x,y,z,int,lat)
   const seg = new Float32Array(MAXSEG * SEGF);
   let segHead = 0, dirtyA = -1, dirtyB = -1, segCount = 0;
   const last = new Float64Array(4 * 3), lastOn = new Uint8Array(4), lastN = new Float64Array(4 * 2);
@@ -35,7 +35,7 @@ const FX = (() => {
         { format: T[0].format, blend: { color: { srcFactor: 'zero', dstFactor: 'src', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } } },
         { format: T[1].format, writeMask: 0 }, { format: T[2].format, writeMask: 0 }, { format: T[3].format, writeMask: 0 }] },
       primitive: { cullMode: 'none' }, depthStencil: { format: 'depth32float', depthWriteEnabled: false, depthCompare: 'greater' } });
-    // fumaça: precisa ler a profundidade (atributo somente-leitura no passe forward)
+    // smoke: needs to read depth (read-only attachment in the forward pass)
     const sbgl = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } }] });
     const slayout = device.createPipelineLayout({ bindGroupLayouts: [R.sceneBGL, R.objBGL, sbgl] });
     smokePipe = device.createRenderPipeline({ layout: slayout,
@@ -88,7 +88,7 @@ const FX = (() => {
     vel[i * 3] = vx * 0.25 + (rng() - 0.5) * 1.2; vel[i * 3 + 1] = 0.5 + rng() * 0.7; vel[i * 3 + 2] = vz * 0.25 + (rng() - 0.5) * 1.2;
     age[i] = 0; life[i] = 1.3 + rng() * 1.2 * strength; seedA[i] = rng() * 100; sz0[i] = 0.25 + rng() * 0.25;
   }
-  // chamado a cada passo de física
+  // called on every physics step
   F.simStep = (car, dt) => {
     const c = Math.cos(car.psi), s = Math.sin(car.psi);
     const vxw = c * car.u - s * car.v, vzw = s * car.u + c * car.v;
@@ -105,7 +105,7 @@ const FX = (() => {
           if (d > 0.3) { addSeg(k, x, y, z, inten); last[k * 3] = x; last[k * 3 + 1] = y; last[k * 3 + 2] = z; lastOn[k] = 2; }
         }
       } else lastOn[k] = 0;
-      // fumaça (pneu no asfalto) e poeira (grama/brita)
+      // smoke (tyre on asphalt) and dust (grass/gravel)
       const smokeAmt = (Math.abs(car.u) < 7 || (car.brk < 0.7 && car.hb < 0.3) ? 0 : 1) * (surf <= 1 ? clamp((sl - 9.0) / 8, 0, 1) : clamp((Math.abs(car.u) - 3) / 15, 0, 1) * 0.6) * (1 - clamp(car.wetW[k] * 3, 0, 1));
       if (smokeAmt > 0) {
         emitAcc[k] += smokeAmt * 75 * dt;
@@ -119,7 +119,7 @@ const FX = (() => {
       pos[i * 3] += (vel[i * 3] + 0.6) * dt; pos[i * 3 + 1] += vel[i * 3 + 1] * dt; pos[i * 3 + 2] += (vel[i * 3 + 2] + 0.4) * dt;
     }
   };
-  // chamado por quadro: envia dados à GPU
+  // called per frame: sends data to the GPU
   F.frame = (fs, dt) => {
     const dev = RENDER.device;
     if (dirtyA >= 0) {
@@ -140,7 +140,7 @@ const FX = (() => {
     }
     if (nInst > 0) dev.queue.writeBuffer(instBuf, 0, inst, 0, nInst * PF);
   };
-  // aquecimento: gera algumas partículas e marcas para compilar os pipelines antes da volta
+  // warm-up: spawns a few particles and marks to compile the pipelines before the lap
   F.warm = (car) => {
     for (let i = 0; i < 40; i++) emit(car.x + 2, car.y, car.z, 0, 0, 1);
     for (let k = 0; k < 2; k++) { last[k * 3] = car.x; last[k * 3 + 1] = car.y + 0.01; last[k * 3 + 2] = car.z; lastOn[k] = 2; addSeg(k, car.x + 1, car.y + 0.01, car.z + 0.2, 0.5); }

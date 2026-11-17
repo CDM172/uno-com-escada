@@ -1,0 +1,47 @@
+(English translation of the original Portuguese prompt.)
+
+Build a real-time 3D racing game that runs in the browser: a 1996 Fiat Uno Mille EP, two-door, with an aluminium ladder on the roof, on a racing circuit. It only needs to have visuals at the level of a top-tier 2026 racing game and let me drive the car around the circuit.
+
+PRIORITIES (in this order, when they conflict)
+1. Visual quality
+2. Looking like the car in the photos
+3. Stable frame rate on the target machine
+4. Size of the deliverable
+
+CONSTRAINTS
+- No engine and no 3D or physics library: no three.js, Babylon.js, PlayCanvas or the like. Rendered in WebGPU.
+- Everything procedural: no texture, model, HDRI or audio files. Car, track, vegetation, sky and materials come out of your code.
+- The deliverable is a single self-contained `index.html` in this folder, which opens without a network. It may be assembled by a build step from sources in `source/`. Report the final size.
+- Zero JavaScript allocation per frame. Pre-allocate all buffers.
+- The circuit and the scenery are original. The screenshots in `referencia/jogo/` count only as an image-quality bar (lighting, materials, detail density, post-processing): do not reproduce the track, place, interface, logo or car of any game.
+- The images in `referencia/` do not go into the page.
+
+TARGET
+- MacBook Pro M4 Max (36 GB), macOS 27.2, Chrome 157, 120 Hz display
+- 2560×1440 at full resolution. GPU frame time of up to 11 ms on average, and no frame above 16.7 ms during a 60 s scripted lap.
+
+SCENE
+- The car: a two-door 1996 Fiat Uno Mille EP, the one in the photos in `referencia/carro/`, in the metallic light blue of the two studio photos (the photos of the red car are for shape and detail). Paint with clear coat reflecting the sky and the scenery, transparent glass with the interior visible (seats, dashboard, steering wheel), headlights and tail lights with lenses, grille, black plastic bumpers, hubcaps, tyres with tread, badges
+- On the roof, an aluminium ladder held with straps on two cross bars: two side rails and the rungs between them, all visible
+- The car behaves like a car: the wheels spin and steer, the body rolls in corners and dives under braking, the brake light comes on, the tyres give off smoke and leave marks when they skid
+- A closed asphalt circuit, with a start straight, corners of different radii, uphill and downhill sections, kerbs, guard rails, tyre barriers, gravel and grass run-off areas, a start gantry, a grandstand and pits
+- Asphalt with wear, seams, rubber on the racing line and wet stretches that reflect the sky and the car
+- All around, landscape to the horizon: dense forest with swaying foliage, tall grass, hills in the distance with distance haze
+- Sky with a low late-afternoon sun, clouds with volume and light coming through the trees
+- Sun shadows that are sharp up close and soft in the distance, ambient occlusion, coherent reflections on the paint, the glass and the wet asphalt
+- Current-game post-processing: motion blur, bloom, tone mapping and temporal anti-aliasing, with no ghosting and no jaggies on thin edges (ladder, guard rail, foliage)
+- Three cameras: chase, hood and a trackside TV camera
+- The world has a limit, but the limit must not be visible from inside the circuit
+
+CONTROLS
+W accelerates, S brakes and reverses, A and D steer, Space is the handbrake, C changes the camera, R returns the car to the track.
+
+VERIFICATION
+- Visual critic: a separate subagent, new each round, that sees ONLY your renders and the images in `referencia/` (the car photos and the game screenshots), never your code or your reasoning. It receives the list of files and the severity scale below, and nothing else: no explanation from you about what is intentional. Give it 6 fixed camera poses, rendered at 2560×1440 in Chrome with GPU acceleration, and the 60 s scripted lap, driven by recorded inputs and captured frame by frame with a fixed step of 1/60 s. From the lap, it receives one frame every half second and three bursts of 8 consecutive frames, to catch flicker, jaggies, objects popping in out of nowhere, banding and ghosting. It compares side by side with the references and returns concrete defects, in order of priority. Scale: "severe" is what anyone notices within 1 second as an image that is not from a top-tier game, or as a car that is not the one in the photos; "medium" is noticed when looking carefully; "minor" only shows up in the side-by-side comparison. Iterate until it flags nothing above "minor".
+- Performance: GPU time queries and a frame-time log of the 60 s scripted lap, running in real time. Report average, 99th percentile and maximum.
+- Controls: an automated test that presses each key and checks the effect (the car accelerates, brakes, steers, changes camera and returns to the track), and the scripted lap completes the circuit without leaving the asphalt.
+
+DONE WHEN: all three verifications pass. Deliver `index.html`, the size, the performance report, the critic's final review and the video of the 60 s lap in `volta.mp4` (2560×1440, 60 frames per second).
+
+ENVIRONMENT
+Chrome is at `/Applications/Google Chrome.app`. `/opt/homebrew/bin/python3` has Playwright installed, and `ffmpeg` and `node` are on the PATH. Use headless Chrome for the renders; a visible window only for the performance measurements. Keep scripts, renders and critic packages in `trabalho/`, inside this folder.

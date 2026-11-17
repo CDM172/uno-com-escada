@@ -1,9 +1,9 @@
-// build.mjs — monta ../index.html a partir de source/
+// build.mjs — assembles ../index.html from source/
 import fs from 'fs'; import path from 'path'; import vm from 'vm';
 const here = path.dirname(new URL(import.meta.url).pathname);
 const JS = ['util.js', 'track.js', 'terrain.js', 'mesh.js', 'car_model.js', 'cargfx.js', 'world.js', 'vegetation.js', 'physics.js', 'ai.js', 'lap.js', 'fx.js', 'renderer.js', 'som.js', 'painel.js', 'game.js'];
-// JS: tira as linhas só de comentário, as linhas vazias e a indentação — nunca dentro de template literal
-// (o varredor acompanha strings, comentários e templates com ${} aninhado)
+// JS: strips comment-only lines, empty lines and indentation — never inside a template literal
+// (the scanner tracks strings, comments and templates with nested ${})
 function enxuga(src) {
   const tpl = new Set(); let line = 1, st = 0; const depth = [];
   for (let i = 0; i < src.length; i++) {
@@ -25,7 +25,7 @@ function enxuga(src) {
   }
   const out = [];
   src.split('\n').forEach((l, k) => {
-    if (tpl.has(k + 1) || tpl.has(k)) { out.push(l); return; }       // linha de template (ou a que o fecha): intacta
+    if (tpl.has(k + 1) || tpl.has(k)) { out.push(l); return; }       // template line (or the one that closes it): untouched
     const t = l.trim();
     if (t && !t.startsWith('//')) out.push(t);
   });
@@ -33,7 +33,7 @@ function enxuga(src) {
 }
 let js = '';
 for (const f of JS) { const p = path.join(here, 'js', f); if (fs.existsSync(p)) js += enxuga(fs.readFileSync(p, 'utf8')) + '\n'; }
-// shaders: remove comentários e espaços redundantes
+// shaders: remove comments and redundant whitespace
 const sh = {};
 for (const f of fs.readdirSync(path.join(here, 'shaders')).sort()) {
   if (!f.endsWith('.wgsl')) continue;
@@ -45,7 +45,7 @@ let lap = '';
 const lapf = path.join(here, 'data', 'lap.txt');
 if (fs.existsSync(lapf)) lap = fs.readFileSync(lapf, 'utf8').trim();
 const bundle = `'use strict';\nconst SHADERS = ${JSON.stringify(sh)};\nconst LAP_DATA = ${JSON.stringify(lap)};\n` + js.replace(/^'use strict';$/mg, '');
-new vm.Script(bundle);   // confere a sintaxe do pacote antes de gravar
+new vm.Script(bundle);   // checks the bundle's syntax before writing
 const tpl = fs.readFileSync(path.join(here, 'index.template.html'), 'utf8');
 const out = tpl.replace('/*__BUNDLE__*/', () => bundle);
 const dst = path.join(here, '..', 'index.html');

@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// bloom.wgsl — cadeia de redução (13 taps, média de Karis no 1º nível) e
-// ampliação em tenda com soma
+// bloom.wgsl — downsample chain (13 taps, Karis average on the 1st level) and
+// tent upsample with sum
 // ---------------------------------------------------------------------------
 @group(0) @binding(0) var srcTex: texture_2d<f32>;
 @group(0) @binding(1) var linClamp: sampler;
 @group(0) @binding(2) var dstTex: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(3) var<uniform> BPm: vec4f;   // x: primeiro nível (karis), y: raio
+@group(0) @binding(3) var<uniform> BPm: vec4f;   // x: first level (karis), y: radius
 @group(0) @binding(4) var addTex: texture_2d<f32>;
 
 fn karis(c: vec3f) -> f32 { return 1.0 / (1.0 + luminance(c)); }

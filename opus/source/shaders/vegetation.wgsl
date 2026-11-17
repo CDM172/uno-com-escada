@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// vegetation.wgsl — árvores instanciadas (alpha estocástico, vento) e grama
+// vegetation.wgsl — instanced trees (stochastic alpha, wind) and grass
 // ---------------------------------------------------------------------------
 struct VIn { @location(0) pos: vec3f, @location(1) nrm: vec4f, @location(2) uv: vec2f, @location(3) attr: vec4u };
 struct TOut {
@@ -10,7 +10,7 @@ struct TOut {
   @location(3) @interpolate(flat) attr: vec4u,
   @location(4) cur: vec4f,
   @location(5) prev: vec4f,
-  @location(6) @interpolate(flat) inst: vec4f,   // hue, espécie, escala, w
+  @location(6) @interpolate(flat) inst: vec4f,   // hue, species, scale, w
   @location(7) wind: f32,
 };
 @group(2) @binding(0) var<storage, read> trees: array<vec4f>;
@@ -32,7 +32,7 @@ fn treeWorld(v: VIn, id: u32, t: f32) -> vec3f {
   let s = t0.w; let r = t1.x;
   let c = cos(r); let sn = sin(r);
   var lp = v.pos * s;
-  // variação por instância: altura e largura independentes
+  // per-instance variation: independent height and width
   let hv = fract(t1.z * 7.31); let wv = fract(t1.z * 3.17 + 0.5);
   lp = vec3f(lp.x * (0.82 + 0.36 * wv), lp.y * (0.8 + 0.4 * hv), lp.z * (0.82 + 0.36 * wv));
   lp = vec3f(lp.x * c - lp.z * sn, lp.y, lp.x * sn + lp.z * c);
@@ -64,7 +64,7 @@ fn vsTreeShadow(v: VIn, @builtin(instance_index) ii: u32) -> SOut {
   o.uv = v.uv; o.leaf = select(0u, 1u, v.attr.x == 81u); o.tile = v.attr.y;
   return o;
 }
-// repete a textura dentro da célula do atlas (cartões grandes dos LODs distantes)
+// repeats the texture within the atlas cell (large cards of the far LODs)
 fn leafUV(uv: vec2f, tile: u32) -> vec2f {
   if (tile <= 1u) { return uv; }
   let org = floor(uv * 2.0) * 0.5;
@@ -96,7 +96,7 @@ fn treeSurf(i: TOut) -> Surf {
     let al = textureSampleGrad(leafAlbTex, sampRep, luv, 0, dpdx(i.uv) * gs, dpdy(i.uv) * gs);
     let ln = textureSampleGrad(leafNrmTex, sampRep, luv, 0, dpdx(i.uv) * gs, dpdy(i.uv) * gs);
     var c = al.rgb;
-    // variação por instância e estação (algumas copas amareladas/avermelhadas)
+    // per-instance and seasonal variation (some yellowish/reddish crowns)
     c *= mix(0.75, 1.2, hue);
     if (hue > 0.88 && (sp == 0u || sp == 3u)) { c = mix(c, c * vec3f(1.45, 1.05, 0.5), 0.35); }
     if (sp == 1u) { c = mix(c, c * vec3f(0.95, 1.0, 1.1), 0.5); }
@@ -109,7 +109,7 @@ fn treeSurf(i: TOut) -> Surf {
     let d = textureSample(detailTex, sampRep, i.uv * vec2f(1.0, 0.5), 4);
     var c = vec3f(0.11, 0.085, 0.065) * (0.6 + 0.6 * d.z);
     if (i.attr.y == 1u) {
-      // eucalipto: casca clara descascando
+      // eucalyptus: pale peeling bark
       let patchN = vnoise2(i.uv * vec2f(4.0, 1.5) + hue * 10.0);
       c = mix(vec3f(0.33, 0.30, 0.26), vec3f(0.20, 0.16, 0.13), smoothstep(0.45, 0.6, patchN)) * (0.8 + 0.3 * d.z);
     }
@@ -119,16 +119,16 @@ fn treeSurf(i: TOut) -> Surf {
   }
   return s;
 }
-// pré-passada de profundidade (só o teste alfa)
+// depth pre-pass (alpha test only)
 @fragment
 fn fsTreeZ(i: TOut) {
   if (i.attr.x == 81u) { if (leafAlpha(i.uv, i.clip.xy, distance(i.wpos, V.camPos.xyz) > 45.0, i.attr.y) < 0.0) { discard; } }
 }
-// G-buffer com teste "equal": só fragmentos visíveis, sem descarte (mantém HSR)
+// G-buffer with "equal" test: visible fragments only, no discard (keeps HSR)
 @fragment
 fn fsTreeG(i: TOut) -> GOut {
   var s = treeSurf(i);
-  // folha de duas faces: normal voltada para a câmera
+  // two-sided leaf: normal facing the camera
   if (dot(s.n, V.camPos.xyz - i.wpos) < 0.0 && i.attr.x == 81u) { s.n = reflect(s.n, normalize(V.camPos.xyz - i.wpos)) * -1.0; s.n = normalize(mix(s.n, normalize(i.nrm), 0.3)); }
   return packG(s, i.cur, i.prev);
 }
@@ -139,7 +139,7 @@ fn fsTreeCube(i: TOut) -> @location(0) vec4f {
   return vec4f(shadeForward(s, i.wpos, V.camPos.xyz), 1.0);
 }
 
-// ---------------- grama alta procedural ----------------
+// ---------------- procedural tall grass ----------------
 const GN: u32 = 200u;
 const GCELL: f32 = 0.45;
 struct GOutV {

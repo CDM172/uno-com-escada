@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// tonemap.wgsl — exposição, bloom, curva filmica, gradação, nitidez, HUD
+// tonemap.wgsl — exposure, bloom, filmic curve, grading, sharpening, HUD
 // ---------------------------------------------------------------------------
 @group(0) @binding(0) var<uniform> V: View;
 @group(0) @binding(1) var<uniform> G: Globals;
@@ -17,7 +17,7 @@ fn vsFull(@builtin(vertex_index) i: u32) -> FsIn {
   o.uv = vec2f(p.x, 1.0 - p.y);
   return o;
 }
-// ACES (ajuste de Hill)
+// ACES (Hill fit)
 fn acesFit(c: vec3f) -> vec3f {
   let m1 = mat3x3f(vec3f(0.59719, 0.07600, 0.02840), vec3f(0.35458, 0.90834, 0.13383), vec3f(0.04823, 0.01566, 0.83777));
   let m2 = mat3x3f(vec3f(1.60475, -0.10208, -0.00327), vec3f(-0.53108, 1.10813, -0.07276), vec3f(-0.07367, -0.00605, 1.07602));
@@ -30,13 +30,13 @@ fn srgb(c: vec3f) -> vec3f {
   return select(1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3f(0.0031308));
 }
 fn hudGlyph(p: vec2f, ch: u32) -> f32 {
-  // atlas: 16 células por linha, 64x96 px cada, linha 0 = '0'..'9', 'k','m','/','h',':','.'
+  // atlas: 16 cells per row, 64x96 px each, row 0 = '0'..'9', 'k','m','/','h',':','.'
   let cell = vec2f(f32(ch % 16u), f32(ch / 16u));
   let uv = (cell + p) * vec2f(64.0, 96.0) / vec2f(textureDimensions(hudTex));
   return textureSampleLevel(hudTex, linClamp, uv, 0.0).r;
 }
 fn hud(px: vec2f) -> vec4f {
-  // canto inferior direito: velocidade
+  // bottom-right corner: speed
   let sc = V.res.y / 1440.0;
   let org = vec2f(V.res.x - 330.0 * sc, V.res.y - 150.0 * sc);
   let q = (px - org) / sc;
@@ -56,7 +56,7 @@ fn hud(px: vec2f) -> vec4f {
     let lp = (q - o) / vec2f(32.0, 48.0);
     if (all(lp >= vec2f(0.0)) && all(lp < vec2f(1.0))) { a = max(a, hudGlyph(lp, 10u + u32(k)) * 0.85); }
   }
-  // tempo de volta (canto superior esquerdo): m:ss.d
+  // lap time (top-left corner): m:ss.d
   let org2 = vec2f(48.0 * sc, 40.0 * sc);
   let q2 = (px - org2) / sc;
   let t = max(G.hud.z, 0.0);
@@ -76,7 +76,7 @@ fn hud(px: vec2f) -> vec4f {
 fn fsTone(i: FsIn) -> @location(0) vec4f {
   let px = vec2i(i.pos.xy);
   let dim = vec2i(V.res.xy);
-  // nitidez adaptativa (CAS simplificado)
+  // adaptive sharpening (simplified CAS)
   let c = textureLoad(colTex, px, 0).rgb;
   let n = textureLoad(colTex, clamp(px + vec2i(0, -1), vec2i(0), dim - 1), 0).rgb;
   let s = textureLoad(colTex, clamp(px + vec2i(0, 1), vec2i(0), dim - 1), 0).rgb;
@@ -89,31 +89,31 @@ fn fsTone(i: FsIn) -> @location(0) vec4f {
   // bloom
   let b = textureSampleLevel(bloomTex, linClamp, i.uv, 0.0).rgb / 6.0;
   col = mix(col, b, 0.055);
-  // exposição
+  // exposure
   col *= G.misc.y;
-  // gradação: leve aquecimento nos médios, sombras um pouco frias
+  // grading: slight warming of the midtones, slightly cool shadows
   let l = luminance(col);
   col = mix(col, col * vec3f(0.96, 1.0, 1.08), (1.0 - smoothstep(0.0, 0.18, l)) * 0.35);
   col = mix(col, col * vec3f(1.04, 1.0, 0.95), smoothstep(0.1, 0.8, l) * 0.4);
   var tc = acesFit(col * 1.0);
-  // leve elevação das sombras (evita pretos esmagados)
+  // slight shadow lift (avoids crushed blacks)
   tc = tc + vec3f(0.008) * (1.0 - tc) * (1.0 - smoothstep(0.0, 0.25, luminance(tc)));
-  // saturação leve
+  // light saturation
   let tl = luminance(tc);
   tc = mix(vec3f(tl), tc, 1.16);
-  // curva em S leve
+  // light S-curve
   tc = clamp(tc + (tc - 0.5) * 0.11 * (1.0 - abs(tc - 0.5) * 2.0), vec3f(0.0), vec3f(1.0));
-  // vinheta
+  // vignette
   let vv = i.uv - 0.5;
   tc *= 1.0 - dot(vv, vv) * 0.42;
   var o = srgb(clamp(tc, vec3f(0.0), vec3f(1.0)));
-  // grão de filme sutil
+  // subtle film grain
   let gn = ign(i.pos.xy, G.time.z * 7.0) - 0.5;
   o += gn * 0.005;
   // HUD
   if (G.misc.w > 0.0) {
     let h = hud(i.pos.xy);
-    // sombra
+    // shadow
     let hs = hud(i.pos.xy - vec2f(2.0, 2.0));
     o = mix(o, vec3f(0.0), hs.a * 0.45);
     o = mix(o, h.rgb, h.a);

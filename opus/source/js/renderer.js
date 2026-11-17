@@ -1,14 +1,14 @@
 // ---------------------------------------------------------------------------
-// renderer.js — WebGPU: bakes, G-buffer diferido, sombras em cascata, cubo de
-// reflexo dinâmico, GTAO, volumétrico, TAA, desfoque de movimento, bloom
-// Regra: nada de alocação no caminho por quadro (descritores reutilizados)
+// renderer.js — WebGPU: bakes, deferred G-buffer, cascaded shadows, dynamic
+// reflection cube, GTAO, volumetrics, TAA, motion blur, bloom
+// Rule: no allocation on the per-frame path (reused descriptors)
 // ---------------------------------------------------------------------------
 'use strict';
 
 const RENDER = (() => {
   const R = {};
   let device, ctx, canvas, swapFormat;
-  const VIEW_FLOATS = 128, VIEW_BYTES = 512, N_VIEWS = 12;   // 0 principal, 1-4 sombras, 5-10 cubo
+  const VIEW_FLOATS = 128, VIEW_BYTES = 512, N_VIEWS = 12;   // 0 main, 1-4 shadows, 5-10 cube
   const OBJ_BYTES = 256, N_OBJ = 32;
   const SHADOW_RES = 3072, CUBE_RES = 384, CUBE_MIPS = 6;
   const G_FLOATS = 160;
@@ -16,7 +16,7 @@ const RENDER = (() => {
   const globData = new Float32Array(G_FLOATS);
   const objData = new Float32Array((OBJ_BYTES / 4) * N_OBJ);
   R.viewData = viewData; R.globData = globData; R.objData = objData;
-  // matrizes temporárias (pré-alocadas)
+  // temporary matrices (pre-allocated)
   const tm = { a: new Float32Array(16), b: new Float32Array(16), c: new Float32Array(16), proj: new Float32Array(16), view: new Float32Array(16), vp: new Float32Array(16), vpNJ: new Float32Array(16), prevVP: new Float32Array(16), inv: new Float32Array(16) };
   const shadowVP = [new Float32Array(16), new Float32Array(16), new Float32Array(16), new Float32Array(16)];
   const cubeVP = []; for (let i = 0; i < 6; i++) cubeVP.push(new Float32Array(16));
@@ -43,9 +43,9 @@ const RENDER = (() => {
   // ------------------------------------------------------------------ init
   R.init = async (cv, opts) => {
     canvas = cv;
-    if (!navigator.gpu) throw new Error('WebGPU indisponível neste navegador.');
+    if (!navigator.gpu) throw new Error('WebGPU is not available in this browser.');
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-    if (!adapter) throw new Error('Sem adaptador WebGPU.');
+    if (!adapter) throw new Error('No WebGPU adapter.');
     const feats = [];
     for (const f of ['timestamp-query', 'dual-source-blending', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance']) if (adapter.features.has(f)) feats.push(f);
     R.hasTimestamps = adapter.features.has('timestamp-query');
@@ -79,7 +79,7 @@ const RENDER = (() => {
     objBuf = device.createBuffer({ size: OBJ_BYTES * N_OBJ, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     for (let i = 0; i < N_OBJ; i++) { const o = i * 64; M4.identity(objData.subarray(o, o + 16)); M4.identity(objData.subarray(o + 16, o + 32)); }
   }
-  R.objMatrix = (slot) => objData.subarray(slot * 64, slot * 64 + 16);       // (só na carga)
+  R.objMatrix = (slot) => objData.subarray(slot * 64, slot * 64 + 16);       // (load only)
   R.setObj = (slot, model, prevModel, p0, p1, p2, p3) => {
     const o = slot * 64;
     for (let i = 0; i < 16; i++) { objData[o + i] = model[i]; objData[o + 16 + i] = prevModel[i]; }
@@ -90,15 +90,15 @@ const RENDER = (() => {
   let noise3D, skyHi, skyLo, shBuf, detailTex, leafAlb, leafNrm, maskTex, heightTex, textTex, tdBuf;
   async function bakeAll() {
     const t0 = performance.now();
-    // ---- sol
-    const el = 9.5 * Math.PI / 180, az = -38 * Math.PI / 180;     // az a partir de +X em direção a -Z
+    // ---- sun
+    const el = 9.5 * Math.PI / 180, az = -38 * Math.PI / 180;     // az from +X towards -Z
     R.sun.el = el; R.sun.az = az;
     R.sun.dir[0] = Math.cos(el) * Math.cos(az); R.sun.dir[1] = Math.sin(el); R.sun.dir[2] = Math.cos(el) * Math.sin(az);
     const bpBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const sunE = 22.0;
     const bp = new Float32Array([R.sun.dir[0], R.sun.dir[1], R.sun.dir[2], 0, sunE, sunE, sunE, 0, 0, 1e9, 0, 0, 0.30, 0.48, 0.85, 0]);
     device.queue.writeBuffer(bpBuf, 0, bp);
-    // cor do sol no chão = iluminância * transmitância atmosférica (mesmo modelo do bake)
+    // sun colour at ground level = illuminance * atmospheric transmittance (same model as the bake)
     {
       const RE = 6360e3, RA = 6460e3, BR = [5.802e-6, 13.558e-6, 33.1e-6], BO = [0.650e-6, 1.881e-6, 0.085e-6];
       const ro = [0, RE + 60, 0], sd = R.sun.dir;
@@ -111,19 +111,19 @@ const RENDER = (() => {
         for (let k = 0; k < 3; k++) od[k] += (BR[k] * dr + 4.4e-6 * dm + BO[k] * dO) * dt;
       }
       for (let k = 0; k < 3; k++) R.sunColor[k] = sunE * Math.exp(-od[k]);
-      // dessaturação parcial (sol dourado sem virar laranja)
+      // partial desaturation (golden sun without turning orange)
       const lum = 0.2126 * R.sunColor[0] + 0.7152 * R.sunColor[1] + 0.0722 * R.sunColor[2];
       for (let k = 0; k < 3; k++) R.sunColor[k] = R.sunColor[k] * 0.62 + lum * 0.38;
     }
     const skyMod = shader(S('common', 'sky_bake'), 'sky_bake');
-    // ---- ruído 3D
+    // ---- 3D noise
     noise3D = device.createTexture({ size: [128, 128, 128], dimension: '3d', format: 'rgba8unorm', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
     {
       const p = device.createComputePipeline({ layout: 'auto', compute: { module: skyMod, entryPoint: 'csNoise3D' } });
       const bg = device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: [{ binding: 1, resource: noise3D.createView() }] });
       const e = device.createCommandEncoder(); const c = e.beginComputePass(); c.setPipeline(p); c.setBindGroup(0, bg); c.dispatchWorkgroups(32, 32, 32); c.end(); device.queue.submit([e.finish()]);
     }
-    // ---- panorama alto
+    // ---- high panorama
     const HI_W = 6144, HI_H = 1280;
     skyHi = device.createTexture({ size: [HI_W, HI_H], format: 'rgba16float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
     {
@@ -140,7 +140,7 @@ const RENDER = (() => {
         await device.queue.onSubmittedWorkDone();
       }
     }
-    // ---- panorama baixo + mips
+    // ---- low panorama + mips
     const LO_W = 512, LO_H = 256, LO_MIPS = 7;
     skyLo = device.createTexture({ size: [LO_W, LO_H], format: 'rgba16float', mipLevelCount: LO_MIPS, usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
     {
@@ -160,7 +160,7 @@ const RENDER = (() => {
       e.copyBufferToBuffer(shBuf, 0, globBuf, 120 * 4, 144);
       device.queue.submit([e.finish()]);
     }
-    // ---- texturas de detalhe
+    // ---- detail textures
     const texMod = shader(S('common', 'bake_tex'), 'bake_tex');
     const DL = 10;
     detailTex = device.createTexture({ size: [1024, 1024, DL], format: 'rgba8unorm', mipLevelCount: 11, usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
@@ -174,7 +174,7 @@ const RENDER = (() => {
       }
     }
     mipChain8(texMod, detailTex, 1024, 11, DL, 0);
-    // ---- atlas de folhas
+    // ---- leaf atlas
     leafAlb = device.createTexture({ size: [4096, 4096, 1], format: 'rgba8unorm', mipLevelCount: 13, usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
     leafNrm = device.createTexture({ size: [4096, 4096, 1], format: 'rgba8unorm', mipLevelCount: 13, usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
     {
@@ -186,12 +186,12 @@ const RENDER = (() => {
     }
     mipChain8(texMod, leafAlb, 4096, 13, 1, 1);
     mipChain8(texMod, leafNrm, 4096, 13, 1, 0);
-    // ---- máscara do terreno e alturas
+    // ---- terrain mask and heights
     maskTex = device.createTexture({ size: [TERRAIN.R1, TERRAIN.R1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     device.queue.writeTexture({ texture: maskTex }, TERRAIN.MASK, { bytesPerRow: TERRAIN.R1 * 4 }, [TERRAIN.R1, TERRAIN.R1]);
     heightTex = device.createTexture({ size: [TERRAIN.HN, TERRAIN.HN], format: 'r32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     device.queue.writeTexture({ texture: heightTex }, TERRAIN.H, { bytesPerRow: TERRAIN.HN * 4 }, [TERRAIN.HN, TERRAIN.HN]);
-    // ---- dados da pista
+    // ---- track data
     const N = TRACK.N, td = new Float32Array(N * 8);
     for (let i = 0; i < N; i++) {
       td[i * 8] = TRACK.hw[i]; td[i * 8 + 1] = TRACK.racing[i]; td[i * 8 + 2] = TRACK.wet[i]; td[i * 8 + 3] = TRACK.brake ? TRACK.brake[i] : 0;
@@ -199,7 +199,7 @@ const RENDER = (() => {
     }
     tdBuf = device.createBuffer({ size: td.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(tdBuf, 0, td);
-    // ---- atlas de texto (HUD, emblemas, placas)
+    // ---- text atlas (HUD, badges, plates)
     textTex = makeTextAtlas();
     await device.queue.onSubmittedWorkDone();
     R.bakeMs = performance.now() - t0;
@@ -253,7 +253,7 @@ fn csMipF16(@builtin(global_invocation_id) id: vec3u) {
     device.queue.submit([e.finish()]);
   }
   function makeTextAtlas() {
-    // 1024x512: linha 0 = glifos do HUD (64x96), restante = emblemas/placas
+    // 1024x512: row 0 = HUD glyphs (64x96), the rest = badges/plates
     const W = 1024, H = 512;
     const cv = new OffscreenCanvas(W, H), g = cv.getContext('2d');
     g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
@@ -261,7 +261,7 @@ fn csMipF16(@builtin(global_invocation_id) id: vec3u) {
     const glyphs = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'k', 'm', '/', 'h', ':', '.'];
     g.font = '600 78px "Helvetica Neue", Helvetica, Arial, sans-serif';
     for (let i = 0; i < glyphs.length; i++) g.fillText(glyphs[i], i * 64 + 32, 50);
-    // emblemas (canal R = máscara do texto). y=96..: "Mille EP" itálico, "FIAT", placa
+    // badges (R channel = text mask). y=96..: italic "Mille EP", "FIAT", plate
     g.textAlign = 'left';
     g.font = 'italic 700 64px "Helvetica Neue", Helvetica, Arial, sans-serif';
     g.fillText('Mille', 16, 140);
@@ -269,7 +269,7 @@ fn csMipF16(@builtin(global_invocation_id) id: vec3u) {
     g.fillText('EP', 190, 140);
     g.font = '800 60px "Helvetica Neue", Helvetica, Arial, sans-serif';
     g.fillText('F I A T', 16, 210);
-    // placa: fundo cinza claro com caracteres (canal G = fundo da placa)
+    // plate: light grey background with characters (G channel = plate background)
     g.font = '700 84px "DIN Alternate", "Helvetica Neue", Arial, sans-serif';
     g.fillText('MLE-1996', 20, 300);
     g.fillText('UNO 4421', 20, 400);
@@ -279,7 +279,7 @@ fn csMipF16(@builtin(global_invocation_id) id: vec3u) {
     return tex;
   }
 
-  // ------------------------------------------------------------------ cena
+  // ------------------------------------------------------------------ scene
   let sceneBGL, objBGL, sceneBG, sceneBGShadow, objBG, dummyShadow;
   let shadowTex, shadowViews = [], cubeTex, cubeDepth, cubeFaceViews = [];
   let pipes = {};
@@ -338,7 +338,7 @@ fn csMipF16(@builtin(global_invocation_id) id: vec3u) {
       primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater', depthBias: -2, depthBiasSlopeScale: -2.0 } });
     pipes.meshCube = device.createRenderPipeline({ layout, vertex: { module: meshMod, entryPoint: 'vsMesh', buffers: VB_LAYOUT },
       fragment: { module: meshMod, entryPoint: 'fsMeshCube', targets: [{ format: 'rgba16float' }] }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: dsG });
-    // céu no cubo
+    // sky in the cube
     const skyCubeMod = shader(S('common', 'scene') + `
 struct SkyO { @builtin(position) p: vec4f, @location(0) ndc: vec2f };
 @vertex fn vsSky(@builtin(vertex_index) i: u32) -> SkyO {
@@ -354,7 +354,7 @@ struct SkyO { @builtin(position) p: vec4f, @location(0) ndc: vec2f };
     if (R.onScenePipelines) R.onScenePipelines(device, layout, shader, S);
   }
 
-  // registra malha estática/dinâmica
+  // registers a static/dynamic mesh
   R.addMesh = (packed, opts) => {
     const vb = device.createBuffer({ size: packed.vb.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(vb, 0, packed.vb);
@@ -370,7 +370,7 @@ struct SkyO { @builtin(position) p: vec4f, @location(0) ndc: vec2f };
     meshes.push(m); return m;
   };
 
-  // ------------------------------------------------------------------ alvos de tela
+  // ------------------------------------------------------------------ screen targets
   let tg = {};
   R.resize = (W, H) => {
     if (W === R.W && H === R.H) return;
@@ -405,7 +405,7 @@ struct SkyO { @builtin(position) p: vec4f, @location(0) ndc: vec2f };
     buildPostBindGroups();
   };
 
-  // ------------------------------------------------------------------ pós
+  // ------------------------------------------------------------------ post
   let post = {};
   function createPostPipelines() {
     const mk = (mod, ep) => device.createComputePipeline({ layout: 'auto', compute: { module: mod, entryPoint: ep } });
@@ -424,7 +424,7 @@ struct SkyO { @builtin(position) p: vec4f, @location(0) ndc: vec2f };
     const toneMod = shader(S('common', 'tonemap'), 'tone');
     post.tone = device.createRenderPipeline({ layout: 'auto', vertex: { module: toneMod, entryPoint: 'vsFull' },
       fragment: { module: toneMod, entryPoint: 'fsTone', targets: [{ format: swapFormat }] }, primitive: { topology: 'triangle-list' } });
-    // mips do cubo
+    // cube mips
     post.cubeMip = mk(shader(`
 @group(0) @binding(0) var src: texture_2d_array<f32>;
 @group(0) @binding(1) var dst: texture_storage_2d_array<rgba16float, write>;
@@ -445,7 +445,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     for (let m = 1; m < CUBE_MIPS; m++) post.cubeMipBG.push(device.createBindGroup({ layout: post.cubeMip.getBindGroupLayout(0), entries: [
       { binding: 0, resource: cubeTex.createView({ dimension: '2d-array', baseMipLevel: m - 1, mipLevelCount: 1 }) },
       { binding: 1, resource: cubeTex.createView({ dimension: '2d-array', baseMipLevel: m, mipLevelCount: 1 }) }] }));
-    // parâmetros do bloom
+    // bloom parameters
     post.blP = [];
     for (let i = 0; i < 6; i++) { const b = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }); device.queue.writeBuffer(b, 0, new Float32Array([i === 0 ? 1 : 0, 1.0, 0, 0])); post.blP.push(b); }
   }
@@ -465,7 +465,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     pbg.vol = device.createBindGroup({ layout: post.vol.getBindGroupLayout(0), entries: [
       { binding: 0, resource: U0 }, { binding: 1, resource: U1 }, { binding: 2, resource: v(tg.depth) }, { binding: 3, resource: shadowTex.createView({ dimension: '2d-array' }) },
       { binding: 4, resource: sampCmp }, { binding: 5, resource: v(skyLo) }, { binding: 6, resource: sampLinClamp }, { binding: 7, resource: v(tg.vol) }] });
-    // TAA: par 0 escreve hist0 lendo hist1
+    // TAA: pair 0 writes hist0 reading hist1
     pbg.taa = [0, 1].map(par => device.createBindGroup({ layout: post.taa.getBindGroupLayout(0), entries: [
       { binding: 0, resource: U0 }, { binding: 1, resource: U1 }, { binding: 2, resource: v(tg.hdr) }, { binding: 3, resource: v(par ? tg.hist0 : tg.hist1) },
       { binding: 4, resource: v(tg.vel) }, { binding: 5, resource: v(tg.depth) }, { binding: 6, resource: sampLinClamp }, { binding: 7, resource: v(par ? tg.hist1 : tg.hist0) }] }));
@@ -487,7 +487,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
   }
   R.tg = () => tg;
 
-  // descritores de passes reutilizados (zero alocação por quadro)
+  // reused pass descriptors (zero allocation per frame)
   let gPassDesc, shadowPassDesc = [], cubePassDesc = [], tonePassDesc, fwdPassDesc;
   const tsW = { querySet: null, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: undefined };
   function buildFrameDescriptors() {
@@ -519,7 +519,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     for (let i = 0; i < 3; i++) qsRead.push(device.createBuffer({ size: N_TS * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }));
     tsW.querySet = qs;
   }
-  // gravação de longa duração (perf): resolve cada quadro num buffer grande, lido só no fim
+  // long-running recording (perf): resolves every frame into a large buffer, read only at the end
   R.startTimestampLog = (maxFrames) => {
     if (!R.hasTimestamps) return false;
     tsBig = device.createBuffer({ size: maxFrames * 256, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
@@ -537,11 +537,11 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     rb.unmap(); tsBig = null;
     return out;
   };
-  // leitura ao vivo (estatísticas na tela, só com R.tsLive): mede 1 quadro em cada 30 e lê de forma assíncrona
+  // live readout (on-screen stats, only with R.tsLive): measures 1 frame in every 30 and reads it asynchronously
   R.tsLive = false;
   let liveNow = false, liveBusy = false;
   const liveDone = () => { const b = new BigUint64Array(qsRead[0].getMappedRange(0, 16)); R.stats.gpuMs = Number(b[1] - b[0]) / 1e6; qsRead[0].unmap(); liveBusy = false; };
-  // ---- perfil por passe (modo de depuração; aloca ao ler)
+  // ---- per-pass profile (debug mode; allocates when reading)
   R.profile = false;
   R.flags = { shadows: true, cube: true, trees: true, grass: true, ao: true, vol: true, mb: true, bloom: true, gbuf: true, fwd: true, light: true, taa: true };
   let pqs = null, pqRes = null, pqRead = null, pqBusy = false, pIdx = 0;
@@ -574,7 +574,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     });
   }
 
-  // ------------------------------------------------------------------ visões
+  // ------------------------------------------------------------------ views
   function writeView(slot, vpJ, vpNJ, prevVPNJ, view, cx, cy, cz, near, type, cascade, fovy, jx, jy, pjx, pjy, w, h, fx, fy, fz) {
     const o = slot * VIEW_FLOATS;
     viewData.set(vpJ, o); viewData.set(vpNJ, o + 16); viewData.set(prevVPNJ, o + 32);
@@ -603,12 +603,12 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     let cd = (f + n) * (1 + k2) / 2;
     if (cd > f) cd = f;
     const rad = Math.sqrt((f - cd) * (f - cd) + f * f * k2) * 1.04;
-    const r = Math.ceil(rad * 4) / 4;   // quantiza o raio (estável)
+    const r = Math.ceil(rad * 4) / 4;   // quantises the radius (stable)
     const px = cx + fx * cd, py = cy + fy * cd, pz = cz + fz * cd;
     const sd = R.sun.dir;
-    // base do espaço de luz
+    // light-space basis
     M4.lookAt(tm.view, 0, 0, 0, -sd[0], -sd[1], -sd[2], 0, 1, 0);
-    // centro no espaço de luz e encaixe na grade de texels
+    // centre in light space and snapping to the texel grid
     const texel = 2 * r / SHADOW_RES;
     let lx = tm.view[0] * px + tm.view[4] * py + tm.view[8] * pz;
     let ly = tm.view[1] * px + tm.view[5] * py + tm.view[9] * pz;
@@ -622,13 +622,13 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
   const cubeDirs = [[1, 0, 0, 0, 1, 0], [-1, 0, 0, 0, 1, 0], [0, 1, 0, 0, 0, -1], [0, -1, 0, 0, 0, 1], [0, 0, 1, 0, 1, 0], [0, 0, -1, 0, 1, 0]];
   let cubeCenter = new Float32Array(3);
 
-  // ------------------------------------------------------------------ quadro
+  // ------------------------------------------------------------------ frame
   // st: { cam:{x,y,z,tx,ty,tz,fovy}, time, dt, objs..., hud }
   const submitArr = [null];
   R.renderFrame = (st) => {
     const W = R.W, H = R.H, aspect = W / H;
     const f = R.frame;
-    // ---- câmera principal
+    // ---- main camera
     const c = st.cam;
     M4.lookAt(tm.view, c.x, c.y, c.z, c.tx, c.ty, c.tz, 0, 1, 0);
     M4.perspRevInf(tm.proj, c.fovy, aspect, camState.near);
@@ -644,7 +644,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     writeView(0, tm.vp, tm.vpNJ, prevVPMain, tm.view, c.x, c.y, c.z, camState.near, 0, 0, c.fovy, jx, jy, 0, 0, W, H, fx, fy, fz);
     extractFrustum(R.frustumMain, tm.vpNJ);
     M4.copy(prevVPMain, tm.vpNJ); hasPrev = true;
-    // ---- cascatas (atualização escalonada)
+    // ---- cascades (staggered update)
     for (let k = 0; k < 4; k++) {
       const upd = st.allShadows || k === 0 || (k === 1 && (f & 1) === 0) || (k === 2 && (f & 3) === 1) || (k === 3 && (f & 3) === 3) || f < 4;
       shadowUpdated[k] = upd;
@@ -654,7 +654,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
         extractFrustum(R.frustumShadow[k], shadowVP[k]);
       }
     }
-    // ---- cubo: 2 faces por quadro (todas no 1º quadro / captura)
+    // ---- cube: 2 faces per frame (all on the 1st frame / capture)
     const cubeOn = st.cubeCenter != null;
     let face0 = (f >> 1) % 6, nFaces = (f & 1) ? 0 : 1;
     if (st.allCubeFaces || f < 1) { face0 = 0; nFaces = 6; }
@@ -669,7 +669,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
         extractFrustum(R.frustumCube[q], cubeVP[q]);
       }
     }
-    // ---- globais
+    // ---- globals
     const g = globData;
     g[0] = R.sun.dir[0]; g[1] = R.sun.dir[1]; g[2] = R.sun.dir[2]; g[3] = 0;
     g[4] = R.sunColor[0]; g[5] = R.sunColor[1]; g[6] = R.sunColor[2]; g[7] = 0.0046;
@@ -693,12 +693,12 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     device.queue.writeBuffer(objBuf, 0, objData, 0, (OBJ_BYTES / 4) * N_OBJ);
     if (R.beforeEncode) R.beforeEncode(st);
 
-    // ---- codificação
+    // ---- encoding
     const enc = device.createCommandEncoder();
     liveNow = R.tsLive && !tsBig && !R.profile && !!qs && !liveBusy && f % 30 === 0;
     R.tsBeginPass(enc);
     if (R.encodeCompute) R.encodeCompute(enc, cubeOn ? face0 : 99, cubeOn ? nFaces : 0);
-    // sombras
+    // shadows
     for (let k = 0; k < 4; k++) {
       if (!shadowUpdated[k] || !R.flags.shadows) continue;
       shadowPassDesc[k].timestampWrites = tsp('shadow' + k); const pass = enc.beginRenderPass(shadowPassDesc[k]);
@@ -707,7 +707,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
       if (R.drawExtra) R.drawExtra(pass, 'shadow', k, sceneBGShadow, dynOff[1 + k]);
       pass.end();
     }
-    // cubo
+    // cube
     if (cubeOn && R.flags.cube) {
       for (let q = face0; q < face0 + nFaces; q++) {
         cubePassDesc[q].timestampWrites = tsp('cube'); const pass = enc.beginRenderPass(cubePassDesc[q]);
@@ -744,7 +744,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     cp = enc.beginComputePass(cpDesc('light'));
     if (R.flags.light) { cp.setPipeline(post.light); cp.setBindGroup(0, pbg.light[par]); cp.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8)); }
     cp.end();
-    // transparentes (vidro, fumaça)
+    // transparents (glass, smoke)
     if (R.drawForward && R.flags.fwd) {
       fwdPassDesc.timestampWrites = tsp('forward'); const pass = enc.beginRenderPass(fwdPassDesc);
       pass.setBindGroup(0, sceneBG, dynOff[0]);
@@ -764,7 +764,7 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     cp2.setPipeline(post.up);
     for (let i = 4; i >= 0; i--) { cp2.setBindGroup(0, pbg.up[i]); const w = Math.ceil(W / (2 << i)), h = Math.ceil(H / (2 << i)); cp2.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8)); }
     cp2.end();
-    // tonemap -> tela
+    // tonemap -> screen
     tonePassDesc.colorAttachments[0].view = ctx.getCurrentTexture().createView();
     if (tsBig || liveNow) { tsW.beginningOfPassWriteIndex = undefined; tsW.endOfPassWriteIndex = 1; tonePassDesc.timestampWrites = tsW; }
     else tonePassDesc.timestampWrites = tsp('tone');
@@ -783,8 +783,8 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
     pIdx = 0;
     R.frame++;
   };
-  // timestamp de início: escrito por um passe de compute vazio no começo do quadro
-  // (feito via beforeEncode quando o log está ativo)
+  // start timestamp: written by an empty compute pass at the beginning of the frame
+  // (done via beforeEncode when the log is active)
   const tsBeginDesc = { timestampWrites: { querySet: null, beginningOfPassWriteIndex: 0 } };
   let nopPipe = null, nopBG = null, nopBuf = null;
   R.tsBeginPass = (enc) => {
@@ -802,13 +802,13 @@ fn csCubeMip(@builtin(global_invocation_id) id: vec3u) {
   let cpI = 0;
   function cpDesc(name) { const d = cpD[cpI++ & 15]; d.timestampWrites = tsp(name); return d; }
   R.cpDesc = cpDesc;
-  // offsets dinâmicos pré-alocados (arrays fixos)
+  // pre-allocated dynamic offsets (fixed arrays)
   const dynOff = []; for (let i = 0; i < N_VIEWS; i++) dynOff.push([i * VIEW_BYTES]);
   const dynObj = []; for (let i = 0; i < N_OBJ; i++) dynObj.push([i * OBJ_BYTES]);
   R.dynOff = dynOff; R.dynObj = dynObj;
   R.objBG = () => objBG;
 
-  // desenho de malhas com culling por AABB/esfera
+  // mesh drawing with AABB/sphere culling
   function drawMeshes(pass, pipe, mode, sub) {
     pass.setPipeline(pipe);
     let lastObj = -1;

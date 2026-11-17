@@ -1,0 +1,54 @@
+(English translation of the original Portuguese prompt.)
+
+This folder has a finished game: a 1996 Fiat Uno Mille EP with a ladder on the roof, drivable on a circuit, in WebGPU, in a single `index.html`. It is built from `source/` by the build (`node source/build.mjs`), and the capture, test and measurement tools are in `trabalho/`. Read the code and the tools before touching anything.
+
+I want it to become a game that someone opens and plays: start screen, racing-game controls, dashboard, benchmark and sound. The visuals stay as they are.
+
+PRIORITIES, when two things clash
+1. Do not break what exists: the image, the scripted lap and the performance stay as they are.
+2. Driving well on keyboard and gamepad.
+3. Convincing sound.
+4. Small file.
+
+CONSTRAINTS
+- The same as the piece's: a single self-contained `index.html`, which opens without a network; no libraries; no texture, model or audio files.
+- All the sound is synthesised on the fly with Web Audio. No recorded samples, no music.
+- No per-frame allocation in the game loop, including the new input, dashboard and sound code.
+- The URL parameters and the hooks that the tools in `trabalho/` use keep working. Headless capture, test and measurement must not stop at the start screen.
+- Outside the game opened by a person (captures, poses, measurement), the image comes out the same as today: no dashboard and no menu on top.
+- Interface text in Brazilian Portuguese.
+
+CONTROLS
+- Keyboard: W or up arrow accelerates; S or down arrow brakes and reverses; A and D or arrows steer; Space is the handbrake; C changes the camera; R returns the car to the track; holding V looks back.
+- Gamepad (Gamepad API, standard layout): right trigger accelerates and left trigger brakes and reverses, both analog; left stick steers, with a dead zone; A is the handbrake; Y changes the camera; X returns the car to the track; RB looks back; Start opens the menu.
+- Automatic gearbox.
+- On-screen dashboard: speedometer in km/h, tachometer, gear, lap timer and best lap. A lap counts when crossing the start line.
+
+MENU AND TOOLS
+- Start screen with the name of the piece, the list of controls and a button to start. The sound only starts on that click.
+- Esc pauses and opens the menu, with the list of controls, the Resume button and the Benchmark button.
+- M turns the sound on and off.
+- H shows and hides the performance stats: frames per second, frame time and, when the browser allows it, GPU time.
+- B, or the menu button, runs the 60 s scripted lap as a benchmark and at the end shows the average, the 99th percentile and the maximum of the frame time and of the GPU time, and how many frames went over 16.7 ms.
+- F replays the scripted lap, just to watch.
+- 1 to 6 jump to the six fixed poses that the capture already uses.
+
+SOUND
+- 1.0 four-cylinder petrol engine: the pitch follows the revs, the timbre and the volume follow the throttle, and gear shifts can be heard.
+- Tyres: they squeal when skidding and on the handbrake, in proportion to the slip, and go quiet when the car grips.
+- Wind that grows with speed.
+- Racetrack ambience: forest and birds in the background; the crowd can be heard when passing the grandstand.
+- The sound pauses in the menu and comes back on Resume.
+- The sound of the scripted lap must be renderable off real time, from the same deterministic simulation, to go into the video.
+
+VERIFICATION
+- Input: an automated test for each key and for each gamepad input (with a simulated gamepad), checking the effect in the game, and for the menu states (start, pause, resume).
+- Benchmark: the test triggers the benchmark and checks that it finishes and returns the numbers.
+- Sound: render the scripted lap's audio off real time and check by measurement that there is no silence and no clipping; that the engine frequency tracks the revs; that tyre sound only appears in the slipping stretches; and that mute zeroes the output.
+- Regression: the tests that already exist keep passing (controls, per-frame allocation, scripted lap without leaving the asphalt), and the six poses come out identical to those of the starting build.
+- Performance: measure the scripted lap before and after the change, under the same conditions. The machine is in use by other programs and the graphics card may be busy, so compare before and after; do not chase an absolute number. The after must not be worse than the before beyond measurement noise.
+
+DONE WHEN: the verifications pass. Deliver the `index.html`; the size before and after; `acrescimo.md` with the list of controls and the result of each verification; and `volta-som.mp4`, the 60 s scripted lap at 2560×1440 and 60 frames per second, captured frame by frame, with the synthesised soundtrack included.
+
+ENVIRONMENT
+MacBook Pro M4 Max. Chrome is at `/Applications/Google Chrome.app`. `/opt/homebrew/bin/python3` has Playwright installed, and `ffmpeg` and `node` are on the PATH. Another automation uses Chrome on this machine: close only the browsers that you opened yourself, through Playwright itself, and never kill Chrome processes by name. Keep new scripts and outputs in `trabalho/`.

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// grass_cull.wgsl — seleciona as touceiras visíveis (densidade, distância, frustum)
+// grass_cull.wgsl — selects the visible tufts (density, distance, frustum)
 // ---------------------------------------------------------------------------
 struct CullU { planes: array<vec4f, 6>, cam: vec4f, lod: vec4f, cap: vec4f };
 @group(0) @binding(0) var<uniform> CU: CullU;

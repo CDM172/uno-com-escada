@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// cargfx.js — malhas do carro na GPU, vidro, matrizes por quadro (sem alocação)
-// slots de objeto: 1 carroceria, 2..5 rodas (DE, DD, TE, TD), 6 volante
+// cargfx.js — car meshes on the GPU, glass, per-frame matrices (no allocation)
+// object slots: 1 body, 2..5 wheels (FL, FR, RL, RR), 6 steering wheel
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -33,7 +33,7 @@ const CARGFX = (() => {
     glassMesh = { vb: device.createBuffer({ size: gp.vb.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }), ib: device.createBuffer({ size: gp.ib.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST }), count: gp.count };
     device.queue.writeBuffer(glassMesh.vb, 0, gp.vb); device.queue.writeBuffer(glassMesh.ib, 0, gp.ib);
     C.stats = { bodyVerts: bp.nverts, bodyTris: bp.count / 3 };
-    // pipeline do vidro
+    // glass pipeline
     const gbgl = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: 'cube' } }] });
     const layout = device.createPipelineLayout({ bindGroupLayouts: [R.sceneBGL, R.objBGL, gbgl] });
     const dual = R.hasDual;
@@ -59,7 +59,7 @@ const CARGFX = (() => {
     C.ready = true; C.visible = true;
   };
 
-  // pose: {x,y,z, fx,fy,fz (frente), ux,uy,uz (cima), roll, pitch, steer, spin[4], drop[4], brake, reverse}
+  // pose: {x,y,z, fx,fy,fz (forward), ux,uy,uz (up), roll, pitch, steer, spin[4], drop[4], brake, reverse}
   function rotAxisInto(o, ax, ay, az, ang) {
     const c = Math.cos(ang), s = Math.sin(ang), t = 1 - c;
     o[0] = t * ax * ax + c; o[1] = t * ax * ay + s * az; o[2] = t * ax * az - s * ay; o[3] = 0;
@@ -68,29 +68,29 @@ const CARGFX = (() => {
     o[12] = 0; o[13] = 0; o[14] = 0; o[15] = 1;
   }
   C.update = (p, cut) => {
-    // chassi: base (frente=X, cima=Y, direita=Z)
+    // chassis: basis (forward=X, up=Y, right=Z)
     const fx = p.fx, fy = p.fy, fz = p.fz, ux = p.ux, uy = p.uy, uz = p.uz;
     const rx = fy * uz - fz * uy, ry = fz * ux - fx * uz, rz = fx * uy - fy * ux;
     M4.fromBasis(M.chassis, fx, fy, fz, ux, uy, uz, rx, ry, rz, p.x, p.y, p.z);
-    // carroceria: rolagem em X e arfagem em Z em torno do CG
+    // body: roll about X and pitch about Z around the CG
     const cg = CARDIM.cgH;
     rotAxisInto(M.t, 1, 0, 0, p.roll);
     rotAxisInto(M.t2, 0, 0, 1, p.pitch);
     M4.mul(M.w, M.t, M.t2);
     M.w[12] = -(M.w[4] * cg) + 0; M.w[13] = cg - M.w[5] * cg + (p.heave || 0); M.w[14] = -(M.w[6] * cg);
     M4.mul(cur[1], M.chassis, M.w);
-    // volante
+    // steering wheel
     const sp = CARMODEL.steerPivot;
     rotAxisInto(M.t, 0, 0, 1, -sp.tilt);
     M.t[12] = sp.x; M.t[13] = sp.y; M.t[14] = sp.z;
     rotAxisInto(M.t2, 1, 0, 0, -p.steer * 7.5);
     M4.mul(M.w, M.t, M.t2);
     M4.mul(cur[6], cur[1], M.w);
-    // rodas
+    // wheels
     for (let k = 0; k < 4; k++) {
       const front = k < 2, right = (k & 1) === 1;
-      // giro anterior "virtual": só 12% do giro do quadro entra no vetor de movimento
-      // (o borrão linear de um giro rápido espalharia o pneu pelo asfalto)
+      // "virtual" previous spin: only 12% of the frame's spin goes into the motion vector
+      // (the linear blur of a fast spin would smear the tyre across the asphalt)
       let dsp = p.spin[k] - lastSpin[k]; while (dsp > Math.PI) dsp -= TAU; while (dsp < -Math.PI) dsp += TAU;
       lastSpin[k] = p.spin[k];
       prevSpinV[k] = p.spin[k] - dsp * 0.35;
@@ -102,7 +102,7 @@ const CARGFX = (() => {
       M4.mul(M.w, M.t, M.t2);
       M.w[12] = wx; M.w[13] = CARDIM.wheelR + p.drop[k]; M.w[14] = wz;
       M4.mul(cur[2 + k], M.chassis, M.w);
-      // matriz anterior com o giro virtual (sobre o chassi anterior)
+      // previous matrix with the virtual spin (on top of the previous chassis)
       rotAxisInto(M.t2, 0, 0, 1, -prevSpinV[k]);
       M4.mul(M.w, M.t, M.t2);
       M.w[12] = wx; M.w[13] = CARDIM.wheelR + p.drop[k]; M.w[14] = wz;

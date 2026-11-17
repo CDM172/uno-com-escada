@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// taa.wgsl — anti-aliasing temporal (Catmull-Rom + recorte por variância YCoCg)
+// taa.wgsl — temporal anti-aliasing (Catmull-Rom + YCoCg variance clipping)
 // ---------------------------------------------------------------------------
 @group(0) @binding(0) var<uniform> V: View;
 @group(0) @binding(1) var<uniform> G: Globals;
@@ -12,7 +12,7 @@
 
 fn rgb2ycocg(c: vec3f) -> vec3f { return vec3f(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
 fn ycocg2rgb(c: vec3f) -> vec3f { return vec3f(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
-// mapeamento reversível para reduzir cintilação de altas luzes
+// reversible mapping to reduce highlight flicker
 fn tm(c: vec3f) -> vec3f { return c / (1.0 + luminance(c)); }
 fn itm(c: vec3f) -> vec3f { return c / max(1.0 - luminance(c), 1e-4); }
 
@@ -44,7 +44,7 @@ fn csTAA(@builtin(global_invocation_id) gid: vec3u) {
   let dim = vec2i(V.res.xy);
   if (px.x >= dim.x || px.y >= dim.y) { return; }
   let uv = (vec2f(px) + 0.5) * V.res.zw;
-  // vizinhança 3x3
+  // 3x3 neighbourhood
   var m1 = vec3f(0.0); var m2 = vec3f(0.0);
   var mn = vec3f(1e9); var mx = vec3f(-1e9);
   var cur = vec3f(0.0);
@@ -66,19 +66,19 @@ fn csTAA(@builtin(global_invocation_id) gid: vec3u) {
   let bmn = max(mn, mean - sd * gamma); let bmx = min(mx, mean + sd * gamma);
   var outc: vec3f;
   if (G.time.z < 1.5 || G.time.w > 0.5 || any(puv < vec2f(0.0)) || any(puv > vec2f(1.0))) {
-    // sem histórico (corte de câmera / borda): suavização espacial guiada pelo contraste local
+    // no history (camera cut / edge): spatial smoothing guided by local contrast
     let con = mx.x - mn.x;
     outc = mix(cur, (mean * 9.0 + cur * 3.0) / 12.0, smoothstep(0.015, 0.12, con) * 0.75);
   } else {
     var h = rgb2ycocg(tm(sampleHistory(puv)));
-    // recorte em direção ao centro da AABB
+    // clip towards the centre of the AABB
     let c = (bmx + bmn) * 0.5; let e = (bmx - bmn) * 0.5 + 1e-5;
     let off = h - c; let ts = abs(off / e);
     let mxs = max(ts.x, max(ts.y, ts.z));
     if (mxs > 1.0) { h = c + off / mxs; }
-    // fator de mistura: mais atual quando há movimento rápido (menos fantasma)
+    // blend factor: more of the current frame under fast motion (less ghosting)
     var a = mix(0.08, 0.22, clamp(velPx / 30.0, 0.0, 1.0));
-    // anti-cintilação: pesos por luminância
+    // anti-flicker: luminance weights
     let wc = a / (1.0 + cur.x); let wh = (1.0 - a) / (1.0 + h.x);
     outc = (cur * wc + h * wh) / (wc + wh);
   }

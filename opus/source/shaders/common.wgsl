@@ -1,52 +1,52 @@
 diagnostic(off, derivative_uniformity);
 // ---------------------------------------------------------------------------
-// common.wgsl — estruturas compartilhadas, ruídos, BRDF
+// common.wgsl — shared structures, noise, BRDF
 // ---------------------------------------------------------------------------
 const PI: f32 = 3.14159265;
 const TAU: f32 = 6.2831853;
 
 struct View {
-  viewProj: mat4x4f,       // com jitter (rasterização)
-  viewProjNJ: mat4x4f,     // sem jitter
-  prevViewProjNJ: mat4x4f, // quadro anterior, sem jitter
-  invViewProj: mat4x4f,    // inversa da com jitter
+  viewProj: mat4x4f,       // jittered (rasterisation)
+  viewProjNJ: mat4x4f,     // unjittered
+  prevViewProjNJ: mat4x4f, // previous frame, unjittered
+  invViewProj: mat4x4f,    // inverse of the jittered one
   view: mat4x4f,
   camPos: vec4f,           // w = near
-  params: vec4f,           // x: tipo (0 principal, 1 sombra, 2 cubo), y: cascata, z: lodScale, w: fovScale
-  jitter: vec4f,           // xy atual (ndc), zw anterior
+  params: vec4f,           // x: type (0 main, 1 shadow, 2 cube), y: cascade, z: lodScale, w: fovScale
+  jitter: vec4f,           // xy current (ndc), zw previous
   res: vec4f,              // w, h, 1/w, 1/h
   prevCamPos: vec4f,
   camFwd: vec4f,
 };
 
 struct Globals {
-  sunDir: vec4f,           // direção PARA o sol
-  sunColor: vec4f,         // rgb irradiância, w = raio angular
-  time: vec4f,             // t, dt, frame, wetness global
-  wind: vec4f,             // dir xz, força, rajada
-  fog: vec4f,              // densidade, queda por altura, altura base, exposição
+  sunDir: vec4f,           // direction TOWARDS the sun
+  sunColor: vec4f,         // rgb irradiance, w = angular radius
+  time: vec4f,             // t, dt, frame, global wetness
+  wind: vec4f,             // dir xz, strength, gust
+  fog: vec4f,              // density, height falloff, base height, exposure
   cascadeSplits: vec4f,
   shadowVP: array<mat4x4f, 4>,
-  shadowTexel: vec4f,      // tamanho do texel (m) por cascata
-  carPos: vec4f,           // centro do carro (cubo dinâmico), w = 1 se ativo
+  shadowTexel: vec4f,      // texel size (m) per cascade
+  carPos: vec4f,           // car centre (dynamic cube), w = 1 if active
   terrain: vec4f,          // X0, Z0, 1/HS, HN
   mask: vec4f,             // X0, Z0, 1/R1, R1
   track: vec4f,            // L, N, ds, 0
   misc: vec4f,             // x: cloudRot, y: exposure, z: debug, w: hud
-  hud: vec4f,              // velocidade, câmera, tempo de volta, marcha
+  hud: vec4f,              // speed, camera, lap time, gear
   hud2: vec4f,
-  sh: array<vec4f, 9>,     // irradiância do céu (SH L2)
-  carNow: vec4f,           // centro atual do carro (contato), w = 1 se ativo
+  sh: array<vec4f, 9>,     // sky irradiance (SH L2)
+  carNow: vec4f,           // current car centre (contact), w = 1 if active
 };
 
 struct Obj {
   model: mat4x4f,
   prevModel: mat4x4f,
-  params: vec4f,           // carro: x freio, y ré, z faróis, w sujeira
+  params: vec4f,           // car: x brake, y reverse, z headlights, w dirt
   params2: vec4f,
 };
 
-// ---------------- hash / ruído ----------------
+// ---------------- hash / noise ----------------
 fn pcg(v: u32) -> u32 {
   let s = v * 747796405u + 2891336453u;
   let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
@@ -109,13 +109,13 @@ fn voronoi2(p: vec2f) -> vec4f {
   return vec4f(sqrt(d1), sqrt(d2), id);
 }
 
-// Interleaved gradient noise (para dithering temporal)
+// Interleaved gradient noise (for temporal dithering)
 fn ign(p: vec2f, frame: f32) -> f32 {
   let q = p + 5.588238 * (frame % 64.0);
   return fract(52.9829189 * fract(dot(q, vec2f(0.06711056, 0.00583715))));
 }
 
-// ---------------- codificação ----------------
+// ---------------- encoding ----------------
 fn octWrap(v: vec2f) -> vec2f { return (1.0 - abs(v.yx)) * select(vec2f(-1.0), vec2f(1.0), v.xy >= vec2f(0.0)); }
 fn octEncode(n0: vec3f) -> vec2f {
   var n = n0 / (abs(n0.x) + abs(n0.y) + abs(n0.z));
@@ -131,7 +131,7 @@ fn octDecode(e: vec2f) -> vec3f {
 }
 fn luminance(c: vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 
-// panorama equiretangular: dir -> uv
+// equirectangular panorama: dir -> uv
 fn dirToPano(d: vec3f) -> vec2f {
   let u = atan2(d.z, d.x) * (0.5 / PI) + 0.5;
   let v = acos(clamp(d.y, -1.0, 1.0)) / PI;
@@ -159,7 +159,7 @@ fn F_Schlick(f0: vec3f, VoH: f32) -> vec3f {
   return f0 + (vec3f(1.0) - f0) * f;
 }
 fn F_Schlick1(f0: f32, VoH: f32) -> f32 { return f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0); }
-// aproximação analítica do termo de ambiente (Karis)
+// analytic approximation of the ambient term (Karis)
 fn envBRDF(f0: vec3f, rough: f32, NoV: f32) -> vec3f {
   let c0 = vec4f(-1.0, -0.0275, -0.572, 0.022);
   let c1 = vec4f(1.0, 0.0425, 1.04, -0.04);
@@ -169,7 +169,7 @@ fn envBRDF(f0: vec3f, rough: f32, NoV: f32) -> vec3f {
   return f0 * ab.x + ab.y;
 }
 fn shIrradiance(n: vec3f, sh: array<vec4f, 9>) -> vec3f {
-  // coeficientes já convolvidos (cosseno) no bake
+  // coefficients already convolved (cosine) in the bake
   var r = sh[0].rgb;
   r += sh[1].rgb * n.y + sh[2].rgb * n.z + sh[3].rgb * n.x;
   r += sh[4].rgb * (n.x * n.y) + sh[5].rgb * (n.y * n.z) + sh[6].rgb * (3.0 * n.z * n.z - 1.0);

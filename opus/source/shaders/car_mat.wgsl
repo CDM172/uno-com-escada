@@ -1,38 +1,38 @@
 // ---------------------------------------------------------------------------
-// car_mat.wgsl — materiais do Uno Mille EP
+// car_mat.wgsl — Uno Mille EP materials
 // ---------------------------------------------------------------------------
 fn segDist(p: vec2f, a: vec2f, b: vec2f) -> f32 {
   let pa = p - a; let ba = b - a;
   let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
   return length(pa - ba * h);
 }
-// distância às juntas de carroceria (frisos), em coordenadas locais
+// distance to the body panel gaps (seams), in local coordinates
 fn panelGap(lp: vec3f, n: vec3f) -> f32 {
   let az = abs(lp.z);
   var g = 1.0;
   let side = abs(n.z) > 0.55;
   if (side) {
-    // porta: borda dianteira e traseira
+    // door: front and rear edge
     g = min(g, select(1.0, abs(lp.x - 0.775), lp.y > 0.27 && lp.y < 0.875));
     g = min(g, select(1.0, abs(lp.x + 0.548), lp.y > 0.27 && lp.y < 0.99));
-    // capô na lateral do para-lama
-    // vinco/friso lateral
+    // hood on the side of the fender
+    // side crease/moulding
     g = min(g, select(1.0, abs(lp.y - 0.612) * 0.9, lp.x > -1.70 && lp.x < 1.76));
-    // tampa do tanque (lado esquerdo)
+    // fuel filler flap (left side)
     if (lp.z < 0.0) { g = min(g, abs(length(vec2f(lp.x + 1.27, lp.y - 0.83)) - 0.052)); }
   }
   if (n.y > 0.5 && lp.x > 0.5) {
-    // capô: traseira e laterais
+    // hood: rear and sides
     g = min(g, select(1.0, abs(lp.x - 0.865), az < 0.72));
     g = min(g, select(1.0, abs(az - 0.703), lp.x > 0.86 && lp.x < 1.80));
-    // vincos do capô (painel central levemente elevado)
+    // hood creases (centre panel slightly raised)
     g = min(g, select(1.0, abs(az - (0.34 - (lp.x - 0.9) * 0.03)) * 2.2, lp.x > 0.9 && lp.x < 1.78));
   }
   if (n.x > 0.6 && lp.x > 1.6) {
     g = min(g, select(1.0, abs(lp.y - 0.737), az < 0.74));
   }
   if (n.x < -0.5 && lp.x < -1.5) {
-    // tampa traseira
+    // tailgate
     g = min(g, select(1.0, abs(az - 0.655), lp.y > 0.53 && lp.y < 1.38));
     g = min(g, select(1.0, abs(lp.y - 0.535), az < 0.655));
   }
@@ -56,14 +56,14 @@ fn paint(i: VOut, lp: vec3f, ln: vec3f, s0: Surf) -> Surf {
   let gapEdge = (1.0 - smoothstep(0.0012, 0.0045 + w, g)) - gap;
   let dirt = (1.0 - smoothstep(0.26, 0.5, lp.y)) * 0.22 * (0.6 + 0.4 * vnoise2(lp.xz * 20.0));
   base = mix(base, vec3f(0.20, 0.18, 0.15), dirt);
-  // faixa de proteção inferior (cinza-azulado) nas laterais entre as caixas de roda
+  // lower protection strip (blue-grey) on the sides between the wheel arches
   let side = abs(ln.z) > 0.35 && lp.y < 0.445 && lp.y > 0.25;
   if (side) {
     let edgeL = smoothstep(0.43, 0.445, lp.y);
     let stripC = mix(vec3f(0.14, 0.19, 0.25), base, edgeL);
     base = stripC; s.metal = 0.3;
   }
-  // grelha de ventilação do capô (perto do para-brisa)
+  // hood ventilation grille (near the windscreen)
   if (ln.y > 0.6 && lp.x > 0.93 && lp.x < 1.03 && abs(lp.z) < 0.24) {
     let slot = step(0.45, fract(lp.z * 52.0)) * smoothstep(0.93, 0.945, lp.x) * (1.0 - smoothstep(1.015, 1.03, lp.x));
     base = mix(base, vec3f(0.01), slot); s.clear = 1.0 - slot; s.rough = mix(s.rough, 0.8, slot);
@@ -87,9 +87,9 @@ fn matCar(i: VOut) -> Surf {
   let m = i.attr.x;
   switch (m) {
     case 40u, 63u: {
-      // pesos interpolados da casca SDF
+      // interpolated weights of the SDF shell
       let wp = i.uv.x; let wr = i.uv.y; let wu = i.extra; let wi = 1.0 - wp - wr - wu;
-      // fronteiras exatas por pixel: vedação das janelas e caixa de roda
+      // exact per-pixel boundaries: window seals and wheel arch
       let wwin = windows(lp);
       let azl = abs(lp.z);
       let rArch = length(vec2f(lp.x - select(-1.18, 1.18, lp.x > 0.0), (lp.y - 0.295) * 1.04));
@@ -104,18 +104,18 @@ fn matCar(i: VOut) -> Surf {
       else { s = paint(i, lp, ln, s); }
     }
     case 67u: { s = paint(i, lp, ln, s); }
-    case 41u, 62u: { // plástico preto texturizado (para-choques, espelhos)
+    case 41u, 62u: { // textured black plastic (bumpers, mirrors)
       let d = triDetail(lp, ln, 6, 0.25);
       var c = vec3f(0.008, 0.0085, 0.010) * (0.8 + 0.45 * d.w);
       var rough = select(0.34, 0.5, m == 41u);
       let az = abs(lp.z);
       if (m == 41u && lp.x > 1.55 && ln.x > 0.3) {
-        // grelhas laterais inferiores + tomada central
+        // lower side grilles + centre intake
         let vent = step(0.235, lp.y) * step(lp.y, 0.30) * step(0.36, az) * step(az, 0.66);
         let slat = step(0.5, fract(lp.y * 90.0));
         let intake = step(0.445, lp.y) * step(lp.y, 0.485) * step(az, 0.32);
         c = mix(c, vec3f(0.006), max(vent * (0.5 + 0.5 * slat), intake * 0.9));
-        // friso horizontal
+        // horizontal trim strip
         let groove = 1.0 - smoothstep(0.0, 0.004, abs(lp.y - 0.395));
         c *= 1.0 - groove * 0.6;
         s.n = perturb(s.n, i.wpos, lp.zy, normalize(vec3f(0.0, (slat - 0.5) * vent * 0.6, 1.0)));
@@ -128,7 +128,7 @@ fn matCar(i: VOut) -> Surf {
       s.n = perturb(s.n, i.wpos, lp.xy * 4.0 + lp.zz, normalize(vec3f((d.xy - 0.5) * 0.3, 1.0)));
     }
     case 42u: { s.albedo = vec3f(0.95, 0.95, 0.96); s.metal = 0.75; s.rough = 0.16; s.emis = 0.0; }
-    case 43u: { // pneu
+    case 43u: { // tyre
       let v = i.uv.y; let u = i.uv.x;
       var c = vec3f(0.028, 0.028, 0.03);
       var rough = 0.82;
@@ -144,7 +144,7 @@ fn matCar(i: VOut) -> Surf {
         s.n = perturb(s.n, i.wpos, vec2f(u * 6.0, v), normalize(vec3f(0.0, (gro - 0.5) * 0.4, 1.0)));
         rough = 0.75;
       } else {
-        // lateral com letreiro discreto em relevo
+        // sidewall with subtle embossed lettering
         let ring = (1.0 - smoothstep(0.0, 0.01, abs(v - 0.2))) + (1.0 - smoothstep(0.0, 0.01, abs(v - 0.8)));
         let txt = step(0.6, fract(u * 40.0)) * step(0.5, fract(u * 3.0)) * ((1.0 - smoothstep(0.0, 0.025, abs(v - 0.27))) + (1.0 - smoothstep(0.0, 0.025, abs(v - 0.73))));
         c *= 1.0 + ring * 0.4 + txt * 0.5;
@@ -152,28 +152,28 @@ fn matCar(i: VOut) -> Surf {
       }
       s.albedo = c; s.rough = rough;
     }
-    case 44u: { // calota de plástico prateada com aletas
+    case 44u: { // silver plastic hubcap with fins
       let r = i.uv.y; let a = i.uv.x;
       var c = vec3f(0.62, 0.63, 0.64);
       var hole = 0.0;
-      // 14 aletas trapezoidais
+      // 14 trapezoidal fins
       let sec = fract(a * 10.0);
       let slot = step(0.42, r) * step(r, 0.82) * (1.0 - smoothstep(0.24, 0.28, abs(sec - 0.5) * (1.5 - r * 0.6)));
       hole = max(hole, slot);
-      // anel de furos pequenos
+      // ring of small holes
       let sec2 = fract(a * 28.0 + 0.5);
 
-      // tampa central
+      // centre cap
       let cap = 1.0 - smoothstep(0.17, 0.18, r);
       let ringL = (1.0 - smoothstep(0.0, 0.012, abs(r - 0.25))) + (1.0 - smoothstep(0.0, 0.012, abs(r - 0.95)));
       c = mix(c, vec3f(0.012), hole);
       c *= 1.0 - ringL * 0.35;
       c = mix(c, vec3f(0.55, 0.56, 0.58), cap);
       s.albedo = c; s.rough = mix(0.32, 0.9, hole); s.metal = mix(0.35, 0.0, hole); s.ao = 1.0 - hole * 0.7;
-      // relevo das aletas
+      // fin relief
       s.n = perturb(s.n, i.wpos, vec2f(a * 10.0, r * 4.0), normalize(vec3f((sec - 0.5) * slot * 1.2, 0.0, 1.0)));
     }
-    case 45u: { // farol: lente estriada sobre refletor parabólico cromado, aro escuro
+    case 45u: { // headlight: fluted lens over a chromed parabolic reflector, dark rim
       let ry = (lp.y - 0.64) / 0.066; let rz = (abs(lp.z) - 0.455) / 0.146;
       let bowl = clamp(length(vec2f(ry * 1.05, rz * 0.75)), 0.0, 1.0);
       let flute = fract(lp.z * 70.0) - 0.5;
@@ -186,7 +186,7 @@ fn matCar(i: VOut) -> Surf {
       s.metal = 0.85 * (1.0 - rim); s.rough = mix(0.04, 0.15, bowl); s.ao = 1.0;
       s.emis = O.params.z * 30.0 + 0.08 * (1.0 - rim);
     }
-    case 46u: { // lanterna: âmbar em cima, vermelho (freio), fumê embaixo
+    case 46u: { // tail light: amber on top, red (brake), smoked at the bottom
       let y = lp.y;
       var c = vec3f(0.42, 0.012, 0.01);
       var e = O.params.x * 7.0;
@@ -201,7 +201,7 @@ fn matCar(i: VOut) -> Surf {
       s.n = perturb(s.n, i.wpos, lp.zy * 40.0, normalize(vec3f((rib - 0.5) * 0.25, 0.0, 1.0)));
     }
     case 47u: { let d = triDetail(lp, ln, 7, 0.08); s.albedo = vec3f(0.045, 0.045, 0.048) * (0.8 + 0.4 * d.z); s.rough = 0.85; s.ao = 0.45; }
-    case 48u: { // tecido dos bancos
+    case 48u: { // seat fabric
       let d = triDetail(lp, ln, 7, 0.06);
       let stripe = step(0.5, fract(lp.z * 18.0));
       s.albedo = mix(vec3f(0.055, 0.056, 0.06), vec3f(0.075, 0.075, 0.08), stripe) * (0.75 + 0.5 * d.z);
@@ -209,26 +209,26 @@ fn matCar(i: VOut) -> Surf {
     }
     case 49u: { let d = triDetail(lp, ln, 6, 0.2); s.albedo = vec3f(0.028, 0.028, 0.03) * (0.85 + 0.3 * d.w); s.rough = 0.55; s.ao = 0.55; }
     case 50u: { s.albedo = vec3f(0.014); s.rough = 0.65; }
-    case 51u: { // alumínio da escada
+    case 51u: { // ladder aluminium
       let br = vnoise2(vec2f(lp.x * 3.0, lp.y * 900.0 + lp.z * 900.0));
       var c = vec3f(0.78, 0.79, 0.80) * (0.9 + 0.12 * br);
       var rough = 0.48 + 0.12 * br;
-      if (i.attr.y == 2u) { // degrau estriado
+      if (i.attr.y == 2u) { // ridged rung
         let rib = sin(atan2(lp.y - 1.559, (lp.x - floor(lp.x / 0.27) * 0.27)) * 18.0);
         rough += 0.1;
         c *= 0.95;
       }
-      // marcas de uso / oxidação leve
+      // wear marks / light oxidation
       c *= 1.0 - 0.1 * smoothstep(0.6, 0.9, vnoise2(lp.xz * 18.0));
       s.albedo = c * vec3f(1.0, 0.99, 0.97); s.metal = 0.6; s.rough = rough;
     }
-    case 52u: { // cinta de poliéster laranja
+    case 52u: { // orange polyester strap
       let wv = sin(lp.y * 1200.0 + lp.z * 1200.0) * 0.5 + 0.5;
       s.albedo = vec3f(0.78, 0.30, 0.025) * (0.85 + 0.2 * wv); s.rough = 0.65;
       s.n = perturb(s.n, i.wpos, lp.yz * 300.0, normalize(vec3f((wv - 0.5) * 0.3, 0.0, 1.0)));
     }
     case 53u: { s.albedo = vec3f(0.025, 0.026, 0.028); s.rough = 0.38; }
-    case 54u: { // placa cinza com caracteres pretos
+    case 54u: { // grey plate with black characters
       var u: f32; var v: f32;
       if (i.attr.y == 0u) { u = (0.20 - lp.z) / 0.40; v = (0.425 - lp.y) / 0.13; }
       else { u = (lp.z + 0.20) / 0.40; v = (0.685 - lp.y) / 0.13; }
@@ -240,7 +240,7 @@ fn matCar(i: VOut) -> Surf {
       c = mix(c, vec3f(0.015), max(t2, city));
       s.albedo = c; s.rough = 0.45; s.metal = 0.2;
     }
-    case 55u: { // emblemas traseiros
+    case 55u: { // rear badges
       var u: f32; var v: f32; var t: f32;
       if (i.attr.y == 0u) {
         u = (lp.z - 0.33) / 0.22; v = (0.931 - lp.y) / 0.052;
@@ -254,7 +254,7 @@ fn matCar(i: VOut) -> Surf {
       }
     }
     case 56u: { s.albedo = vec3f(0.62, 0.36, 0.08); s.rough = 0.05; s.metal = 0.35; s.n = perturb(s.n, i.wpos, lp.zy * 60.0, normalize(vec3f(sin(lp.y * 600.0) * 0.2, 0.0, 1.0))); }
-    case 57u: { // grade / molduras
+    case 57u: { // grille / surrounds
       var c = vec3f(0.018);
       if (i.attr.y == 1u) {
         let y = lp.y;

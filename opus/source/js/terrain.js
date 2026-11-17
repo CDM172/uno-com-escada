@@ -1,18 +1,18 @@
 // ---------------------------------------------------------------------------
-// terrain.js — altura procedural, raster da pista, máscaras e malhas
+// terrain.js — procedural height, track raster, masks and meshes
 // ---------------------------------------------------------------------------
 'use strict';
 
 const TERRAIN = (() => {
   const T = {};
-  const CX = -62, CZ = -98;          // centro da região interna
-  const HALF = 800;                  // região interna 1600 m
-  const R1 = 1600;                   // raster 1 m
-  const HN = 801, HS = 2;            // grade de alturas 2 m
+  const CX = -62, CZ = -98;          // centre of the inner region
+  const HALF = 800;                  // inner region 1600 m
+  const R1 = 1600;                   // 1 m raster
+  const HN = 801, HS = 2;            // 2 m height grid
   T.CX = CX; T.CZ = CZ; T.HALF = HALF; T.R1 = R1; T.HN = HN; T.HS = HS;
   T.X0 = CX - HALF; T.Z0 = CZ - HALF;
 
-  // base suave que interpola a elevação da pista (IDW sobre subamostras)
+  // smooth base that interpolates the track elevation (IDW over subsamples)
   const TR = TRACK;
   const sub = []; for (let i = 0; i < TR.N; i += 8) sub.push(TR.px[i], TR.pz[i], TR.py[i]);
   function baseIDW(x, z) {
@@ -24,15 +24,15 @@ const TERRAIN = (() => {
     }
     return ys / ws;
   }
-  // altura natural (sem pista)
+  // natural height (without the track)
   function natural(x, z, base) {
     const dx = x - CX, dz = z - CZ;
     const d = Math.sqrt(dx * dx + dz * dz);
     let h = base;
-    // colinas locais
+    // local hills
     h += fbm2(x * 0.006, z * 0.006, 4) * (3 + smoothstep(150, 700, d) * 16);
     h += fbm2(x * 0.02 + 3, z * 0.02, 3) * 1.2;
-    // morro grande a nordeste e cadeia ao longe
+    // large hill to the north-east and a distant range
     const m1x = x - 900, m1z = z + 1400; const dm1 = Math.sqrt(m1x * m1x + m1z * m1z);
     h += 160 * Math.exp(-dm1 * dm1 / (700 * 700));
     const m2x = x + 1300, m2z = z - 600; const dm2 = Math.sqrt(m2x * m2x + m2z * m2z);
@@ -43,11 +43,11 @@ const TERRAIN = (() => {
   }
   T.natural = natural;
 
-  // ---------------- raster da pista (1 m) ----------------
+  // ---------------- track raster (1 m) ----------------
   const N1 = R1 * R1;
-  const rU = new Float32Array(N1).fill(1e4);   // u assinado do ponto mais próximo
+  const rU = new Float32Array(N1).fill(1e4);   // signed u of the nearest point
   const rS = new Float32Array(N1);             // s
-  const rD = new Float32Array(N1).fill(1e8);   // dist² horizontal
+  const rD = new Float32Array(N1).fill(1e8);   // horizontal dist²
   const RAD = 85;
   for (let i = 0; i < TR.N; i++) {
     const ax = TR.px[i], az = TR.pz[i], j = (i + 1) % TR.N;
@@ -64,7 +64,7 @@ const TERRAIN = (() => {
         const k = gz * R1 + gx;
         if (d < rD[k]) {
           rD[k] = d;
-          // u: >0 à direita. right = (-tz, tx)
+          // u: >0 to the right. right = (-tz, tx)
           const l = Math.sqrt(sl2);
           rU[k] = ((x - ax) * (-sz) + (z - az) * sx) / l;
           rS[k] = (i + t) * TR.ds;
@@ -80,10 +80,10 @@ const TERRAIN = (() => {
   }
   T.rasterAt = rasterAt;
 
-  // ---------------- alturas (2 m) ----------------
+  // ---------------- heights (2 m) ----------------
   const H = new Float32Array(HN * HN);
   const tmp = [0, 0, 0];
-  // base IDW numa grade grossa (16 m) e interpolada — barato
+  // IDW base on a coarse grid (16 m), then interpolated — cheap
   const BN = 101, BS = 16, base = new Float32Array(BN * BN);
   for (let j = 0; j < BN; j++) for (let i = 0; i < BN; i++) base[j * BN + i] = baseIDW(T.X0 + i * BS, T.Z0 + j * BS);
   function baseAt(x, z) {
@@ -93,7 +93,7 @@ const TERRAIN = (() => {
     return lerp(lerp(base[j * BN + i], base[j * BN + i + 1], tx), lerp(base[(j + 1) * BN + i], base[(j + 1) * BN + i + 1], tx), tz);
   }
   T.baseAt = baseAt;
-  // altura "corredor" pista: plataforma plana até a barreira, depois funde
+  // track "corridor" height: flat platform up to the barrier, then blends
   function corridor(x, z, hNat) {
     rasterAt(x, z, tmp);
     const u = tmp[0], s = tmp[1], d = tmp[2];
@@ -103,8 +103,8 @@ const TERRAIN = (() => {
     const wall = u > 0 ? TR.lerpArr(TR.wallR, s) : TR.lerpArr(TR.wallL, s);
     const au = Math.abs(u);
     let hp;
-    if (au < hw + 0.32) hp = ty - 0.3;                        // sob o asfalto
-    else hp = ty - 0.048 - smoothstep(hw + 1.0, hw + 3.0, au) * 0.02 - (au - hw) * 0.006;   // escape rente à borda do asfalto
+    if (au < hw + 0.32) hp = ty - 0.3;                        // under the asphalt
+    else hp = ty - 0.048 - smoothstep(hw + 1.0, hw + 3.0, au) * 0.02 - (au - hw) * 0.006;   // run-off flush with the asphalt edge
     const w = 1 - smoothstep(wall + 3, wall + 38, au);
     return lerp(hNat, hp, w);
   }
@@ -113,19 +113,19 @@ const TERRAIN = (() => {
     H[j * HN + i] = corridor(x, z, natural(x, z, baseAt(x, z)));
   }
   T.H = H;
-  // altura do terreno (bilinear na grade; fora dela, função natural)
+  // terrain height (bilinear on the grid; outside it, natural function)
   T.heightAt = (x, z) => {
     let fx = (x - T.X0) / HS, fz = (z - T.Z0) / HS;
     if (fx < 0 || fz < 0 || fx >= HN - 1 || fz >= HN - 1) return natural(x, z, baseAt(x, z));
     const i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j;
     const k = j * HN + i;
-    // triangulação igual à malha (diagonal i,j -> i+1,j+1)
+    // same triangulation as the mesh (diagonal i,j -> i+1,j+1)
     if (tx > tz) return H[k] + (H[k + 1] - H[k]) * tx + (H[k + HN + 1] - H[k + 1]) * tz;
     return H[k] + (H[k + HN + 1] - H[k + HN]) * tx + (H[k + HN] - H[k]) * tz;
   };
 
-  // ---------------- máscaras de superfície (1 m, rgba8) ----------------
-  // R: brita   G: grama alta   B: chão de mata/terra   A: densidade de floresta
+  // ---------------- surface masks (1 m, rgba8) ----------------
+  // R: gravel   G: tall grass   B: forest floor/dirt   A: forest density
   const MASK = new Uint8Array(N1 * 4);
   for (let gz = 0; gz < R1; gz++) for (let gx = 0; gx < R1; gx++) {
     const k = gz * R1 + gx;
@@ -144,21 +144,21 @@ const TERRAIN = (() => {
       if (gw > 1.5) grav = smoothstep(g0 - 0.4, g0 + 0.4, au) * (1 - smoothstep(g1 - 0.4, g1 + 0.4, au));
     }
     const au = Math.abs(u);
-    // grama alta: além da barreira (e na faixa larga entre escape e barreira)
+    // tall grass: beyond the barrier (and in the wide strip between run-off and barrier)
     const n = fbm2(x * 0.05, z * 0.05, 3);
     tall = smoothstep(wall + 0.5, wall + 4, au) * (0.55 + 0.45 * n);
-    // tufos de capim alto também no miolo (manchas)
+    // tufts of tall grass in the infield too (patches)
     tall = Math.max(tall, smoothstep(0.1, 0.4, fbm2(x * 0.03 + 9, z * 0.03 - 2, 3)) * smoothstep(wall + 0.5, wall + 5, au));
     if (near && au < wall) tall = Math.max(tall, smoothstep(wall - 2.5, wall - 0.6, au) * 0.5) * (1 - grav);
-    // floresta: longe da pista, ruído de clareiras
+    // forest: far from the track, clearing noise
     const fn = fbm2(x * 0.0045 + 7, z * 0.0045 - 3, 4) * 2.2 + 0.55;
     forest = smoothstep(wall + 7, wall + 16, au) * smoothstep(-0.1, 0.25, fn);
-    // exclusões: boxes / arquibancada / estacionamento perto da reta
+    // exclusions: pits / grandstand / car park near the straight
     if (x > -240 && x < 60 && z > -70 && z < 70) forest *= smoothstep(-70, -55, -Math.abs(z)) * 0 + (Math.abs(z) > 58 ? 1 : 0);
-    // sem grama alta na pit lane / boxes / base da arquibancada
+    // no tall grass in the pit lane / pits / grandstand base
     if (x > -205 && x < 45 && z > -42 && z < -8) tall = 0;
     if (x > -160 && x < -5 && z > 9 && z < 34) tall = 0;
-    // infield: mais aberto
+    // infield: more open
     floor = forest * 0.9;
     tall *= 1 - forest * 0.6;
     MASK[k * 4] = Math.round(grav * 255); MASK[k * 4 + 1] = Math.round(clamp(tall, 0, 1) * 255);
@@ -171,14 +171,14 @@ const TERRAIN = (() => {
     return MASK[(gz * R1 + gx) * 4 + ch];
   };
 
-  // ---------------- malha interna em blocos com LOD estático ----------------
-  // retorna {pos: Float32Array (x,y,z), idx: Uint32Array}
+  // ---------------- inner mesh in blocks with static LOD ----------------
+  // returns {pos: Float32Array (x,y,z), idx: Uint32Array}
   T.buildInnerMesh = () => {
-    const CH = 32;              // bloco de 64 m (32 células de 2 m)
+    const CH = 32;              // 64 m block (32 cells of 2 m)
     const NC = (HN - 1) / CH;   // 25
     const lod = new Int32Array(NC * NC);
     for (let cj = 0; cj < NC; cj++) for (let ci = 0; ci < NC; ci++) {
-      // distância mínima do bloco à pista
+      // minimum distance from the block to the track
       let dmin = 1e9;
       for (let a = 0; a <= 4; a++) for (let b = 0; b <= 4; b++) {
         const x = T.X0 + (ci * CH + a * CH / 4) * HS, z = T.Z0 + (cj * CH + b * CH / 4) * HS;
@@ -187,7 +187,7 @@ const TERRAIN = (() => {
       }
       lod[cj * NC + ci] = dmin < 130 ? 0 : dmin < 300 ? 1 : dmin < 520 ? 2 : 3;
     }
-    // restringe diferença de LOD entre vizinhos a 1
+    // restricts the LOD difference between neighbours to 1
     for (let it = 0; it < 4; it++) for (let cj = 0; cj < NC; cj++) for (let ci = 0; ci < NC; ci++) {
       const k = cj * NC + ci;
       for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -204,7 +204,7 @@ const TERRAIN = (() => {
       for (let b = 0; b <= n; b++) for (let a = 0; a <= n; a++) {
         const i = ci * CH + a * st, j = cj * CH + b * st;
         let y = hAt(i, j);
-        // costura com vizinho mais grosso
+        // stitching with a coarser neighbour
         const fixEdge = (Ln, along, ii0, jj0, di, dj) => {
           const stn = 1 << Ln; const r = along % stn;
           if (r === 0) return hAt(ii0, jj0);
@@ -225,8 +225,8 @@ const TERRAIN = (() => {
     return { pos: new Float32Array(P), idx: new Uint32Array(I), lod };
   };
 
-  // ---------------- malha distante (anéis até ~18 km) ----------------
-  // anel 0 coincide exatamente com a borda da malha interna (passo 8 células = 16 m)
+  // ---------------- far mesh (rings out to ~18 km) ----------------
+  // ring 0 coincides exactly with the edge of the inner mesh (step 8 cells = 16 m)
   T.buildOuterMesh = () => {
     const P = [], I = [];
     const E = HN - 1, STEP = 4;
@@ -239,8 +239,8 @@ const TERRAIN = (() => {
     const rMax = 18000;
     for (let rj = 0; rj <= NR; rj++) {
       const t = rj / NR;
-      const scale = Math.pow(rMax / HALF, t);           // multiplica a distância
-      const circ = smoothstep(0.0, 0.45, t);            // quadrado -> círculo
+      const scale = Math.pow(rMax / HALF, t);           // multiplies the distance
+      const circ = smoothstep(0.0, 0.45, t);            // square -> circle
       for (let a = 0; a < NA; a++) {
         const gi = ring0[a][0], gj = ring0[a][1];
         const sx = T.X0 + gi * HS - CX, sz = T.Z0 + gj * HS - CZ;

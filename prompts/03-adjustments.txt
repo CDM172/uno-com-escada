@@ -1,0 +1,11 @@
+(English translation of the original Portuguese prompt.)
+
+Three adjustments, requested by the person who is going to publish the piece:
+
+1. Controls text. On the start screen and in the menu, replace "esterçam" and "esterça" [the technical verb for "steer"] with "faz curvas" ["takes corners"]: the keyboard line becomes "A D ou ← →  faz curvas" and the gamepad line becomes "Analógico esquerdo  faz curvas". If the verb "esterçar" appears in any other interface text, replace it too.
+
+2. Master volume. Reduce all the sound by 60%: the overall level becomes 40% of the current one.
+
+3. Ambient sound (forest, birds, crowd). It drops 80% relative to today's level: it ends up at 20% of the current one, that is, half of the rest after the overall cut.
+
+The rest stays as it is. Adjust the sound tests that depend on absolute level, run the verifications again, redo `volta-som.mp4` with the new soundtrack and update `acrescimo.md` (list of controls, levels and size). At the end, report the levels measured before and after, for the whole sound and for the ambience layer.

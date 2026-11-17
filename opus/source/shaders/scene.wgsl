@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// scene.wgsl — bindings da cena + utilidades de material compartilhadas
+// scene.wgsl — scene bindings + shared material utilities
 // ---------------------------------------------------------------------------
 @group(0) @binding(0) var<uniform> V: View;
 @group(0) @binding(1) var<uniform> G: Globals;
@@ -25,7 +25,7 @@ struct Surf {
 };
 fn surfDefault(n: vec3f) -> Surf { return Surf(vec3f(0.5), 0.6, n, 0.0, 1.0, 0.0, 0.0, 0.0, 0u, 1.0); }
 
-// dados da pista por amostra (2 vec4 por amostra)
+// per-sample track data (2 vec4 per sample)
 //  [0]: hw, racing, wet, brake   [1]: kerbL, kerbR, gravL, gravR
 fn trackData(s: f32, row: u32) -> vec4f {
   let N = u32(G.track.y);
@@ -33,7 +33,7 @@ fn trackData(s: f32, row: u32) -> vec4f {
   let i0 = u32(floor(f)) % N; let i1 = (i0 + 1u) % N;
   return mix(TD[i0 * 2u + row], TD[i1 * 2u + row], fract(f));
 }
-// frame tangente por derivadas (sem atributo de tangente)
+// tangent frame from derivatives (no tangent attribute)
 fn perturb(n: vec3f, p: vec3f, uv: vec2f, tn: vec3f) -> vec3f {
   let dp1 = dpdx(p); let dp2 = dpdy(p); let du1 = dpdx(uv); let du2 = dpdy(uv);
   let dp2p = cross(dp2, n); let dp1p = cross(n, dp1);
@@ -42,13 +42,13 @@ fn perturb(n: vec3f, p: vec3f, uv: vec2f, tn: vec3f) -> vec3f {
   let im = inverseSqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
   return normalize(T * im * tn.x + B * im * tn.y + n * tn.z);
 }
-// normal de detalhe projetada no plano XZ do mundo (superfícies ~horizontais)
+// detail normal projected onto the world XZ plane (~horizontal surfaces)
 fn detailNXZ(layer: i32, p: vec2f, scale: f32, bias: f32) -> vec4f {
   let s = textureSampleBias(detailTex, sampRep, p / scale, layer, bias);
   return vec4f(s.xy * 2.0 - 1.0, s.z, s.w);
 }
 fn applyNXZ(n: vec3f, d: vec2f, k: f32) -> vec3f {
-  // n quase vertical: perturba em x/z (z da textura = z do mundo)
+  // n almost vertical: perturbs in x/z (texture z = world z)
   return normalize(n + vec3f(d.x, 0.0, d.y) * k);
 }
 fn velocity(cur: vec4f, prev: vec4f) -> vec2f {
@@ -71,7 +71,7 @@ fn packG(s: Surf, cur: vec4f, prev: vec4f) -> GOut {
   return o;
 }
 
-// ------------- iluminação simplificada (cubo de reflexo) -------------
+// ------------- simplified lighting (reflection cube) -------------
 fn skyLo(d: vec3f, lod: f32) -> vec3f { return textureSampleLevel(skyLoTex, sampClamp, dirToPano(d), lod).rgb; }
 fn shadowSimple(wp: vec3f, c: i32) -> f32 {
   let sp = G.shadowVP[c] * vec4f(wp, 1.0);
@@ -84,7 +84,7 @@ fn fogApply(col: vec3f, wp: vec3f, cam: vec3f) -> vec3f {
   let dens = G.fog.x;
   let hf = G.fog.y;
   let h0 = cam.y - G.fog.z;
-  // névoa de altura integrada analiticamente
+  // height fog integrated analytically
   let k = max(abs(rd.y) * hf, 1e-4);
   var od = dens * exp(-h0 * hf) * (1.0 - exp(-dist * k)) / k;
   od = max(od, 0.0);

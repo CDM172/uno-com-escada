@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mille EP — Circuito da Serra</title>
+<title>Mille EP — Serra Circuit</title>
 <style>
 html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:-apple-system,Helvetica,Arial,sans-serif}
 canvas{width:100vw;height:100vh;display:block}
@@ -35,42 +35,42 @@ button:hover,button:focus-visible{background:rgba(255,255,255,.18);outline:2px s
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="msg">carregando…</div>
+<div id="msg">loading…</div>
 <div id="aviso"></div>
 <div id="menu" hidden><div>
-<h1>Mille EP<small>Circuito da Serra · Fiat Uno Mille EP 1996</small></h1>
-<p id="pz">Pausado</p>
+<h1>Mille EP<small>Serra Circuit · 1996 Fiat Uno Mille EP</small></h1>
+<p id="pz">Paused</p>
 <div id="res"></div>
 <div id="ctr">
-<table><caption>Teclado</caption>
-<tr><th>W ou ↑</th><td>acelera</td></tr>
-<tr><th>S ou ↓</th><td>freia e dá ré</td></tr>
-<tr><th>A D ou ← →</th><td>faz curvas</td></tr>
-<tr><th>Espaço</th><td>freio de mão</td></tr>
-<tr><th>C</th><td>troca a câmera</td></tr>
-<tr><th>V (segurar)</th><td>olha para trás</td></tr>
-<tr><th>R</th><td>devolve o carro à pista</td></tr>
-<tr><th>Esc</th><td>pausa e abre o menu</td></tr>
-<tr><th>M</th><td>liga e desliga o som</td></tr>
+<table><caption>Keyboard</caption>
+<tr><th>W or ↑</th><td>throttle</td></tr>
+<tr><th>S or ↓</th><td>brake and reverse</td></tr>
+<tr><th>A D or ← →</th><td>steer</td></tr>
+<tr><th>Space</th><td>handbrake</td></tr>
+<tr><th>C</th><td>change camera</td></tr>
+<tr><th>V (hold)</th><td>look back</td></tr>
+<tr><th>R</th><td>reset car to track</td></tr>
+<tr><th>Esc</th><td>pause and open menu</td></tr>
+<tr><th>M</th><td>mute sound</td></tr>
 </table>
-<table><caption>Controle</caption>
-<tr><th>Gatilho direito</th><td>acelera</td></tr>
-<tr><th>Gatilho esquerdo</th><td>freia e dá ré</td></tr>
-<tr><th>Analógico esquerdo</th><td>faz curvas</td></tr>
-<tr><th>A</th><td>freio de mão</td></tr>
-<tr><th>Y</th><td>troca a câmera</td></tr>
-<tr><th>RB (segurar)</th><td>olha para trás</td></tr>
-<tr><th>X</th><td>devolve o carro à pista</td></tr>
-<tr><th>Start</th><td>abre o menu</td></tr>
+<table><caption>Gamepad</caption>
+<tr><th>Right trigger</th><td>throttle</td></tr>
+<tr><th>Left trigger</th><td>brake and reverse</td></tr>
+<tr><th>Left stick</th><td>steer</td></tr>
+<tr><th>A</th><td>handbrake</td></tr>
+<tr><th>Y</th><td>change camera</td></tr>
+<tr><th>RB (hold)</th><td>look back</td></tr>
+<tr><th>X</th><td>reset car to track</td></tr>
+<tr><th>Start</th><td>open menu</td></tr>
 </table>
-<table><caption>Ferramentas</caption>
-<tr><th>H</th><td>estatísticas de desempenho</td></tr>
-<tr><th>B</th><td>benchmark (volta de 60 s)</td></tr>
-<tr><th>F</th><td>assistir à volta roteirizada</td></tr>
-<tr><th>1 a 6</th><td>poses fixas</td></tr>
+<table><caption>Tools</caption>
+<tr><th>H</th><td>performance stats</td></tr>
+<tr><th>B</th><td>benchmark (60 s scripted lap)</td></tr>
+<tr><th>F</th><td>watch the scripted lap</td></tr>
+<tr><th>1 to 6</th><td>fixed camera poses</td></tr>
 </table>
 </div>
-<div id="bts"><button id="bS">Começar</button><button id="bC">Continuar</button><button id="bB">Benchmark</button></div>
+<div id="bts"><button id="bS">Start</button><button id="bC">Resume</button><button id="bB">Benchmark</button></div>
 </div></div>
 <script type="module">
 /*__BUNDLE__*/

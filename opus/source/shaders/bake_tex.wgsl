@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// bake_tex.wgsl — texturas de detalhe ladrilháveis e atlas de folhas
-// detalhe (array 1024² x 10): rgba8 = (nx, ny, altura/ao, variação)
-//  0 asfalto (4 m)  1 brita (2 m)  2 solo/grama (2 m)  3 concreto (2 m)
-//  4 casca (1 m)    5 serrapilheira (2 m) 6 plástico granulado (0.25 m)
-//  7 tecido (0.1 m) 8 metal galvanizado (1 m) 9 borracha/pneu (0.5 m)
+// bake_tex.wgsl — tileable detail textures and leaf atlas
+// detail (array 1024² x 10): rgba8 = (nx, ny, height/ao, variation)
+//  0 asphalt (4 m)  1 gravel (2 m)  2 soil/grass (2 m)  3 concrete (2 m)
+//  4 bark (1 m)     5 leaf litter (2 m) 6 grained plastic (0.25 m)
+//  7 fabric (0.1 m) 8 galvanised metal (1 m) 9 rubber/tyre (0.5 m)
 // ---------------------------------------------------------------------------
 struct BakeU { layer: vec4u };
 @group(0) @binding(0) var<uniform> BU: BakeU;
@@ -28,7 +28,7 @@ fn pfbm(p: vec2f, per0: vec2i, oct: i32) -> f32 {
   for (var i = 0; i < oct; i++) { s += a * pnoise(q, per); q *= 2.0; per *= 2; a *= 0.5; }
   return s;
 }
-// voronoi periódico: x F1, y F2, z hash da célula, w distância à borda
+// periodic voronoi: x F1, y F2, z cell hash, w distance to the edge
 fn pvor(p: vec2f, per: vec2i, jit: f32) -> vec4f {
   let i = vec2i(floor(p)); let f = fract(p);
   var d1 = 9.0; var d2 = 9.0; var h = 0.0; var mr = vec2f(0); var mg = vec2i(0);
@@ -39,7 +39,7 @@ fn pvor(p: vec2f, per: vec2i, jit: f32) -> vec4f {
     let d = dot(r, r);
     if (d < d1) { d2 = d1; d1 = d; h = phash2(i + g + vec2i(7, 3), per); mr = r; mg = g; } else if (d < d2) { d2 = d; }
   } }
-  // distância à borda (aprox. de Quilez)
+  // distance to the edge (Quilez approx.)
   var md = 9.0;
   for (var y = -2; y <= 2; y++) { for (var x = -2; x <= 2; x++) {
     let g = mg + vec2i(x, y);
@@ -50,10 +50,10 @@ fn pvor(p: vec2f, per: vec2i, jit: f32) -> vec4f {
   return vec4f(sqrt(d1), sqrt(d2), h, md);
 }
 
-// altura + variação por camada, coordenada uv em [0,1)
+// height + variation per layer, uv coordinate in [0,1)
 fn layerHV(layer: u32, uv: vec2f) -> vec2f {
   switch (layer) {
-    case 0u: { // asfalto: agregado
+    case 0u: { // asphalt: aggregate
       let v = pvor(uv * 420.0, vec2i(420), 1.0);
       let stone = smoothstep(0.0, 0.18, v.w);
       let v2 = pvor(uv * 900.0 + 0.5, vec2i(900), 1.0);
@@ -63,7 +63,7 @@ fn layerHV(layer: u32, uv: vec2f) -> vec2f {
       let lum = mix(0.35, 1.0, step(0.82, v.z)) * stone + (1.0 - stone) * 0.22 + (v2.z - 0.5) * 0.15;
       return vec2f(h, clamp(lum * (0.8 + big * 0.4), 0.0, 1.0));
     }
-    case 1u: { // brita: seixos 2–4 cm
+    case 1u: { // gravel: 2–4 cm pebbles
       let v = pvor(uv * 70.0, vec2i(70), 0.9);
       let dome = sqrt(clamp(v.w * 3.2, 0.0, 1.0));
       let v2 = pvor(uv * 150.0 + 0.3, vec2i(150), 0.9);
@@ -73,25 +73,25 @@ fn layerHV(layer: u32, uv: vec2f) -> vec2f {
       let id = select(v.z, v2.z, dome2 * 0.7 * sel > dome * (0.7 + 0.3 * v.z));
       return vec2f(h, id);
     }
-    case 2u: { // solo
+    case 2u: { // soil
       let n = pfbm(uv * 32.0, vec2i(32), 5);
       let v = pvor(uv * 120.0, vec2i(120), 1.0);
       return vec2f(n * 0.7 + smoothstep(0.0, 0.3, v.w) * 0.3, pfbm(uv * 6.0, vec2i(6), 3));
     }
-    case 3u: { // concreto
+    case 3u: { // concrete
       let n = pfbm(uv * 64.0, vec2i(64), 5);
       let pores = smoothstep(0.03, 0.0, pvor(uv * 260.0, vec2i(260), 1.0).x) * step(0.7, phash2(vec2i(uv * 260.0), vec2i(260)));
       let blot = pfbm(uv * 4.0, vec2i(4), 4);
       return vec2f(0.6 + n * 0.3 - pores * 0.5, blot);
     }
-    case 4u: { // casca (fissuras verticais)
+    case 4u: { // bark (vertical fissures)
       let q = vec2f(uv.x * 10.0, uv.y * 2.0);
       let n = pfbm(q + vec2f(pfbm(uv * vec2f(6.0, 2.0), vec2i(6, 2), 3) * 1.5, 0.0), vec2i(10, 2), 5);
       let fiss = smoothstep(0.42, 0.55, n);
       let fine = pfbm(uv * vec2f(80.0, 20.0), vec2i(80, 20), 3);
       return vec2f(fiss * 0.8 + fine * 0.2, n);
     }
-    case 5u: { // serrapilheira: folhas sobrepostas
+    case 5u: { // leaf litter: overlapping leaves
       var h = 0.0; var id = 0.0;
       for (var k = 0; k < 3; k++) {
         let sc = 28.0 + f32(k) * 9.0;
@@ -101,21 +101,21 @@ fn layerHV(layer: u32, uv: vec2f) -> vec2f {
       }
       return vec2f(h * 0.8, id);
     }
-    case 6u: { // plástico granulado
+    case 6u: { // grained plastic
       let n = pnoise(uv * 512.0, vec2i(512)) * 0.6 + pnoise(uv * 1024.0, vec2i(1024)) * 0.4;
       return vec2f(n, pfbm(uv * 4.0, vec2i(4), 3));
     }
-    case 7u: { // tecido
+    case 7u: { // fabric
       let g = uv * 128.0;
       let wx = abs(sin(g.x * PI)) * step(0.5, fract(g.y * 0.5 + floor(g.x) * 0.5));
       let wy = abs(sin(g.y * PI)) * (1.0 - step(0.5, fract(g.y * 0.5 + floor(g.x) * 0.5)));
       return vec2f(max(wx, wy) * 0.8 + pnoise(uv * 512.0, vec2i(512)) * 0.2, pnoise(uv * 32.0, vec2i(32)));
     }
-    case 8u: { // galvanizado (mosqueado)
+    case 8u: { // galvanised (mottled)
       let v = pvor(uv * 40.0, vec2i(40), 1.0);
       return vec2f(pnoise(uv * 256.0, vec2i(256)) * 0.3, v.z * 0.6 + pfbm(uv * 8.0, vec2i(8), 3) * 0.4);
     }
-    default: { // borracha
+    default: { // rubber
       let n = pnoise(uv * 256.0, vec2i(256));
       return vec2f(n * 0.4, pfbm(uv * 8.0, vec2i(8), 3));
     }
@@ -143,8 +143,8 @@ fn csDetail(@builtin(global_invocation_id) id: vec3u) {
   textureStore(detailOut, id.xy, layer, vec4f(n.xy * 0.5 + 0.5, clamp(c.x, 0.0, 1.0), clamp(c.y, 0.0, 1.0)));
 }
 
-// ---------------- atlas de folhas (2048², 2x2 células) ----------------
-// albedo.rgb + alpha ; normal.xy + translucência + ao
+// ---------------- leaf atlas (2048², 2x2 cells) ----------------
+// albedo.rgb + alpha ; normal.xy + translucency + ao
 @group(0) @binding(2) var leafAlb: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(3) var leafNrm: texture_storage_2d<rgba8unorm, write>;
 
@@ -158,8 +158,8 @@ fn csLeaves(@builtin(global_invocation_id) id: vec3u) {
   if (id.x >= 4096u || id.y >= 4096u) { return; }
   let cell = id.xy / 2048u;
   let kind = cell.x + cell.y * 2u;
-  let p = (vec2f(id.xy % 2048u) + 0.5) / 2048.0;   // [0,1] dentro da célula, y para baixo
-  let q = vec2f(p.x - 0.5, 1.0 - p.y);             // origem embaixo no centro, y para cima
+  let p = (vec2f(id.xy % 2048u) + 0.5) / 2048.0;   // [0,1] within the cell, y down
+  let q = vec2f(p.x - 0.5, 1.0 - p.y);             // origin at bottom centre, y up
   var alpha = 0.0; var col = vec3f(0.0); var nrm = vec3f(0.0, 0.0, 1.0); var trans = 0.0; var ao = 1.0;
   var best = -1.0;
   var nLeaves = 80; var lenL = 0.088; var widL = 0.034; var spread = 0.40;
@@ -167,13 +167,13 @@ fn csLeaves(@builtin(global_invocation_id) id: vec3u) {
   if (kind == 1u) { nLeaves = 40; lenL = 0.19; widL = 0.022; spread = 0.40; baseC = vec3f(0.17, 0.22, 0.12); }
   if (kind == 2u) { nLeaves = 64; lenL = 0.085; widL = 0.034; spread = 0.46; baseC = vec3f(0.09, 0.17, 0.045); }
   if (kind == 3u) { nLeaves = 30; lenL = 0.5; widL = 0.012; spread = 0.45; baseC = vec3f(0.18, 0.24, 0.08); }
-  col = baseC;  // dilatação: texels transparentes com a cor média (evita borda escura)
-  // galho principal
+  col = baseC;  // dilation: transparent texels get the average colour (avoids a dark fringe)
+  // main branch
   let stemTop = vec2f(0.0, 0.88);
   let ds = sdSeg(q, vec2f(0.0, 0.0), stemTop);
   let stemW = mix(0.012, 0.003, ds.y);
   if (kind != 3u && ds.x < stemW) { alpha = 1.0; col = vec3f(0.16, 0.11, 0.07); best = 0.0; nrm = normalize(vec3f((q.x) / stemW * 0.8, 0.0, 1.0)); ao = 0.7; }
-  // folhosas (0 e 2): raminho com eixo central + 4 ramos laterais, folhas em várias direções
+  // broadleaves (0 and 2): twig with a central axis + 4 side branches, leaves in several directions
   let multi = kind == 0u || kind == 2u;
   if (multi) {
     nLeaves = select(150, 175, kind == 0u); lenL = 0.064; widL = 0.026;
@@ -189,7 +189,7 @@ fn csLeaves(@builtin(global_invocation_id) id: vec3u) {
   for (var i = 0; i < nLeaves; i++) {
     let hi = f32(i) + f32(kind) * 100.0;
     let r0 = hash11u(u32(hi * 13.0 + 1.0)); let r1 = hash11u(u32(hi * 13.0 + 2.0)); let r2 = hash11u(u32(hi * 13.0 + 3.0)); let r3 = hash11u(u32(hi * 13.0 + 4.0));
-    // ponto de inserção no galho e direção
+    // attachment point on the branch and direction
     var base = vec2f(0.0, mix(0.12, 0.86, r0));
     var ang = (r1 - 0.5) * 2.0 * 1.25 + select(0.0, sign(r1 - 0.5) * 0.35, kind != 3u);
     if (multi) {
@@ -209,15 +209,15 @@ fn csLeaves(@builtin(global_invocation_id) id: vec3u) {
     let L = lenL * mix(0.7, 1.15, r2) * select(1.0, mix(1.0, 0.7, r0), kind != 3u);
     let W = widL * mix(0.8, 1.2, r3);
     var dir = vec2f(sin(ang), cos(ang));
-    if (kind == 1u) { dir = normalize(vec2f(sin(ang), cos(ang) - 0.9)); }  // eucalipto pende
-    // pecíolo
+    if (kind == 1u) { dir = normalize(vec2f(sin(ang), cos(ang) - 0.9)); }  // eucalyptus droops
+    // petiole
     let tip0 = base + dir * spread * select(0.18, 0.08, multi);
     let dp = sdSeg(q, base, tip0);
     if (kind != 3u && dp.x < 0.003 && best < 0.5) { alpha = 1.0; col = vec3f(0.18, 0.15, 0.08); best = 0.5; ao = 0.8; }
-    // lâmina: coordenadas locais
+    // blade: local coordinates
     let lp = q - tip0;
     var t = dot(lp, dir); var s = dot(lp, vec2f(-dir.y, dir.x));
-    // curvatura da folha (arqueia)
+    // leaf curvature (arches)
     let bend = (r2 - 0.5) * 0.6;
     s -= bend * t * t / max(L, 1e-3);
     let tt = t / L;
@@ -232,14 +232,14 @@ fn csLeaves(@builtin(global_invocation_id) id: vec3u) {
           let ss = s / hw;
           let hue = hash11u(u32(hi * 7.0 + 5.0));
           var c = baseC * mix(0.75, 1.35, hue);
-          c = mix(c, c * vec3f(1.2, 1.08, 0.6), smoothstep(0.6, 1.0, hash11u(u32(hi * 3.0 + 9.0))) * 0.35); // algumas amareladas
+          c = mix(c, c * vec3f(1.2, 1.08, 0.6), smoothstep(0.6, 1.0, hash11u(u32(hi * 3.0 + 9.0))) * 0.35); // some yellowish
           c *= mix(0.85, 1.1, tt);
           let rib = smoothstep(0.08, 0.0, abs(ss)) * 0.25;
           let veins = smoothstep(0.85, 1.0, abs(sin((tt * 9.0 - abs(ss) * 2.5) * PI))) * 0.08 * (1.0 - abs(ss));
           let edgeDark = smoothstep(0.65, 1.0, abs(ss)) * 0.25;
           let blot = (hash11u(u32(hi * 11.0 + 3.0)) - 0.5) * 0.25 * smoothstep(0.3, 0.9, vnoise2(lp * 60.0));
           col = c * (1.0 + rib + veins - edgeDark + blot);
-          // normal: abaulada transversalmente + nervura
+          // normal: domed across + midrib
           let nl = vec2f(-dir.y, dir.x) * (ss * 0.55) + dir * (tt - 0.5) * 0.25;
           nrm = normalize(vec3f(nl.x, nl.y, 1.0));
           trans = mix(0.75, 1.0, hue) * (1.0 - rib * 2.0);
@@ -252,10 +252,10 @@ fn csLeaves(@builtin(global_invocation_id) id: vec3u) {
   textureStore(leafNrm, id.xy, vec4f(nrm.xy * 0.5 + 0.5, trans, ao));
 }
 
-// ---------------- mipmaps genéricos ----------------
+// ---------------- generic mipmaps ----------------
 @group(0) @binding(0) var mipSrc: texture_2d_array<f32>;
 @group(0) @binding(1) var mipDst: texture_storage_2d_array<rgba8unorm, write>;
-@group(0) @binding(2) var<uniform> mipMode: vec4u;   // x: 0 média simples, 1 ponderada por alfa
+@group(0) @binding(2) var<uniform> mipMode: vec4u;   // x: 0 plain average, 1 alpha-weighted
 @compute @workgroup_size(8, 8)
 fn csMip(@builtin(global_invocation_id) id: vec3u) {
   let dd = textureDimensions(mipDst);

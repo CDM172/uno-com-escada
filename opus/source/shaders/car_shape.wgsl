@@ -1,4 +1,4 @@
-// car_shape.wgsl — perfis 2D e janelas do Uno (compartilhado entre SDF e materiais)
+// car_shape.wgsl — 2D profiles and windows of the Uno (shared between SDF and materials)
 fn smin(a: f32, b: f32, k: f32) -> f32 { let h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }
 fn smax(a: f32, b: f32, k: f32) -> f32 { return -smin(-a, -b, k); }
 
@@ -18,7 +18,7 @@ fn sdPoly(p: vec2f, v: ptr<function, array<vec2f, 24>>, n: i32) -> f32 {
   return s * sqrt(d);
 }
 
-// perfil lateral (x, y)
+// side profile (x, y)
 fn sdSide(p: vec2f) -> f32 {
   var v = array<vec2f, 24>();
   v[0] = vec2f(1.80, 0.26); v[1] = vec2f(1.832, 0.50); v[2] = vec2f(1.840, 0.715); v[3] = vec2f(1.828, 0.758);
@@ -29,7 +29,7 @@ fn sdSide(p: vec2f) -> f32 {
   v[20] = vec2f(-1.70, 0.245); v[21] = vec2f(1.70, 0.245);
   return sdPoly(p, &v, 22);
 }
-// planta (x, |z|)
+// plan view (x, |z|)
 fn sdPlan(p: vec2f) -> f32 {
   var v = array<vec2f, 24>();
   v[0] = vec2f(1.86, -0.2); v[1] = vec2f(1.858, 0.45); v[2] = vec2f(1.845, 0.62); v[3] = vec2f(1.81, 0.70);
@@ -38,7 +38,7 @@ fn sdPlan(p: vec2f) -> f32 {
   v[12] = vec2f(-1.80, -0.2);
   return sdPoly(p, &v, 13);
 }
-// seção frontal (|z|, y)
+// front section (|z|, y)
 fn sdFront(p: vec2f) -> f32 {
   var v = array<vec2f, 24>();
   v[0] = vec2f(-0.2, 0.235); v[1] = vec2f(0.69, 0.235); v[2] = vec2f(0.742, 0.29); v[3] = vec2f(0.766, 0.44);
@@ -61,13 +61,13 @@ fn sdWinQuarter(p: vec2f) -> f32 {
 
 fn windows(p: vec3f) -> f32 {
   let az = abs(p.z);
-  // laterais
+  // sides
   let wd = min(sdWinDoor(p.xy), sdWinQuarter(p.xy));
   let side = max(wd, 0.45 - az);
-  // para-brisa: dentro da seção frontal recuada, faixa de altura, metade dianteira
+  // windscreen: inside the inset front section, height band, front half
   let df = sdFront(vec2f(az, p.y));
   let ws = max(max(df + 0.078, max(0.935 - p.y, p.y - 1.37)), max(-p.x - 0.1, p.x - 1.0));
-  // vidro traseiro
+  // rear window
   let rw = max(max(df + 0.09, max(1.005 - p.y, p.y - 1.348)), max(p.x + 1.30, -p.x - 2.0));
   return min(side, min(ws, rw));
 }

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
-// car_sdf.wgsl — carroceria do Uno Mille EP (2 portas) como SDF
-// Local: +X frente, +Y cima, +Z direita; origem no chão entre os eixos.
-// mat: 0 pintura, 1 forração interna, 2 borracha de vedação, 3 preto (caixa de roda/assoalho), 4 para-choque
+// car_sdf.wgsl — Uno Mille EP body (2-door) as an SDF
+// Local: +X forward, +Y up, +Z right; origin on the ground between the axles.
+// mat: 0 paint, 1 interior lining, 2 rubber seal, 3 black (wheel arch/floor), 4 bumper
 // ---------------------------------------------------------------------------
 struct SdfParams { origin: vec4f, cell: vec4f, dims: vec4u };
 @group(0) @binding(0) var<uniform> SP: SdfParams;
@@ -10,7 +10,7 @@ struct SdfParams { origin: vec4f, cell: vec4f, dims: vec4u };
 @group(0) @binding(3) var<storage, read_write> nrmOut: array<vec4f>;
 
 fn bodyOuter(p0: vec3f) -> f32 {
-  // curvaturas sutis por deformação de domínio: coroamento de capô/teto e laterais abauladas
+  // subtle curvature by domain warping: hood/roof crown and bulged sides
   var p = p0;
   let zc = clamp(abs(p0.z) / 0.74, 0.0, 1.0);
   let crownHood = 0.004 * (1.0 - zc * zc) * smoothstep(0.62, 0.8, p0.y) * smoothstep(0.75, 1.0, p0.x);
@@ -24,8 +24,8 @@ fn bodyOuter(p0: vec3f) -> f32 {
   let df = sdFront(vec2f(az, p.y));
   var d = smax(ds, dp, 0.075);
   d = smax(d, df, 0.04);
-  // vinco do capô / teto levemente abaulado já nos perfis
-  // caixas de roda
+  // hood crease / slightly domed roof already in the profiles
+  // wheel arches
   let ax = select(-1.18, 1.18, p.x > 0.0);
   let arch = length(vec2f(p.x - ax, (p.y - 0.295) * 1.04)) - 0.348;
   let archCut = max(arch, 0.47 - az);
@@ -34,25 +34,25 @@ fn bodyOuter(p0: vec3f) -> f32 {
 }
 fn bumper(p: vec3f) -> f32 {
   let az = abs(p.z);
-  // dianteiro
+  // front
   let fq = vec2f(p.x - 1.70, az);
   var plan = sdPlan(vec2f(p.x - 0.04, az * 0.992)) ;
   var bf = max(max(plan + 0.012, abs(p.y - 0.36) - 0.133), 1.52 - p.x) - 0.012;
-  // face levemente arredondada
+  // slightly rounded face
   bf = smax(bf, -(length(vec2f(p.x - 1.18, (p.y - 0.295) * 1.04)) - 0.355), 0.01);
-  // traseiro
+  // rear
   var plan2 = sdPlan(vec2f(p.x + 0.06, az * 0.992));
   var br = max(max(plan2 + 0.012, abs(p.y - 0.375) - 0.133), p.x + 1.50) - 0.012;
   br = smax(br, -(length(vec2f(p.x + 1.18, (p.y - 0.295) * 1.04)) - 0.355), 0.01);
   let b = min(bf, br);
-  // arredonda arestas
+  // rounds the edges
   return b;
 }
 struct SD { d: f32, m: f32 };
 fn carSDF(p: vec3f) -> SD {
   let o = bodyOuter(p);
   let t = 0.036;
-  // cavidade só na cabine (carroceria maciça nas pontas e caixas de roda)
+  // cavity only in the cabin (solid body at the ends and wheel arches)
   let az = abs(p.z);
   let cab = max(max(p.x - 0.84, -p.x - 1.66), max(0.31 - p.y, az - 0.80));
   let rwh = max(length(vec2f(p.x + 1.18, p.y - 0.30)) - 0.41, 0.40 - az);
@@ -63,7 +63,7 @@ fn carSDF(p: vec3f) -> SD {
   shell = smax(shell, -w, 0.016);
   var m = 0.0;
   if (cav > -0.004 && o < -0.004) { m = 1.0; }
-  // interior próximo às caixas de roda / assoalho = preto
+  // interior near the wheel arches / floor = black
   if (m == 1.0 && (p.y < 0.42)) { m = 3.0; }
   if (o > -0.004 && p.y < 0.262) { m = 3.0; }
   let b = bumper(p);
@@ -79,7 +79,7 @@ fn csGrid(@builtin(global_invocation_id) id: vec3u) {
   let s = carSDF(p);
   gridOut[(id.z * SP.dims.y + id.y) * SP.dims.x + id.x] = vec2f(s.d, s.m);
 }
-// projeta pontos na superfície e calcula normais exatas
+// projects points onto the surface and computes exact normals
 @compute @workgroup_size(64)
 fn csRefine(@builtin(global_invocation_id) id: vec3u) {
   let i = id.x;
@@ -98,7 +98,7 @@ fn csRefine(@builtin(global_invocation_id) id: vec3u) {
   ptsIO[i] = vec4f(p, carSDF(p).m);
   nrmOut[i] = vec4f(normalize(g), 0.0);
 }
-// raios contra a superfície externa (vidros): pts = origem (xyz), nrm = direção -> saída: ponto, normal
+// rays against the outer surface (glass): pts = origin (xyz), nrm = direction -> output: point, normal
 @compute @workgroup_size(64)
 fn csRay(@builtin(global_invocation_id) id: vec3u) {
   let i = id.x;
