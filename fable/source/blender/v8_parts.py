@@ -250,11 +250,11 @@ def build_exterior(fast=False):
     asym.mat('black')
     asym.box((xp - 0.006, (y0 + y1) / 2, 0.0), (0.010, y1 - y0 + 0.012, 0.536))
     asym.mat('decal_plate')
-    decal(asym, 'plate_f', (xp, y0, -0.26), (xp, y0, 0.26), (xp, y1, 0.26), (xp, y1, -0.26))
+    decal(asym, 'plate_f', (xp, y0, 0.26), (xp, y0, -0.26), (xp, y1, -0.26), (xp, y1, 0.26))      # seen from the front: image left = +z
     # (the rear plate is the 'plateR' gadget part: it flips down to uncover the rocket)
     asym.mat('decal_badge')
     sxp = lambda z, y: rx(z, y) - 0.003
-    decal(asym, 'script', (sxp(-0.10, 0.700), 0.700, -0.10), (sxp(-0.30, 0.700), 0.700, -0.30), (sxp(-0.30, 0.730), 0.730, -0.30), (sxp(-0.10, 0.730), 0.730, -0.10))
+    decal(asym, 'script', (sxp(-0.30, 0.700), 0.700, -0.30), (sxp(-0.10, 0.700), 0.700, -0.10), (sxp(-0.10, 0.730), 0.730, -0.10), (sxp(-0.30, 0.730), 0.730, -0.30))
 
     def ws_pt(z, s, lift=0.012):
         az = abs(z)

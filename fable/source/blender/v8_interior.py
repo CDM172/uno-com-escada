@@ -316,7 +316,7 @@ def build_gadgets(fast=False):
     y0, y1 = 0.352, 0.463
     pl.pivot = (rx(0.0, y0) - 0.006, y0, 0.0)
     pl.mat('decal_plate')
-    decal(pl, 'plate_r', (rx(0.26, y0) - 0.012, y0, 0.26), (rx(-0.26, y0) - 0.012, y0, -0.26), (rx(-0.26, y1) - 0.012, y1, -0.26), (rx(0.26, y1) - 0.012, y1, 0.26))
+    decal(pl, 'plate_r', (rx(-0.26, y0) - 0.012, y0, -0.26), (rx(0.26, y0) - 0.012, y0, 0.26), (rx(0.26, y1) - 0.012, y1, 0.26), (rx(-0.26, y1) - 0.012, y1, -0.26))   # seen from behind: image left = -z
     pl.mat('black')
     pl.box((rx(0.0, 0.41) - 0.004, 0.408, 0.0), (0.010, 0.128, 0.548))
     out.append(pl)
@@ -346,6 +346,6 @@ def build_gadgets(fast=False):
         ln = math.hypot(xb - xh, yh - yb)
         xx = xb - (ss / ln) * (xb - xh)
         return (xx - 0.010, float(S.windscreen(xx, np.array([az]))[0]) - 0.012, zz)
-    decal(hud, 'hud', wsp(zz1, s0), wsp(zz0, s0), wsp(zz0, s1), wsp(zz1, s1))
+    decal(hud, 'hud', wsp(zz0, s0), wsp(zz1, s0), wsp(zz1, s1), wsp(zz0, s1))                  # seen by the driver: image left = -z
     out.append(hud)
     return out
