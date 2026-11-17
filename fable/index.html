@@ -30,6 +30,8 @@ html,body{margin:0;height:100%;background:#000;overflow:hidden;font:14px/1.4 -ap
 #ui td:first-child{color:#fff;font-weight:600;white-space:nowrap;padding-right:1.3em}
 #ui td.pd{opacity:.7;white-space:nowrap;padding-right:1.3em}
 #cars{display:none;gap:1em;justify-content:center;flex-wrap:wrap;margin:0 0 1.5em}
+#gfx{display:none;gap:.8em;justify-content:center;flex-wrap:wrap;margin:-.6em 0 1.5em}
+#ui #gfx .car{font-size:.82em;padding:.45em 1.1em}
 #ui .car{font-size:1em;font-weight:600;color:#ddd;background:rgba(255,255,255,.1);border:2px solid rgba(255,255,255,.22);border-radius:.6em;padding:.7em 1.4em;margin:0}
 #ui .car:not(.sel):hover{background:rgba(255,255,255,.2)}
 #ui .car.sel{color:#fff;background:rgba(216,53,28,.3);border-color:#ff8a6a;cursor:default}
@@ -51,6 +53,7 @@ html,body{margin:0;height:100%;background:#000;overflow:hidden;font:14px/1.4 -ap
 <h1>Uno with a Ladder</h1>
 <p class="sub" id="sub">Serra da Mata circuit</p>
 <div id="cars"><button class="car" data-car="db5">Aston Martin DB5 · 1964</button><button class="car" data-car="uno">Fiat Uno Mille EP · 1996 · with a ladder</button></div>
+<div id="gfx"><button class="car" data-gfx="full">Full graphics</button><button class="car" data-gfx="fast">Fast graphics (laptops, older PCs)</button></div>
 <div id="res"></div>
 <div class="cols">
 <div><h2>Keyboard</h2><table>
@@ -3051,6 +3054,11 @@ const Q = new URLSearchParams(location.search);
 // Which car is driven: ?car=db5 (Aston Martin DB5, the default) or ?car=uno (the original Fiat Uno with the ladder).
 // The choice is remembered between sessions.
 const CARSEL = (() => { let c = Q.get('car'); try { if (c) localStorage.setItem('car', c); else c = localStorage.getItem('car'); } catch (e) { } return c === 'uno' ? 'uno' : 'db5'; })();
+// Graphics: 'full' renders at the window's size times the screen scaling (up to 2x); 'fast' renders at most 1280x720
+// with no high-DPI scaling, for laptops and older graphics cards. ?gfx=fast or ?gfx=full chooses (the menu does the
+// same) and the choice is remembered. With no choice saved ('auto') the game starts in full and, if the warm-up shows
+// the graphics card is too slow for it, restarts itself in fast (see main()).
+const GFX = (() => { let g = Q.get('gfx'); try { if (g) localStorage.setItem('gfx', g); else g = localStorage.getItem('gfx'); } catch (e) { } return g === 'fast' || g === 'full' ? g : 'auto'; })();
 const BUILD = [];           // construtores de cena registrados pelos outros arquivos: async fn(), executados em ordem por main()
 const GAME = { ready: false, mode: Q.get('scene') || 'game', capture: Q.has('cap'), tick: null, init: null, minFrameMs: 0, gpuWorstMs: 0, ui: false };
 // Jogo aberto por uma pessoa (tela de início, painel, som) × ferramenta (captura, poses, teste, medição): as ferramentas de
@@ -3076,11 +3084,22 @@ async function gpuInit() {
     requiredLimits: { maxColorAttachmentBytesPerSample: Math.min(64, ad.limits.maxColorAttachmentBytesPerSample), maxSampledTexturesPerShaderStage: Math.min(24, ad.limits.maxSampledTexturesPerShaderStage), maxBufferSize: ad.limits.maxBufferSize, maxTextureDimension2D: 8192 }
   });
   G.dev.addEventListener('uncapturederror', e => { console.error('GPU: ' + e.error.message); G.lastErr = e.error.message; });
+  // The graphics card stopped responding (driver reset, out of memory, a frame too long for Windows): say so on screen,
+  // and unless the player chose otherwise, start in fast graphics next time.
+  G.dev.lost.then(i => {
+    if (i.reason === 'destroyed') return;
+    GAME.error = 'GPU device lost: ' + (i.message || i.reason); console.error(GAME.error);
+    if (GFX === 'auto') try { localStorage.setItem('gfx', 'fast'); } catch (e) { }
+    const m = document.getElementById('msg');
+    if (m) m.textContent = 'The graphics card stopped responding (' + (i.message || i.reason) + ').\nClose the window and start the game again' +
+      (GFX === 'fast' ? '. If it keeps happening, update your graphics driver.' : ': it will use fast graphics.');
+  });
   G.canvas = document.getElementById('c');
   const res = (Q.get('res') || '').split('x');
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  G.W = res.length === 2 ? +res[0] : Math.round(innerWidth * dpr);
-  G.H = res.length === 2 ? +res[1] : Math.round(innerHeight * dpr);
+  const dpr = GFX === 'fast' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  const fit = GFX === 'fast' ? Math.min(1, 1280 / innerWidth, 720 / innerHeight) : 1;
+  G.W = res.length === 2 ? +res[0] : Math.round(innerWidth * dpr * fit);
+  G.H = res.length === 2 ? +res[1] : Math.round(innerHeight * dpr * fit);
   G.W = clamp(G.W & ~1, 320, 5120); G.H = clamp(G.H & ~1, 180, 2880);
   G.canvas.width = G.W; G.canvas.height = G.H;
   G.ctx = G.canvas.getContext('webgpu');
@@ -9429,12 +9448,12 @@ function hudStats(on) { HUD.stats = on; HUD.cs.style.display = on ? 'block' : 'n
 // poses, teclas de ferramenta e leitura do controle. Nas ferramentas de trabalho/ (captura, poses, teste, medição) nada
 // disto é ligado: sem menu, sem painel, sem som.
 const ST = { INICIO: 0, JOGO: 1, PAUSA: 2, BENCH: 3, FITA: 4, RESULT: 5, POSE: 6 };
-const UI = { st: ST.INICIO, back: ST.JOGO, el: null, tag: null, res: null, b0: null, b1: null, cars: null, bench: null, benchN: 0, padPrev: 0, padN: 0, pose: -1, stats: false, warm: false };
+const UI = { st: ST.INICIO, back: ST.JOGO, el: null, tag: null, res: null, b0: null, b1: null, cars: null, gfx: null, bench: null, benchN: 0, padPrev: 0, padN: 0, pose: -1, stats: false, warm: false };
 // the best lap is kept per car (the DB5 and the Uno are not in the same league)
 const BEST_KEY = GAD.on ? 'db5-melhor' : 'uno-melhor';
 const $ = id => document.getElementById(id);
 function uiInit() {
-  UI.el = $('ui'); UI.tag = $('tag'); UI.res = $('res'); UI.b0 = $('b0'); UI.b1 = $('b1'); UI.cars = $('cars');
+  UI.el = $('ui'); UI.tag = $('tag'); UI.res = $('res'); UI.b0 = $('b0'); UI.b1 = $('b1'); UI.cars = $('cars'); UI.gfx = $('gfx');
   hudInit(); uiWarmup();
   try { const b = +localStorage.getItem(BEST_KEY); if (b > 20 && b < 600) LAP[2] = b; } catch (e) { /* sem armazenamento local: a melhor volta vale só nesta sessão */ }
   // Start screen: the car that is loaded goes in the subtitle and is marked in the chooser; picking the other one reloads
@@ -9443,6 +9462,12 @@ function uiInit() {
   for (const b of document.querySelectorAll('#cars .car')) {
     const c = b.dataset.car, sel = c === CARSEL; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
     b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('car', c); location.search = q.toString(); };
+  }
+  // Graphics chooser (start screen and pause menu): picking the other mode reloads the page with ?gfx=..., which is saved.
+  const gfxNow = GFX === 'fast' ? 'fast' : 'full';
+  for (const b of document.querySelectorAll('#gfx .car')) {
+    const g = b.dataset.gfx, sel = g === gfxNow; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+    b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('gfx', g); location.search = q.toString(); };
   }
   if (GAD.on) { $('gcol').style.display = ''; $('pk').textContent = '1 to ' + POSES.length; }
   UI.b0.onclick = () => { if (UI.st === ST.INICIO) { sndStart(); uiSet(ST.JOGO); } else uiResume(); };
@@ -9460,6 +9485,7 @@ function uiSet(st) {
   UI.b0.textContent = st === ST.INICIO ? 'Start' : st === ST.RESULT ? 'Back to driving' : 'Resume';
   UI.b1.style.display = st === ST.INICIO ? 'none' : ''; UI.b1.textContent = st === ST.RESULT ? 'Run the benchmark again' : 'Benchmark';
   UI.res.style.display = st === ST.RESULT ? 'block' : 'none'; UI.cars.style.display = st === ST.INICIO ? 'flex' : 'none';
+  if (UI.gfx) UI.gfx.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
   UI.tag.textContent = st === ST.BENCH ? 'Benchmark: 60 s demo lap · Esc cancels' : st === ST.FITA ? 'Demo lap · R takes the wheel · Esc menu' : st === ST.POSE ? 'Pose ' + (UI.pose + 1) + ' · ' + (POSES[UI.pose].label || POSES[UI.pose].nome) + ' · 1 to ' + POSES.length + ' switch · Esc back to driving' : '';
   UI.tag.style.display = UI.tag.textContent ? 'block' : 'none';
   hudShow(st === ST.JOGO || st === ST.FITA || (st === ST.PAUSA && UI.back !== ST.BENCH));
@@ -9638,6 +9664,13 @@ async function main() {
       // na GPU e o tempo de quadro oscila; nesse caso o jogo roda estável a 60 quadros por segundo (um quadro a cada dois
       // do monitor de 120 Hz). ?hz=120 ou ?hz=60 força a escolha.
       GAME.gpuWorstMs = worst; GAME.minFrameMs = Q.get('hz') === '120' ? 0 : (Q.get('hz') === '60' || worst > 6.2) ? 14.6 : 0;
+      // Too slow for this resolution (the heaviest view takes over 20 ms of GPU time, under 50 frames per second) and the
+      // player has not chosen: start again in fast graphics. The choice is saved; the menu switches back.
+      if (GAME.ui && GFX === 'auto' && !Q.has('res') && worst > 20) {
+        setMsg('this graphics card is slow at full resolution: restarting with fast graphics…');
+        const q = new URLSearchParams(location.search); q.set('gfx', 'fast');
+        setTimeout(() => { location.search = q.toString(); }, 600); return;
+      }
     }
     for (let i = 0; i < 8; i++) renderFrame();
     R.cam.first = true;

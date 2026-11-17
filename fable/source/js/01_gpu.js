@@ -3,6 +3,11 @@ const Q = new URLSearchParams(location.search);
 // Which car is driven: ?car=db5 (Aston Martin DB5, the default) or ?car=uno (the original Fiat Uno with the ladder).
 // The choice is remembered between sessions.
 const CARSEL = (() => { let c = Q.get('car'); try { if (c) localStorage.setItem('car', c); else c = localStorage.getItem('car'); } catch (e) { } return c === 'uno' ? 'uno' : 'db5'; })();
+// Graphics: 'full' renders at the window's size times the screen scaling (up to 2x); 'fast' renders at most 1280x720
+// with no high-DPI scaling, for laptops and older graphics cards. ?gfx=fast or ?gfx=full chooses (the menu does the
+// same) and the choice is remembered. With no choice saved ('auto') the game starts in full and, if the warm-up shows
+// the graphics card is too slow for it, restarts itself in fast (see main()).
+const GFX = (() => { let g = Q.get('gfx'); try { if (g) localStorage.setItem('gfx', g); else g = localStorage.getItem('gfx'); } catch (e) { } return g === 'fast' || g === 'full' ? g : 'auto'; })();
 const BUILD = [];           // construtores de cena registrados pelos outros arquivos: async fn(), executados em ordem por main()
 const GAME = { ready: false, mode: Q.get('scene') || 'game', capture: Q.has('cap'), tick: null, init: null, minFrameMs: 0, gpuWorstMs: 0, ui: false };
 // Jogo aberto por uma pessoa (tela de início, painel, som) × ferramenta (captura, poses, teste, medição): as ferramentas de
@@ -28,11 +33,22 @@ async function gpuInit() {
     requiredLimits: { maxColorAttachmentBytesPerSample: Math.min(64, ad.limits.maxColorAttachmentBytesPerSample), maxSampledTexturesPerShaderStage: Math.min(24, ad.limits.maxSampledTexturesPerShaderStage), maxBufferSize: ad.limits.maxBufferSize, maxTextureDimension2D: 8192 }
   });
   G.dev.addEventListener('uncapturederror', e => { console.error('GPU: ' + e.error.message); G.lastErr = e.error.message; });
+  // The graphics card stopped responding (driver reset, out of memory, a frame too long for Windows): say so on screen,
+  // and unless the player chose otherwise, start in fast graphics next time.
+  G.dev.lost.then(i => {
+    if (i.reason === 'destroyed') return;
+    GAME.error = 'GPU device lost: ' + (i.message || i.reason); console.error(GAME.error);
+    if (GFX === 'auto') try { localStorage.setItem('gfx', 'fast'); } catch (e) { }
+    const m = document.getElementById('msg');
+    if (m) m.textContent = 'The graphics card stopped responding (' + (i.message || i.reason) + ').\nClose the window and start the game again' +
+      (GFX === 'fast' ? '. If it keeps happening, update your graphics driver.' : ': it will use fast graphics.');
+  });
   G.canvas = document.getElementById('c');
   const res = (Q.get('res') || '').split('x');
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  G.W = res.length === 2 ? +res[0] : Math.round(innerWidth * dpr);
-  G.H = res.length === 2 ? +res[1] : Math.round(innerHeight * dpr);
+  const dpr = GFX === 'fast' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  const fit = GFX === 'fast' ? Math.min(1, 1280 / innerWidth, 720 / innerHeight) : 1;
+  G.W = res.length === 2 ? +res[0] : Math.round(innerWidth * dpr * fit);
+  G.H = res.length === 2 ? +res[1] : Math.round(innerHeight * dpr * fit);
   G.W = clamp(G.W & ~1, 320, 5120); G.H = clamp(G.H & ~1, 180, 2880);
   G.canvas.width = G.W; G.canvas.height = G.H;
   G.ctx = G.canvas.getContext('webgpu');

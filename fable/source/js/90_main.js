@@ -62,6 +62,13 @@ async function main() {
       // na GPU e o tempo de quadro oscila; nesse caso o jogo roda estável a 60 quadros por segundo (um quadro a cada dois
       // do monitor de 120 Hz). ?hz=120 ou ?hz=60 força a escolha.
       GAME.gpuWorstMs = worst; GAME.minFrameMs = Q.get('hz') === '120' ? 0 : (Q.get('hz') === '60' || worst > 6.2) ? 14.6 : 0;
+      // Too slow for this resolution (the heaviest view takes over 20 ms of GPU time, under 50 frames per second) and the
+      // player has not chosen: start again in fast graphics. The choice is saved; the menu switches back.
+      if (GAME.ui && GFX === 'auto' && !Q.has('res') && worst > 20) {
+        setMsg('this graphics card is slow at full resolution: restarting with fast graphics…');
+        const q = new URLSearchParams(location.search); q.set('gfx', 'fast');
+        setTimeout(() => { location.search = q.toString(); }, 600); return;
+      }
     }
     for (let i = 0; i < 8; i++) renderFrame();
     R.cam.first = true;

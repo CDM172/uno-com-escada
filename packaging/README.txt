@@ -34,6 +34,10 @@ INSTALL ON WINDOWS
 The game opens in its own window (a Chrome/Edge app window with no address bar).
 Press F11 for full screen. Click in the window or press a key to start the sound.
 
+Slow or choppy? Press Esc and pick "Fast graphics (laptops, older PCs)": it draws at
+720p instead of your full screen resolution. The first time you play, the game also
+switches to it by itself if your graphics card is too slow.
+
 If the screen stays black or the game says WebGPU is not available:
 update Chrome/Edge and your graphics driver, then open  chrome://gpu  (or  edge://gpu)
 and check that it says  "WebGPU: Hardware accelerated".
