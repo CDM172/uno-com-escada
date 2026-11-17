@@ -121,7 +121,18 @@ def build_exterior(fast=False):
     ext.mat('mesh')
     _, fs = ext.grid(lambda u, v: (fx(u * 0.505, 0.60) - 0.048, 0.506 + v * 0.210, u * 0.505), 12, 4)
     face_dir(ext, fs, (1, 0, 0))
+    # crosshatch mesh in front of the backing (the drawing shows a fine square mesh across the whole mouth)
     ext.mat('black')
+    for k in range(9):
+        y = 0.522 + k * 0.022
+        zm = 0.497
+        pth = [(fx(z, y) - 0.036, y, z) for z in np.linspace(0.0, zm, 10)]
+        ext.sweep(pth, [(-0.0022, -0.0022), (0.0022, -0.0022), (0.0022, 0.0022), (-0.0022, 0.0022)], up=(1, 0, 0))
+    for k in range(23):
+        z = 0.011 + k * 0.0215
+        y1 = 0.700 + 0.012 * (1 - float(S.sm(0.30, 0.50, z)))
+        pth = [(fx(z, y) - 0.034, y, z) for y in np.linspace(0.515, y1, 6)]
+        ext.sweep(pth, [(-0.0018, -0.0018), (0.0018, -0.0018), (0.0018, 0.0018), (-0.0018, 0.0018)], up=(1, 0, 0))
     ring = []
     for t in np.linspace(0, 1, 40):                                   # outline of the mouth (right half, centre to centre)
         if t < 0.25:
@@ -235,7 +246,11 @@ def build_exterior(fast=False):
     asym = Part('ext_asym')
     asym.mat('decal_plate')
     y0, y1 = 0.318, 0.429
-    decal(asym, 'plate_f', (fx(-0.26, y0) + 0.010, y0, -0.26), (fx(0.26, y0) + 0.010, y0, 0.26), (fx(0.26, y1) + 0.010, y1, 0.26), (fx(-0.26, y1) + 0.010, y1, -0.26))
+    xp = max(fx(z, y) for z in (0.0, 0.13, 0.26) for y in (y0, y1)) + 0.012     # a flat plate stands proud of the curved face
+    asym.mat('black')
+    asym.box((xp - 0.006, (y0 + y1) / 2, 0.0), (0.010, y1 - y0 + 0.012, 0.536))
+    asym.mat('decal_plate')
+    decal(asym, 'plate_f', (xp, y0, -0.26), (xp, y0, 0.26), (xp, y1, 0.26), (xp, y1, -0.26))
     # (the rear plate is the 'plateR' gadget part: it flips down to uncover the rocket)
     asym.mat('decal_badge')
     sxp = lambda z, y: rx(z, y) - 0.003
