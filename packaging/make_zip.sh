@@ -2,6 +2,7 @@
 # Builds the game and packs it into a zip that installs on Windows (Install.cmd) and also plays
 # on macOS and Linux.
 #   sh packaging/make_zip.sh [OUT_DIR]        (default OUT_DIR: dist/)
+#   HTML=build.html sh packaging/make_zip.sh  packs an already built and tested index.html
 # Needs node and zip. Run on Linux (uses GNU sed).
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -17,7 +18,11 @@ D="$STAGE/$NAME"
 mkdir -p "$D/game" "$D/scripts"
 
 # The game itself: one self-contained HTML file, with the DB5 as its window and taskbar icon.
-node "$ROOT/fable/source/build.mjs" --out "$D/game/index.html"
+if [ -n "${HTML:-}" ]; then                 # HTML=path/to/tested-build.html packs that build instead of building
+  cp "$HTML" "$D/game/index.html"
+else
+  node "$ROOT/fable/source/build.mjs" --out "$D/game/index.html"
+fi
 node -e '
 const fs = require("fs"); const [html, png] = process.argv.slice(1);
 let s = fs.readFileSync(html, "utf8");

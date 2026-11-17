@@ -8,7 +8,7 @@ const VEG = {
 const VEG_INST = { arrayStride: 32, stepMode: 'instance', attributes: [{ shaderLocation: 5, offset: 0, format: 'float32x4' }, { shaderLocation: 6, offset: 16, format: 'float32x4' }] };
 
 function vegPlace() {
-  const rnd = mkRng(4711), V = VEG; if (TOWN.on) { V.NC = 84; V.NS = 21; }   // (the town map is bigger: 5.4 km of cells)
+  const rnd = mkRng(4711), V = VEG; if (TOWN.on) { V.NS = Math.ceil(Math.max(TOWN.x1 - TOWN.x0, TOWN.z1 - TOWN.z0) / (V.CELL * 4)) + 1; V.NC = V.NS * 4; }   // (the town map is bigger)
   const half = V.NC * V.CELL / 2; V.x0 = (TOWN.on ? (TOWN.x0 + TOWN.x1) / 2 : TRK.cx) - half; V.z0 = (TOWN.on ? (TOWN.z0 + TOWN.z1) / 2 : TRK.cz) - half;
   let cap = 1 << 17, data = new Float32Array(cap * 8), keys = new Uint32Array(cap), n = 0;
   const push = (x, y, z, s, rot, seed, arch) => {

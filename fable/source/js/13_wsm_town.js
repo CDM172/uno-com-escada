@@ -16,12 +16,14 @@ const TOWN = {
   sdf: null,                             // 2 m: depth (m/4) into water or out of bounds (same grid as HF)
   bcell: 16, bgw: 0, bgh: 0, bstart: null, bitems: null,  // building grid for the collisions
   cedge: null, croom: null,              // circuit: distance to the road edge and room for the autopilot (left, right)
+  towers: null,                          // the Grand Pier pavilion's corner towers from the LIDAR: x, z (cm), top above the deck, deck (dm)
+  walls: [],                             // the sea wall: [ax, az, bx, bz, foot, top] along the landward edge of the beach
   kerb: null,                            // circuit kerbs: per sample, side (-1 left, 1 right, 0 none) and inner distance
 };
 // surface codes of the 1 m raster; TZZ = game zone (ZONE), TZH = height above the terrain for the physics (kerb stones)
-const TZ = { NONE: 0, ROAD: 1, PAVE: 2, HARD: 3, GRASS: 4, SAND: 5, MUD: 6, WOOD: 7, WATER: 8, KERB: 9, PATH: 10, TRACK: 11, GARDEN: 12, FIELD: 13, BLD: 14, OUT: 15 };
-const TZZ = new Uint8Array([2, 0, 6, 6, 2, 3, 4, 4, 4, 1, 6, 3, 2, 2, 6, 4]);
-const TZH = new Float64Array([0, 0, 0.12, 0, 0, 0, 0, 0, 0, 0.02, 0, 0, 0, 0, 0, 0]);
+const TZ = { NONE: 0, ROAD: 1, PAVE: 2, HARD: 3, GRASS: 4, SAND: 5, MUD: 6, WOOD: 7, WATER: 8, KERB: 9, PATH: 10, TRACK: 11, GARDEN: 12, FIELD: 13, BLD: 14, OUT: 15, WALL: 16 };
+const TZZ = new Uint8Array([2, 0, 6, 6, 2, 3, 4, 4, 4, 1, 6, 3, 2, 2, 6, 4, 6]);
+const TZH = new Float64Array([0, 0, 0.12, 0, 0, 0, 0, 0, 0, 0.02, 0, 0, 0, 0, 0, 0, 0]);
 // land cover classes of the bake (tools/osm/bake_wsm.py, LC) → surface code
 const TOWN_LC = [TZ.NONE, TZ.GARDEN, TZ.GRASS, TZ.FIELD, TZ.WOOD, TZ.WOOD, TZ.SAND, TZ.MUD, TZ.WATER, TZ.HARD, TZ.NONE, TZ.GRASS, TZ.GRASS, TZ.GRASS];
 const ROAD_PAVE = [0, 3.0, 2.8, 2.6, 2.6, 2.2, 2.0, 1.6, 0, 0, 0, 0, 0];   // pavement width by road class (m)
@@ -63,7 +65,8 @@ async function townLoad() {
   T.bd = townPolys(A.bn, A.b0, A.bxz, q); T.binfo = A.binfo;
   T.ad = townPolys(A.an, A.a0, A.axz, q); T.ainfo = A.ainfo; T.alvl = A.alvl;
   T.trees = new Float32Array(A.t0.length); for (let i = 0; i < A.t0.length; i++) T.trees[i] = A.t0[i] * q;
-  T.cedge = A.cedge; T.croom = A.croom;
+  T.cedge = A.cedge; T.croom = A.croom; T.towers = A.towers || null; T.spires = A.spires || null;
+  T.pav = M.pavilion && A.pavroof ? Object.assign({ grid: A.pavroof }, M.pavilion) : null;   // the pavilion's roof heights (DSM)
   // building bounding boxes
   const B = T.bd, bb = T.bbox = new Float32Array(B.n * 4);
   for (let i = 0; i < B.n; i++) {
@@ -143,7 +146,7 @@ function townTrackBuild() {
   }
   // start: on Royal Parade, by the pier, in the left lane
   TRK.startS = -14; TRK.startD = -1.6;
-  TRK.shadowR = 2700; TRK.shadowC = [(T.x0 + T.x1) / 2, (T.z0 + T.z1) / 2];
+  TRK.shadowR = Math.max(T.x1 - T.x0, T.z1 - T.z0) / 2 + 150; TRK.shadowC = [(T.x0 + T.x1) / 2, (T.z0 + T.z1) / 2];
   trackGridBuild();
 }
 
@@ -252,8 +255,10 @@ function townRasterBuild() {
   }
   // buildings
   const B = T.bd; for (let b = 0; b < B.n; b++) if (T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11) townFill(B, b, b + 1, TZ.BLD, null);
+  // the sea wall (roads crossing it, the slipways, open it again below)
+  townSeaWalls(); { const W = T.walls, ov = new Uint8Array(17).fill(1); ov[TZ.WATER] = 0; ov[TZ.OUT] = 0; for (let i = 0; i < W.length; i += 6) townCapsule(W[i], W[i + 1], W[i + 2], W[i + 3], 0.7, TZ.WALL, ov); }
   // roads: pavements, then carriageways over them (junctions), paths and tracks only over soft ground
-  const R = T.rd, ri = T.rinfo, soft = new Uint8Array(16), all = new Uint8Array(16).fill(1), pv = new Uint8Array(16);
+  const R = T.rd, ri = T.rinfo, soft = new Uint8Array(17), all = new Uint8Array(17).fill(1), pv = new Uint8Array(17);
   for (const c of [TZ.NONE, TZ.GRASS, TZ.GARDEN, TZ.FIELD, TZ.WOOD, TZ.MUD, TZ.SAND, TZ.HARD]) soft[c] = 1;
   for (const c of [TZ.NONE, TZ.GRASS, TZ.GARDEN, TZ.FIELD, TZ.WOOD, TZ.HARD, TZ.PATH, TZ.TRACK]) pv[c] = 1;
   all[TZ.WATER] = 0; all[TZ.OUT] = 0;
@@ -266,13 +271,39 @@ function townRasterBuild() {
     for (let k = R.off[q]; k < R.off[q + 1] - 1; k++) townCapsule(R.p[k * 2], R.p[k * 2 + 1], R.p[k * 2 + 2], R.p[k * 2 + 3], rad, val, over);
   }
   // circuit kerbs
-  const N = TRK.N, kb = T.kerb, ov = new Uint8Array(16); ov[TZ.ROAD] = 1; ov[TZ.PAVE] = 1; ov[TZ.KERB] = 1;
+  const N = TRK.N, kb = T.kerb, ov = new Uint8Array(17); ov[TZ.ROAD] = 1; ov[TZ.PAVE] = 1; ov[TZ.KERB] = 1;
   for (let i = 0; i < N; i++) {
     const sd = kb[i * 2]; if (!sd) continue; const e = kb[i * 2 + 1], nx = -TRK.tz[i] * sd, nz = TRK.tx[i] * sd;
     townCapsule(TRK.x[i] + nx * (e - 0.45), TRK.z[i] + nz * (e - 0.45), TRK.x[(i + 1) % N] + nx * (e - 0.45), TRK.z[(i + 1) % N] + nz * (e - 0.45), 0.5, TZ.KERB, ov);
   }
   // out of bounds: a 12 m band at the edge of the region
   for (let j = 0; j < zh; j++) for (let i = 0; i < zw; i++) if (i < 12 || j < 12 || i >= zw - 12 || j >= zh - 12) Z[j * zw + i] = TZ.OUT;
+}
+// The sea wall: along the edges of the beach polygons, wherever the ground just inland stands a metre or more above the
+// sand just seaward, a grey stone wall from the sand to a parapet 0.9 m above the promenade (solid; gaps at the slipways).
+function townSeaWalls() {
+  const T = TOWN, A = T.ad, ai = T.ainfo, W = T.walls; let r = 0; W.length = 0;
+  for (let q = 0; q < ai.length / 2; q++) {
+    const c = ai[q * 2], nr = ai[q * 2 + 1];
+    if (c === 6) for (let rr = r; rr < r + nr; rr++) {
+      const k0 = A.off[rr], k1 = A.off[rr + 1], n = k1 - k0; let ar = 0;
+      for (let k = 0; k < n; k++) { const j = k0 + (k + 1) % n; ar += A.p[(k0 + k) * 2] * A.p[j * 2 + 1] - A.p[j * 2] * A.p[(k0 + k) * 2 + 1]; }
+      const sg = ar > 0 ? 1 : -1;      // inward normal = sg * (-ez, ex)
+      for (let k = 0; k < n; k++) {
+        const ax = A.p[(k0 + k) * 2], az = A.p[(k0 + k) * 2 + 1], j = k0 + (k + 1) % n, bx = A.p[j * 2], bz = A.p[j * 2 + 1];
+        const L = Math.hypot(bx - ax, bz - az); if (L < 0.5) continue; const m = Math.ceil(L / 4);
+        const ix = -(bz - az) / L * sg, iz = (bx - ax) / L * sg;
+        for (let s = 0; s < m; s++) {
+          const x0 = ax + (bx - ax) * s / m, z0 = az + (bz - az) * s / m, x1 = ax + (bx - ax) * (s + 1) / m, z1 = az + (bz - az) * (s + 1) / m, mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+          if (mx < T.x0 + 20 || mz < T.z0 + 20 || mx > T.x1 - 20 || mz > T.z1 - 20) continue;
+          const hb = hfAt(mx + ix * 5, mz + iz * 5), hl = Math.max(hfAt(mx - ix * 4, mz - iz * 4), hfAt(mx - ix * 7, mz - iz * 7));
+          if (hl - hb < 1.0) continue;
+          W.push(x0, z0, x1, z1, Math.min(hb, hfAt(mx, mz)) - 0.6, hl + 0.9);
+        }
+      }
+    }
+    r += nr;
+  }
 }
 // grid of building indices (16 m cells) for the collisions
 function townBuildingGrid() {
@@ -290,7 +321,7 @@ function townSdfBuild() {
   const T = TOWN, w = HF.w, h = HF.h, Z = T.zone, zw = T.zw, zh = T.zh, d = new Float32Array(w * h);
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
     const zi = Math.min(zw - 1, i * 2), zj = Math.min(zh - 1, j * 2), c = Z[zj * zw + zi];
-    d[j * w + i] = c === TZ.WATER || c === TZ.OUT ? 1e9 : 0;
+    d[j * w + i] = c === TZ.WATER || c === TZ.OUT || c === TZ.WALL ? 1e9 : 0;
   }
   const a = 2, b = 2 * Math.SQRT2;
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {

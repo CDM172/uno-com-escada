@@ -45,11 +45,11 @@ fn surf(in: V2F, ff: bool) -> Surface {
   let lit = mix(vec3f(0.05, 0.04, 0.025), vec3f(0.04, 0.07, 0.02), nC.g) * (0.7 + 0.5 * nD.r);
   // ---- sand: dry and pale at the top of the beach, darker and wet towards the water
   let wetS = 1.0 - smoothstep(1.2, 4.5, hs + (nB.r - 0.5) * 1.5);
-  var sd = mix(vec3f(0.5, 0.42, 0.29), vec3f(0.27, 0.22, 0.15), wetS) * (0.88 + 0.2 * nC.r) * (0.94 + 0.12 * nD.b * near2);
+  var sd = mix(vec3f(0.46, 0.36, 0.22), vec3f(0.22, 0.17, 0.11), wetS) * (0.88 + 0.2 * nC.r) * (0.94 + 0.12 * nD.b * near2);
   let ripple = sin(dot(xz, vec2f(0.6, 0.8)) * 9.0 + nB.r * 12.0) * wetS * near;
   // ---- mud flats: grey-brown silt, shining where the tide has just gone out, with channels
   let wetM = 1.0 - smoothstep(0.0, 3.5, hs + (nA.g - 0.5) * 2.0);
-  var md = mix(vec3f(0.16, 0.14, 0.11), vec3f(0.08, 0.075, 0.065), wetM) * (0.85 + 0.3 * nB.b) * (0.9 + 0.2 * nC.r);
+  var md = mix(vec3f(0.15, 0.13, 0.1), vec3f(0.075, 0.068, 0.055), wetM) * (0.85 + 0.3 * nB.b) * (0.9 + 0.2 * nC.r);
   // ---- hard standing (yards, paving, car parks)
   var hd = vec3f(0.17, 0.165, 0.155) * (0.75 + 0.4 * nB.r) * (0.85 + 0.3 * nC.b);
   hd = mix(hd, vec3f(0.08, 0.08, 0.085), smoothstep(0.5, 0.7, nA.b) * 0.6);
@@ -57,7 +57,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
   var alb = (g * gr + sd * sa + md * mu + lit * forest + hd * hard) / wsum;
   s.albedo = alb;
   s.rough = (0.9 * gr + mix(0.85, 0.45, wetS) * sa + mix(0.75, 0.2, wetM) * mu + 0.9 * forest + 0.82 * hard) / wsum;
-  s.wet = (wetM * 0.55 * mu + wetS * 0.25 * sa) / wsum;
+  s.wet = (wetM * 0.65 * mu + wetS * 0.45 * sa) / wsum;
   s.sss = 0.15 * gr / wsum;
   var grad = (nC.rg - 0.5) * 0.9 * near + (nD.rg - 0.5) * 1.4 * near2;
   grad = grad * (1.0 - 0.6 * (sa + mu) / wsum) + vec2f(ripple * 0.12, 0.0);

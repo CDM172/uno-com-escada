@@ -182,7 +182,7 @@ fn wallSurf(in: V2F, N0: vec3f) -> Surface {
   else if (style == 4u) { sp = 3.6; ww = 0.85; wh = 3.4; frame = vec3f(0.2, 0.2, 0.2); glazing = 2u; }      // church: lancets
   else if (style == 5u || style == 7u) { glazing = 0u; }                                                    // industrial, garage
   else if (style == 6u) { sp = 3.0; ww = 1.7; wh = 1.5; frame = vec3f(0.3, 0.32, 0.34); }                 // civic
-  else if (style == 8u) { sp = 4.0; ww = 3.2; wh = 2.4; frame = vec3f(0.85, 0.85, 0.83); }                // pier pavilion
+  else if (style == 8u || style == 12u) { glazing = 0u; frame = vec3f(0.86, 0.86, 0.84); }                 // pier pavilion, glazed walkway: bands
   else if (style == 9u) { glazing = 0u; }                                                                   // ruins
   let fl0 = 0.6;
   let kf = floor((v - fl0) / sh); let fv = v - fl0 - kf * sh;
@@ -221,6 +221,18 @@ fn wallSurf(in: V2F, N0: vec3f) -> Surface {
       shop = gl; glass = max(glass, gl * (1.0 - mull)); win = max(win, gl);
     }
   }
+  // the Grand Pier: long bands of blue-green glazing with white mullions (pavilion: every storey; walkway: one band)
+  if ((style == 8u || style == 12u) && L > 1.5) {
+    let lo = select(0.55, 0.85, style == 12u); let hi = select(3.3, 2.75, style == 12u);
+    let ex = min(u - 0.45, L - 0.45 - u);
+    if (ex > 0.0 && v < eave - 0.3) {
+      let bm = smoothstep(-aa, aa, min(ex, min(fv - lo, hi - fv))) * step(0.0, kf);
+      let mull = aaL(fract(u / select(1.6, 1.3, style == 12u)) - 0.5, 0.03, aa * 2.0);
+      win = bm; glass = bm * (1.0 - mull);
+      let rail = aaL(fv - (lo + 0.95), 0.03, aa) * step(0.5, kf) * bm;          // balcony rails on the upper floors
+      glass *= 1.0 - rail;
+    }
+  }
   // door: the first opening of the ground floor of houses and terraces (walls of a front's length)
   if ((style == 0u || style == 1u) && kf < 0.5 && ci == 0.0 && L > 3.8 && L < 13.0 && n >= 1.0) {
     let ex = 0.47 - abs(wu); let ey = min(fv + fl0, 2.15 - fv);
@@ -244,6 +256,7 @@ fn wallSurf(in: V2F, N0: vec3f) -> Surface {
     if (glass > 0.0) {
       let hw2 = hash21(vec2f(ci + bh * 97.0, kf + floor(u / 50.0)));
       var gcol = vec3f(0.035, 0.045, 0.055) * (0.7 + 0.6 * hw2);
+      if (style == 8u || style == 12u) { gcol = vec3f(0.03, 0.07, 0.068) * (0.8 + 0.4 * hw2); }
       let curtain = step(0.62, hw2) * step(fv, 0.95 + wh * (0.25 + 0.6 * fract(hw2 * 7.1)) + 0.95) * (1.0 - shop);
       gcol = mix(gcol, vec3f(0.32, 0.29, 0.24) * (0.6 + 0.6 * fract(hw2 * 13.7)), curtain * 0.7);
       if (shop > 0.0) { gcol = mix(gcol, vec3f(0.12, 0.1, 0.08) * (0.6 + 0.8 * n2.r), 0.35); }

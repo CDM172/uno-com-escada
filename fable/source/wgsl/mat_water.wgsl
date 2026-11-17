@@ -24,8 +24,8 @@ fn surf(in: V2F, ff: bool) -> Surface {
   let grad = ((w1.rg - 0.5) * 0.28 + (w2.rg - 0.5) * 0.22 * fade + (w3.rg - 0.5) * 0.14 * (1.0 - smoothstep(10.0, 120.0, dist))) * amp;
   s.normal = bumpXZ(vec3f(0.0, 1.0, 0.0), grad);
   // silty brown-grey near the shore, greener grey offshore
-  var c = mix(vec3f(0.095, 0.082, 0.06), vec3f(0.03, 0.04, 0.038), smoothstep(0.0, 0.5, depth));
-  c = mix(c, vec3f(0.03, 0.045, 0.05), lake * 0.6);
+  var c = mix(vec3f(0.115, 0.098, 0.07), vec3f(0.07, 0.066, 0.052), smoothstep(0.0, 0.6, depth));
+  c = mix(c, vec3f(0.035, 0.05, 0.05), lake * 0.7);
   c *= 0.9 + 0.2 * w2.b;
   // foam: a broken white line where the water is shallowest
   let foam = (1.0 - smoothstep(0.0, 0.07, dm + (w3.b - 0.5) * 0.05)) * smoothstep(0.4, 0.7, w2.b + w3.r * 0.4) * (1.0 - lake);

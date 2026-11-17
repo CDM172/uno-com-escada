@@ -9,11 +9,16 @@ Inputs
     zoom 15 for the town and zoom 12 for the hills and coasts around it. For the UK these come from the Environment
     Agency LIDAR composite DTM, SRTM, EU-DEM and ETOPO1 (see tilezen/joerd docs/attribution.md). The tiles are cached in
     --dem-cache; --fetch downloads the missing ones (about 250 tiles, 12 MB).
+  * Environment Agency LIDAR composite 1 m DTM and DSM (Open Government Licence v3.0), from the EA's WCS services in
+    British National Grid, 1 km tiles cached in --lidar-cache (--fetch downloads them: about 90 tiles, 380 MB). The DTM
+    gives the town's terrain; DSM - DTM inside each footprint gives the height of the eaves and of the ridge of every
+    building, and the DSM the height of the pier decks. Needs pyproj (OSGB36: its default transformation lands within
+    0.5 m of the LIDAR grid here, measured on 350 footprints).
 
 Command (from the repository root):
-  pip install osmium numpy pillow
-  python3 tools/osm/bake_wsm.py --pbf somerset-latest.osm.pbf --dem-cache /tmp/wsm-dem --fetch \\
-          --out fable/source/js/12_wsm_data.js [--preview /tmp/wsm.png]
+  pip install osmium numpy pillow pyproj
+  python3 tools/osm/bake_wsm.py --pbf somerset-latest.osm.pbf --dem-cache /tmp/wsm-dem --lidar-cache /tmp/wsm-lidar \\
+          --fetch --out fable/source/js/12_wsm_data.js [--preview /tmp/wsm.png]
   node fable/source/build.mjs            # rebuilds fable/index.html with the new data
 
 Output: a JS file with WSM_META (JSON: layout, origin, credits) and WSM_B64 (base64 of a zlib stream holding typed
@@ -32,7 +37,8 @@ ORIGIN_LAT, ORIGIN_LON = 51.3486, -2.9822          # Grand Pier entrance on Roya
 _phi = math.radians(ORIGIN_LAT)
 M_LAT = 111132.954 - 559.822 * math.cos(2 * _phi) + 1.175 * math.cos(4 * _phi)   # metres per degree
 M_LON = 111412.84 * math.cos(_phi) - 93.5 * math.cos(3 * _phi)
-TOWN = (-1400.0, -1900.0, 2600.0, 3300.0)          # x0 z0 x1 z1: buildings, roads, land cover, fine terrain
+TOWN = (-1400.0, -5100.0, 2900.0, 3300.0)          # x0 z0 x1 z1: buildings, roads, land cover, fine terrain
+                                                   # (from Uphill in the south to Sand Point, Sand Bay and Kewstoke)
 NEAR_RES, NEAR_Q = 6.0, 0.1                        # fine terrain grid (m) and height quantum (m)
 FAR_C, FAR_HALF, FAR_RES, FAR_Q = (600.0, 700.0), 20000.0, 100.0, 0.5   # coarse terrain: centre, half size, grid, quantum
 QXY = 0.125                                        # coordinate quantum (m): int16 covers +-4096 m
@@ -100,12 +106,100 @@ class Terrarium:
                 px(x0, y0 + 1) * (1 - u) * v + px(x0 + 1, y0 + 1) * u * v)
 
 
-def grid_heights(dem, x0, z0, res, w, h, zoom, blur):
+class Lidar:
+    """Environment Agency LIDAR composite 1 m DTM and DSM, 1 km tiles in British National Grid (cached GeoTIFFs)"""
+    WCS = {'dtm': ('https://environment.data.gov.uk/spatialdata/lidar-composite-digital-terrain-model-dtm-1m/wcs',
+                   '13787b9a-26a4-4775-8523-806d13af58fc__Lidar_Composite_Elevation_DTM_1m'),
+           'dsm': ('https://environment.data.gov.uk/spatialdata/lidar-composite-digital-surface-model-last-return-dsm-1m/wcs',
+                   '9ba4d5ac-d596-445a-9056-dae3ddec0178__Lidar_Composite_Elevation_LZ_DSM_1m')}
+
+    def __init__(self, cache, fetch):
+        import pyproj
+        self.cache, self.fetch, self.tiles = cache, fetch, {}
+        self.tr = pyproj.Transformer.from_crs('EPSG:4326', 'EPSG:27700', always_xy=True)
+        os.makedirs(cache, exist_ok=True)
+
+    def en(self, xs, zs):
+        lon, lat = unproj(np.asarray(xs, float), np.asarray(zs, float))
+        return self.tr.transform(lon, lat)
+
+    def tile(self, kind, te, tn):
+        k = (kind, te, tn)
+        if k in self.tiles:
+            return self.tiles[k]
+        f = os.path.join(self.cache, f'{kind}_{te}_{tn}.tif')
+        if not os.path.exists(f) and not os.path.exists(f + '.none'):
+            if not self.fetch:
+                sys.exit(f'missing LIDAR tile {f} (run with --fetch)')
+            url, cid = self.WCS[kind]
+            q = (f'{url}?service=WCS&version=2.0.1&request=GetCoverage&CoverageId={cid}&format=image/tiff'
+                 f'&subset=E({te * 1000},{te * 1000 + 1000})&subset=N({tn * 1000},{tn * 1000 + 1000})')
+            data = b''
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(q, timeout=120) as r:
+                        data = r.read()
+                    break
+                except Exception:
+                    data = b''
+            if data[:4] in (b'II*\0', b'MM\0*'):
+                with open(f + '.part', 'wb') as o:
+                    o.write(data)
+                os.replace(f + '.part', f)
+            else:                                   # outside the survey (open sea): no tile
+                open(f + '.none', 'w').close()
+        a = None
+        if os.path.exists(f):
+            a = np.asarray(Image.open(f), dtype=np.float32).copy()
+            a[~np.isfinite(a) | (a < -60) | (a > 600)] = np.nan
+        self.tiles[k] = a
+        return a
+
+    def sample(self, kind, E, N):
+        """nearest 1 m pixel at British National Grid points (NaN where there is no survey)"""
+        E = np.asarray(E, float); N = np.asarray(N, float); out = np.full(E.shape, np.nan, np.float32)
+        te = np.floor(E / 1000).astype(np.int64); tn = np.floor(N / 1000).astype(np.int64)
+        for a, b in sorted(set(zip(te.ravel().tolist(), tn.ravel().tolist()))):
+            m = (te == a) & (tn == b); t = self.tile(kind, a, b)
+            if t is None:
+                continue
+            i = np.clip((E[m] - a * 1000).astype(np.int64), 0, 999); j = np.clip(((b + 1) * 1000 - N[m]).astype(np.int64), 0, 999)
+            out[m] = t[j, i]
+        return out
+
+    def footprint(self, ring, erode=True):
+        """DSM and DTM samples (1 m) inside a local-frame polygon, eroded by a pixel when it is big enough"""
+        from PIL import ImageDraw, ImageFilter
+        E, N = self.en([p[0] for p in ring], [p[1] for p in ring])
+        e0, n1 = math.floor(min(E)) - 1, math.ceil(max(N)) + 1; w = int(math.ceil(max(E)) + 1 - e0); h = int(n1 - math.floor(min(N)) + 1)
+        if w * h > 400 * 400 or w < 1 or h < 1:
+            return None, None
+        img = Image.new('L', (w, h), 0); ImageDraw.Draw(img).polygon([(e - e0, n1 - n) for e, n in zip(E, N)], fill=255)
+        if erode and ring_area(ring) > 40:
+            img = img.filter(ImageFilter.MinFilter(3))
+        m = np.asarray(img) > 127
+        jj, ii = np.nonzero(m)
+        if len(ii) < 4:
+            return None, None
+        pe = e0 + ii + 0.5; pn = n1 - jj - 0.5
+        return self.sample('dsm', pe, pn), self.sample('dtm', pe, pn)
+
+
+def grid_heights(dem, x0, z0, res, w, h, zoom, blur, lidar=None):
     xs = x0 + np.arange(w) * res; zs = z0 + np.arange(h) * res
     XX, ZZ = np.meshgrid(xs, zs)
     H = np.zeros(XX.shape)
     for j0 in range(0, h, 256):                      # in strips (memory)
         H[j0:j0 + 256] = dem.sample(XX[j0:j0 + 256], ZZ[j0:j0 + 256], zoom)
+    if lidar is not None:                            # the 1 m DTM, averaged over each cell (3 x 3 samples); terrain tiles elsewhere
+        for j0 in range(0, h, 128):
+            X = XX[j0:j0 + 128]; Z = ZZ[j0:j0 + 128]; acc = np.zeros(X.shape); cnt = np.zeros(X.shape)
+            for ox in (-res / 3, 0, res / 3):
+                for oz in (-res / 3, 0, res / 3):
+                    E, N = lidar.en(X + ox, Z + oz); v = lidar.sample('dtm', E, N)
+                    ok = np.isfinite(v); acc[ok] += v[ok]; cnt[ok] += 1
+            ok = cnt >= 5
+            H[j0:j0 + 128][ok] = (acc[ok] / cnt[ok])
     if blur:                                         # light smoothing: the LIDAR's micro relief only costs bytes
         k = np.array([1, 4, 6, 4, 1], float); k /= k.sum()
         Hp = np.pad(H, ((0, 0), (2, 2)), mode='edge')
@@ -582,8 +676,27 @@ def building_kind(t, area, lu):
     return KIND['house']
 
 
-def bake_buildings(buildings, roadgrid, lu_lookup, log):
-    out = []
+def point_in_ring(ring, x, z):
+    inside = False; n = len(ring)
+    for i in range(n):
+        x1, z1 = ring[i]; x2, z2 = ring[i - 1]
+        if (z1 > z) != (z2 > z) and x < (x2 - x1) * (z - z1) / (z2 - z1) + x1: inside = not inside
+    return inside
+
+
+# landmark looks (high nibble of the land-use byte): 1 white or cream render (the seafront hotels), 2 red brick with
+# pale stone dressings (the Winter Gardens), 3 Bath stone (Knightstone, the Town Hall), 4 grey stone (churches)
+def landmark_look(t):
+    nm = t.get('name', '')
+    if 'Winter Gardens' in nm: return 2
+    if any(k in nm for k in ('Knightstone', 'Town Hall', 'Blakehay', 'Playhouse')): return 3
+    if t.get('building') in ('church', 'chapel', 'cathedral') or t.get('amenity') == 'place_of_worship': return 4
+    if t.get('tourism') == 'hotel' or 'Hotel' in nm or 'Tropicana' in nm: return 1
+    return 0
+
+
+def bake_buildings(buildings, roadgrid, lu_lookup, log, lidar=None, decks=()):
+    out = []; nl = 0; towers = []; spires = []; pav = None
     for oid, t, polys in buildings:
         ring = polys[0][0]
         if len(ring) > 1 and ring[0] == ring[-1]: ring = ring[:-1]
@@ -623,6 +736,70 @@ def bake_buildings(buildings, roadgrid, lu_lookup, log):
                 h = {4: 13.0, 5: 7.0 + 3 * nz, 7: 2.6, 8: 11.0, 9: 5.0, 11: 3.0}.get(kind, levels * 3.0 + 0.3)
                 if kind == 6: h = 9.0 + 4 * nz if area > 800 else 7.0
         h = max(2.4, min(63.0, h))
+        # LIDAR: DSM - ground inside the footprint gives the eaves (lower part of the roof) and the ridge (top), and tells
+        # a pitched roof from a flat one; on a pier the ground is the deck, not the beach under it
+        rise = None
+        if lidar is not None:
+            dsm, dtm = lidar.footprint(r)
+            deck = next((dy for dr, dy in decks if point_in_ring(dr, cx, cz)), None)
+            if dsm is not None:
+                g = np.full(dsm.shape, deck, np.float32) if deck is not None else dtm
+                v = (dsm - g)[np.isfinite(dsm) & np.isfinite(g)]
+                if v.size >= 6 and np.percentile(v, 95) > 1.6:
+                    p10, p15, p50, p90, p95 = np.percentile(v, [10, 15, 50, 90, 95])
+                    if area < 150 and p95 > 2.2 * p50 + 3: p95 = p90 = p50 + 2.5      # a tree over a small building
+                    p95 = min(p95, 70.0); spread = p95 - p15
+                    if kind in (8, 11):
+                        h = float(p50 if kind == 8 else max(2.6, p50))
+                    elif spread < 0.9 or Wd > 22:                                     # flat roof
+                        h = float(max(2.4, p90)); rise = 0.0
+                    else:
+                        h = float(max(2.4, p15 + 0.3)); rise = float(min(12.0, spread))
+                    nl += 1
+            if kind == 4 and dsm is not None and area > 60:          # a church tower or spire: the tallest point well above the roof
+                E, N = lidar.en([p[0] for p in r], [p[1] for p in r])
+                e0, n1 = math.floor(min(E)), math.ceil(max(N)); w = int(math.ceil(max(E)) - e0) + 1; hh = int(n1 - math.floor(min(N))) + 1
+                ee, nn = np.meshgrid(e0 + np.arange(w) + 0.5, n1 - np.arange(hh) - 0.5)
+                top = (lidar.sample('dsm', ee.ravel(), nn.ravel()) - lidar.sample('dtm', ee.ravel(), nn.ravel())).reshape(hh, w)
+                if np.isfinite(top).any():
+                    jj, ii = np.unravel_index(np.nanargmax(top), top.shape); tmax = float(top[jj, ii])
+                    vv = top[np.isfinite(top)]
+                    if tmax > np.percentile(vv, 90) + 5 and tmax < 75:
+                        inv = __import__('pyproj').Transformer.from_crs('EPSG:27700', 'EPSG:4326', always_xy=True)
+                        lon, lat = inv.transform(e0 + ii + 0.5, n1 - jj - 0.5); x, z = proj(lon, lat)
+                        spires.append((x, z, tmax))
+            if kind == 8 and dsm is not None and deck is not None:
+                # the pavilion: its roof as a grid of heights above the deck (in the frame of its long axis), and the
+                # four corner towers as the slender peaks that stand above the roof around them
+                ang, L8, W8 = obb(r); ca, sa = math.cos(ang), math.sin(ang)
+                us = [x * ca + z * sa for x, z in r]; vs = [-x * sa + z * ca for x, z in r]
+                u0, u1, v0, v1 = min(us), max(us), min(vs), max(vs); GU, GV = 32, 14
+                gu = np.linspace(u0, u1, GU); gv = np.linspace(v0, v1, GV); UU, VV = np.meshgrid(gu, gv)
+                acc = np.zeros(UU.shape)
+                for ou in (-1.2, 0, 1.2):
+                    for ovv in (-1.2, 0, 1.2):
+                        X = (UU + ou) * ca - (VV + ovv) * sa; Z = (UU + ou) * sa + (VV + ovv) * ca; E, N = lidar.en(X, Z)
+                        acc += np.nan_to_num(lidar.sample('dsm', E, N), nan=deck)
+                grid = np.clip((acc / 9 - deck) * 10, 0, 255).astype(np.uint8)
+                pav = dict(u0=u0, u1=u1, v0=v0, v1=v1, ang=ang, gu=GU, gv=GV, grid=grid)
+                E, N = lidar.en([p[0] for p in r], [p[1] for p in r])
+                e0, n1 = math.floor(min(E)), math.ceil(max(N)); w = int(math.ceil(max(E)) - e0) + 1; hh = int(n1 - math.floor(min(N))) + 1
+                ee, nn = np.meshgrid(e0 + np.arange(w) + 0.5, n1 - np.arange(hh) - 0.5)
+                top = np.nan_to_num(lidar.sample('dsm', ee.ravel(), nn.ravel()).reshape(hh, w), nan=-99)
+                cand = []
+                for jj in range(4, hh - 4):
+                    for ii in range(4, w - 4):
+                        v = top[jj, ii]
+                        if v < deck + 8 or v < top[jj - 4:jj + 5, ii - 4:ii + 5].max(): continue
+                        ring_ = np.concatenate([top[jj - 9:jj + 10:18, max(0, ii - 9):ii + 10].ravel(), top[max(0, jj - 9):jj + 10, ii - 9:ii + 10:18].ravel()])
+                        ring_ = ring_[ring_ > -50]
+                        if ring_.size and v - np.median(ring_) > 1.2: cand.append((v - np.median(ring_), v, jj, ii))
+                inv = __import__('pyproj').Transformer.from_crs('EPSG:27700', 'EPSG:4326', always_xy=True)
+                for pk, v, jj, ii in sorted(cand, reverse=True):
+                    lon, lat = inv.transform(e0 + ii + 0.5, n1 - jj - 0.5); x, z = proj(lon, lat)
+                    if all(math.hypot(x - tx, z - tz) > 20 for tx, tz, _, _ in towers): towers.append((x, z, float(v - deck), deck))
+                    if len(towers) == 4: break
+                log(f'pavilion: deck {deck:.1f} m, roof up to {grid.max() / 10:.1f} m above it, towers ' + ', '.join(f'({x:.0f},{z:.0f}) {th:.1f} m' for x, z, th, _ in towers))
         # roof
         shape = t.get('roof:shape', '')
         if shape in ('flat',): roof = 0
@@ -651,10 +828,13 @@ def bake_buildings(buildings, roadgrid, lu_lookup, log):
                 if kind == 0 and L > 1.6 * Wd: ridge = ang
         ridge = math.remainder(ridge, math.pi)
         if ridge < 0: ridge += math.pi
+        if rise is not None:                       # the LIDAR decides flat or pitched
+            if rise < 0.05 and roof in (1, 2) and kind not in (4, 8): roof = 0
+            elif rise >= 1.2 and roof == 0 and Wd < 22: roof = 1
         hc = crc(f'b{oid}')
-        out.append((cx, cz, r, kind, h, roof, ridge, hc, lu))
-    log(f'buildings: {len(out)}')
-    return out
+        out.append((cx, cz, r, kind, h, roof, ridge, hc, lu, rise, landmark_look(t)))
+    log(f'buildings: {len(out)}, {nl} with LIDAR heights, {len(spires)} church towers')
+    return out, towers, spires, pav
 
 
 # ---------------------------------------------------------------- encoding
@@ -679,7 +859,7 @@ def q(v):
 
 
 def enc_polys(polys):
-    """list of point lists -> (counts u16, first points int16 absolute, int16 deltas for the rest); long edges are
+    """list of point lists -> (counts u16, first points int32 absolute, int16 deltas for the rest); long edges are
     split so that every delta fits in int16"""
     cnt, st, d = [], [], []
     for pts in polys:
@@ -697,9 +877,8 @@ def enc_polys(polys):
         cnt.append(n)
     a = np.asarray(d, dtype=np.int64); b = np.asarray(st, dtype=np.int64)
     assert a.size == 0 or (a.min() >= -32768 and a.max() < 32768)
-    assert b.min() >= -32768 and b.max() < 32768
     assert max(cnt) < 65536
-    return np.asarray(cnt, '<u2'), b.astype('<i2'), a.astype('<i2')
+    return np.asarray(cnt, '<u2'), b.astype('<i4'), a.astype('<i2')
 
 
 def morton_key(x, z, cell=64.0):
@@ -715,6 +894,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--pbf', required=True)
     ap.add_argument('--dem-cache', required=True)
+    ap.add_argument('--lidar-cache', help='Environment Agency 1 m LIDAR tiles (DTM, DSM); without it the terrain tiles alone are used')
     ap.add_argument('--fetch', action='store_true')
     ap.add_argument('--out', default=os.path.join(os.path.dirname(__file__), '..', '..', 'fable', 'source', 'js', '12_wsm_data.js'))
     ap.add_argument('--preview')
@@ -722,6 +902,7 @@ def main():
     a = ap.parse_args()
     log = lambda s: print(s, flush=True)
     dem = Terrarium(a.dem_cache, a.fetch)
+    lidar = Lidar(a.lidar_cache, a.fetch) if a.lidar_cache else None
 
     log('reading OSM...')
     if a.osm_pickle and os.path.exists(a.osm_pickle):
@@ -737,7 +918,7 @@ def main():
     # ---- terrain
     log('terrain...')
     nw = int(round((TOWN[2] - TOWN[0]) / NEAR_RES)) + 1; nh = int(round((TOWN[3] - TOWN[1]) / NEAR_RES)) + 1
-    Hn = grid_heights(dem, TOWN[0], TOWN[1], NEAR_RES, nw, nh, 15, True)
+    Hn = grid_heights(dem, TOWN[0], TOWN[1], NEAR_RES, nw, nh, 15, True, lidar)
     fx0, fz0 = FAR_C[0] - FAR_HALF, FAR_C[1] - FAR_HALF; fw = int(2 * FAR_HALF / FAR_RES) + 1
     Hf = grid_heights(dem, fx0, fz0, FAR_RES, fw, fw, 12, False)
     log(f'near {Hn.shape} {Hn.min():.1f}..{Hn.max():.1f} m, far {Hf.shape} {Hf.min():.1f}..{Hf.max():.1f} m')
@@ -783,7 +964,17 @@ def main():
     log(f'road polylines: {len(rd)}')
 
     # ---- buildings
-    bl = bake_buildings(buildings, roadgrid, lu_lookup, log)
+    # pier decks: their height from the DSM (the most common level over the deck outline: the deck, not the pavilion)
+    decks = []
+    if lidar is not None:
+        for oid, c, t, polys in areas:
+            if c != LC['pier']: continue
+            ring = [p for p in polys[0][0]]
+            if len(ring) > 1 and ring[0] == ring[-1]: ring = ring[:-1]
+            dsm, dtm = lidar.footprint(ring, erode=True)
+            v = dsm[np.isfinite(dsm)] if dsm is not None else np.zeros(0)
+            if v.size > 20: decks.append((ring, float(np.percentile(v, 35)))); log(f'pier deck {t.get("name", oid)}: {decks[-1][1]:.2f} m')
+    bl, towers, spires, pav = bake_buildings(buildings, roadgrid, lu_lookup, log, lidar, decks)
     bgrid = SegGrid(24.0)
     for cx, cz, r, *_ in bl:
         for (ax, az), (bx, bz) in zip(r, r[1:] + r[:1]): bgrid.add(ax, az, bx, bz, 0)
@@ -806,6 +997,9 @@ def main():
                 rings.append(rr)
             if not rings: continue
             lvl = 0.0
+            if c == LC['pier']:                    # deck height (the ring was simplified: match by a point inside)
+                for dr, dy in decks:
+                    if point_in_ring(dr, sum(p[0] for p in rings[0]) / len(rings[0]), sum(p[1] for p in rings[0]) / len(rings[0])): lvl = dy
             if c == LC['water']:
                 xs = np.array([p[0] for p in rings[0]]); zs = np.array([p[1] for p in rings[0]])
                 # level: the terrain at the shore, lower quartile (the LIDAR sees the water surface)
@@ -844,7 +1038,10 @@ def main():
     bl.sort(key=lambda b: (morton_key(b[0], b[1]), b[7]))
     cnt, st, d = enc_polys([b[2] for b in bl])
     blob.add('bn', cnt); blob.add('b0', st); blob.add('bxz', d)
-    blob.add('binfo', np.asarray([[b[3], min(255, int(round(b[4] * 4))), b[5], int(round(b[6] / math.pi * 256)) % 256, b[7] & 255, (b[7] >> 8) & 255, {None: 0, 'residential': 1, 'retail': 2, 'industrial': 3}[b[8]], 0] for b in bl], 'u1').ravel())
+    blob.add('binfo', np.asarray([[b[3], min(255, int(round(b[4] * 4))), b[5], int(round(b[6] / math.pi * 256)) % 256, b[7] & 255, (b[7] >> 8) & 255, {None: 0, 'residential': 1, 'retail': 2, 'industrial': 3}[b[8]] | (b[10] << 4), 255 if b[9] is None else min(250, int(round(b[9] * 10)))] for b in bl], 'u1').ravel())
+    if pav is not None: blob.add('pavroof', pav['grid'].ravel())
+    blob.add('spires', np.asarray([[int(round(x * 100)), int(round(z * 100)), int(round(th * 10)), 0] for x, z, th in spires] or [[0, 0, 0, 0]], '<i4').ravel())
+    blob.add('towers', np.asarray([[int(round(x * 100)), int(round(z * 100)), int(round(th * 10)), int(round(dy * 10))] for x, z, th, dy in towers] or [[0, 0, 0, 0]], '<i4').ravel())
     # land cover
     allr = [r for c, rings, lvl in ac for r in rings]
     cnt, st, d = enc_polys(allr)
@@ -862,7 +1059,9 @@ def main():
         'circuit': {'n': int(len(Q)), 'length': round(float(clen), 1), 'streets': cseq},
         'counts': {'roads': len(rd), 'buildings': len(bl), 'areas': len(ac), 'trees': len(tp)},
         'arrays': blob.index,
+        'pavilion': None if pav is None else {k: (round(float(v), 3) if k != 'grid' else None) for k, v in pav.items() if k != 'grid'},
         'credits': ['Map data © OpenStreetMap contributors (ODbL)',
+                    'Contains Environment Agency information © Environment Agency and/or database right (LIDAR composite DTM and DSM, Open Government Licence v3.0)',
                     'Terrain: AWS Terrain Tiles (Mapzen/Tilezen) — United Kingdom terrain data © Environment Agency copyright and/or database right 2015. All rights reserved; SRTM and GMTED2010 terrain data courtesy of the U.S. Geological Survey; ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration; Europe terrain data produced using Copernicus data and information funded by the European Union - EU-DEM layers'],
     }
     b64 = base64.b64encode(comp).decode()
@@ -895,7 +1094,7 @@ def preview(path, Hn, Q, rd, bl, ac, tp):
         d.polygon([T(p) for p in rings[0]], fill=COL.get(c, (255, 0, 255, 100)))
     for part, cls, w, fl, ln in rd:
         d.line([T(p) for p in part], fill=(250, 250, 250, 255) if cls <= 8 else (230, 200, 200, 255), width=max(1, int(w / R)))
-    for cx, cz, r, kind, h, roof, ridge, hc, lu in bl:
+    for cx, cz, r, kind, h, roof, ridge, hc, lu, *_ in bl:
         d.polygon([T(p) for p in r], fill=(int(60 + h * 3), 50, 50, 255))
     pts = [T(p) for p in Q]
     d.line(pts + pts[:1], fill=(255, 0, 0, 255), width=3)

@@ -280,13 +280,14 @@ const _bu = [], _bv = [], _bt = [];
 function townBuilding(mb, b) {
   const T = TOWN, B = T.bd, bi = T.binfo, k0 = B.off[b], n = B.off[b + 1] - k0; if (n < 3) return;
   const kind = bi[b * 8], hgt = bi[b * 8 + 1] * 0.25; let roof = bi[b * 8 + 2]; const ridge = bi[b * 8 + 3] / 256 * PI;
-  const h0 = bi[b * 8 + 4] / 255, h1 = bi[b * 8 + 5] / 255, lu = bi[b * 8 + 6];
+  const h0 = bi[b * 8 + 4] / 255, h1 = bi[b * 8 + 5] / 255, lu = bi[b * 8 + 6] & 15, look = bi[b * 8 + 6] >> 4;   // look: landmark (bake)
   const p = B.p; let gmin = 1e9, gmax = -1e9, cx = 0, cz = 0;
   for (let k = k0; k < k0 + n; k++) { const g = hfAt(p[k * 2], p[k * 2 + 1]); gmin = Math.min(gmin, g); gmax = Math.max(gmax, g); cx += p[k * 2]; cz += p[k * 2 + 1]; }
   cx /= n; cz /= n;
   let base = gmin - 0.5, eaveY = gmax + hgt;
-  for (const d of TOWNW.decks) if (cx > d.x0 && cx < d.x1 && cz > d.z0 && cz < d.z1 && townInRing(d.ring, cx, cz)) { base = d.y - 0.3; eaveY = d.y + hgt; }   // on a pier deck
-  if (kind === 11) {   // shelter: a roof on posts (the long covered seating along the Grand Pier, bus shelters)
+  let onDeck = false;
+  for (const d of TOWNW.decks) if (cx > d.x0 && cx < d.x1 && cz > d.z0 && cz < d.z1 && townInRing(d.ring, cx, cz)) { base = d.y - 0.3; eaveY = d.y + hgt; onDeck = true; }   // on a pier deck
+  if (kind === 11 && !onDeck) {   // shelter: a roof on posts (bus shelters; the one on the Grand Pier is its glazed walkway)
     const us = [], vs = []; for (let k = k0; k < k0 + n; k++) { us.push(p[k * 2]); vs.push(p[k * 2 + 1]); }
     const tris = []; townEarClip(us, vs, n, tris);
     mb.mat(13, 120).color(0.62, 0.64, 0.62, 1);
@@ -304,7 +305,8 @@ function townBuilding(mb, b) {
   const hh = (h0 * 7.31 + h1) % 1;
   if (kind === 5) { wall = pick(TB_WALL.clad, h0); wmat = 3; }
   else if (kind === 4 || kind === 9) { wall = pick(TB_WALL.stone, h0 * 0.66); wmat = 2; storey = 4.5; }
-  else if (kind === 8) { wall = [0.72, 0.72, 0.7]; wmat = 0; storey = 4.0; }
+  else if (kind === 8) { wall = [0.74, 0.74, 0.72]; wmat = 0; storey = 4.2; }
+  else if (kind === 11) { wall = [0.74, 0.74, 0.72]; wmat = 0; storey = 3.0; style = 12; }
   else if (kind === 7) { wall = h0 < 0.6 ? pick(TB_WALL.brick, h1) : pick(TB_WALL.render, h1); wmat = h0 < 0.6 ? 1 : 0; }
   else if (seafront && (kind === 0 || kind === 1 || kind === 2 || kind === 3 || kind === 10)) {
     if (h0 < 0.72) { wall = pick(TB_WALL.render, h1); wmat = 0; } else if (h0 < 0.88) { wall = pick(TB_WALL.stone, h1); wmat = 2; } else { wall = pick(TB_WALL.brick, h1); wmat = 1; }
@@ -317,7 +319,14 @@ function townBuilding(mb, b) {
     if (h0 < 0.55) { wall = pick(TB_WALL.brick, h1); wmat = 1; } else if (h0 < 0.85) { wall = pick(TB_WALL.dash, h1); wmat = 0; } else { wall = pick(TB_WALL.render, h1); wmat = 0; }
     storey = 2.75;
   }
-  if (roof === 0 || roof === 3) rcol = pick(TB_ROOF.flat, hh);
+  // landmarks: the seafront hotels in white or cream render, the Winter Gardens in red brick, Knightstone in Bath stone,
+  // the churches in grey stone
+  if (look === 1) { wall = pick([[0.72, 0.71, 0.67], [0.68, 0.64, 0.54], [0.7, 0.68, 0.6]], h1); wmat = 0; }
+  else if (look === 2) { wall = [0.36, 0.14, 0.08]; wmat = 1; storey = 4.0; }
+  else if (look === 3) { wall = [0.56, 0.47, 0.33]; wmat = 2; }
+  else if (look === 4) { wall = pick([[0.34, 0.33, 0.31], [0.3, 0.29, 0.27]], h1); wmat = 2; }
+  if (kind === 8 || kind === 11) rcol = [0.62, 0.63, 0.62];
+  else if (roof === 0 || roof === 3) rcol = pick(TB_ROOF.flat, hh);
   else if (centre || seafront || kind === 4) { if (hh < 0.75) rcol = pick(TB_ROOF.slate, hh / 0.75); else { rcol = pick(TB_ROOF.tile, (hh - 0.75) * 4); rtile = 1; } }
   else { if (hh < 0.3) rcol = pick(TB_ROOF.slate, hh / 0.3); else { rcol = pick(TB_ROOF.tile, (hh - 0.3) / 0.7); rtile = 1; } }
   // ---- ridge frame and roof function
@@ -326,10 +335,12 @@ function townBuilding(mb, b) {
   let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
   for (let i = 0; i < n; i++) { const x = p[(k0 + i) * 2], z = p[(k0 + i) * 2 + 1], u = x * cr + z * sr, v = -x * sr + z * cr; us[i] = u; vs[i] = v; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
   const uc = (u0 + u1) / 2, vc = (v0 + v1) / 2, hu = (u1 - u0) / 2, hv = (v1 - v0) / 2;
-  if ((roof === 1 || roof === 2) && hv > 9.5 && kind !== 4) roof = 0;
+  const lr = bi[b * 8 + 7] < 255 ? bi[b * 8 + 7] * 0.1 : -1;   // roof rise measured by the LIDAR (DSM - DTM), if any
+  if ((roof === 1 || roof === 2) && hv > (lr >= 0 ? 15 : 9.5) && kind !== 4) roof = 0;
   if (kind === 9) roof = 3;
-  const pitch = kind === 4 ? 1.0 : kind === 8 ? 0.32 : kind <= 1 || kind === 10 ? 0.75 : 0.6;
-  const rise = roof === 1 || roof === 2 ? Math.min(hv * pitch, Math.max(2.2, hgt * 0.55), 7.5) : 0, kk = hv > 0.01 ? rise / hv : 0;
+  if (kind === 8 || kind === 11) roof = 0;   // (the pavilion's curved roof is drawn below)
+  const pitch = kind === 4 ? 1.0 : kind <= 1 || kind === 10 ? 0.75 : 0.6;
+  const rise = roof === 1 || roof === 2 ? (lr > 0.4 ? Math.min(lr, hv * 1.3) : Math.min(hv * pitch, Math.max(2.2, hgt * 0.55), 7.5)) : 0, kk = hv > 0.01 ? rise / hv : 0;
   const hip = roof === 2;
   const fRoof = (u, v) => {
     if (!rise) return 0;
@@ -346,7 +357,8 @@ function townBuilding(mb, b) {
     const L = Math.hypot(bx - ax, bz - az); if (L < 0.05) continue;
     const nx = (bz - az) / L, nz = -(bx - ax) / L;
     const ts = _bt; ts.length = 0; ts.push(0, 1);
-    if (rise) {
+    if (kind === 8 && T.pav) { const m = Math.ceil(L / 2.5); for (let q = 1; q < m; q++) ts.push(q / m); }
+    else if (rise) {
       const lines = hip ? [[0, 1, vc], [1, 0, uc], [1, -1, uc - vc + hu - hv], [1, -1, uc - vc - hu + hv], [1, 1, uc + vc + hu - hv], [1, 1, uc + vc - hu + hv]] : [[0, 1, vc]];
       for (const l of lines) { const den = l[0] * du + l[1] * dv; if (Math.abs(den) < 1e-9) continue; const t = (l[2] - l[0] * ua - l[1] * va) / den; if (t > 1e-4 && t < 1 - 1e-4) ts.push(t); }
       ts.sort((a, b) => a - b);
@@ -354,28 +366,54 @@ function townBuilding(mb, b) {
     mb.mat(10, style, wt, Math.min(255, Math.round(L))).color(wall[0], wall[1], wall[2], bh).weight(Math.min(1, eave / 64));
     for (let q = 0; q < ts.length - 1; q++) {
       const t0 = ts[q], t1 = ts[q + 1];
-      const y0 = (roof === 0 || roof === 3 ? top : eaveY + fRoof(ua + du * t0, va + dv * t0)), y1 = (roof === 0 || roof === 3 ? top : eaveY + fRoof(ua + du * t1, va + dv * t1));
+      let y0 = (roof === 0 || roof === 3 ? top : eaveY + fRoof(ua + du * t0, va + dv * t0)), y1 = (roof === 0 || roof === 3 ? top : eaveY + fRoof(ua + du * t1, va + dv * t1));
+      if (kind === 8 && T.pav) { y0 = base + 0.3 + townPavH(ax + (bx - ax) * t0, az + (bz - az) * t0); y1 = base + 0.3 + townPavH(ax + (bx - ax) * t1, az + (bz - az) * t1); }
       const x0 = ax + (bx - ax) * t0, z0 = az + (bz - az) * t0, x1 = ax + (bx - ax) * t1, z1 = az + (bz - az) * t1;
       const a = mb.v(x0, base, z0, nx, 0, nz, L * t0, 0), bb = mb.v(x1, base, z1, nx, 0, nz, L * t1, 0), c = mb.v(x1, y1, z1, nx, 0, nz, L * t1, y1 - base), d = mb.v(x0, y0, z0, nx, 0, nz, L * t0, y0 - base);
       townQuad(mb, a, bb, c, d, nx, 0, nz);
     }
   }
   mb.weight(0);
-  // the Grand Pier's pavilion: four corner towers with pointed caps
-  if (kind === 8) {
-    for (const [cu, cv] of [[u0 + 2.5, v0 + 2.5], [u1 - 2.5, v0 + 2.5], [u0 + 2.5, v1 - 2.5], [u1 - 2.5, v1 - 2.5]]) {
-      const x = toX(cu, cv), z = toZ(cu, cv), ty = eaveY + 3.2;
-      mb.push(m4basis(m4(), cr, 0, sr, 0, 1, 0, -sr, 0, cr, x, 0, z));
-      mb.mat(15).color(0.74, 0.74, 0.72, 1); mb.box(0, (base + ty) / 2, 0, 5, ty - base, 5);
-      mb.mat(13, 90).color(0.16, 0.24, 0.3, 1);
-      const apex = mb.v(0, ty + 4.5, 0, 0, 1, 0, 0, 0);
-      for (let q = 0; q < 4; q++) {
-        const a0 = q * PI / 2 + PI / 4, a1 = a0 + PI / 2, r = 3.4, nxq = Math.cos(a0 + PI / 4), nzq = Math.sin(a0 + PI / 4);
-        const p0 = mb.v(Math.cos(a0) * r, ty, Math.sin(a0) * r, nxq, 0.6, nzq, 0, 0), p1 = mb.v(Math.cos(a1) * r, ty, Math.sin(a1) * r, nxq, 0.6, nzq, 1, 0);
-        townTri(mb, p0, p1, apex, nxq, 0.6, nzq);
-      }
-      mb.pop();
+  // the Grand Pier's pavilion (2010): a long white hall under a curved roof, four slim round towers with grey-green domes
+  if (kind === 8 && T.pav) {
+    const P = T.pav, ca = Math.cos(P.ang), sa = Math.sin(P.ang), gu = P.gu, gv = P.gv, dy = base + 0.3, ring = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) { ring[i * 2] = p[(k0 + i) * 2]; ring[i * 2 + 1] = p[(k0 + i) * 2 + 1]; }
+    const X = (i, j) => { const u = P.u0 + (P.u1 - P.u0) * i / (gu - 1), v = P.v0 + (P.v1 - P.v0) * j / (gv - 1); return [u * ca - v * sa, u * sa + v * ca]; };
+    const Hg = (i, j) => P.grid[Math.min(gv - 1, Math.max(0, j)) * gu + Math.min(gu - 1, Math.max(0, i))] * 0.1;
+    mb.mat(13, 90).color(0.7, 0.71, 0.7, 1);
+    const vid = new Int32Array(gu * gv).fill(-1);
+    const V = (i, j) => { const k = j * gu + i; if (vid[k] < 0) { const [x, z] = X(i, j), du = (P.u1 - P.u0) / (gu - 1), dv = (P.v1 - P.v0) / (gv - 1); const gx = (Hg(i + 1, j) - Hg(i - 1, j)) / (2 * du), gz = (Hg(i, j + 1) - Hg(i, j - 1)) / (2 * dv); vid[k] = mb.v(x, dy + Math.max(0.6, Hg(i, j)), z, -(gx * ca - gz * sa), 1, -(gx * sa + gz * ca), i, j); } return vid[k]; };
+    for (let j = 0; j < gv - 1; j++) for (let i = 0; i < gu - 1; i++) {
+      const [cx2, cz2] = X(i + 0.5, j + 0.5), hc = (Hg(i, j) + Hg(i + 1, j) + Hg(i, j + 1) + Hg(i + 1, j + 1)) / 4;
+      if (hc < 2.5 || !townInRing(ring, cx2, cz2)) continue;
+      townQuad(mb, V(i, j), V(i + 1, j), V(i + 1, j + 1), V(i, j + 1), 0, 1, 0);
     }
+    townPavTowers(mb, base, eaveY, u0, u1, v0, v1, toX, toZ);
+    return;
+  }
+  if (kind === 8) {
+    const ry = 3.2, nseg = 14, ov = 0.8;
+    mb.mat(11, 2).color(0.66, 0.68, 0.68, bh);
+    for (let q = 0; q < nseg; q++) {
+      const va = v0 - ov + (hv * 2 + ov * 2) * q / nseg, vb = v0 - ov + (hv * 2 + ov * 2) * (q + 1) / nseg;
+      const ya = eaveY + ry * (1 - Math.pow((va - vc) / (hv + ov), 2)), yb = eaveY + ry * (1 - Math.pow((vb - vc) / (hv + ov), 2));
+      const gy = (ya - yb) / (vb - va), nl = 1 / Math.hypot(gy, 1), nxq = -(-sr) * gy * nl, nzq = -(cr) * gy * nl;
+      const p0 = mb.v(toX(u0 - ov, va), ya, toZ(u0 - ov, va), -nxq, nl, -nzq, u0, va), p1 = mb.v(toX(u1 + ov, va), ya, toZ(u1 + ov, va), -nxq, nl, -nzq, u1, va);
+      const p2 = mb.v(toX(u1 + ov, vb), yb, toZ(u1 + ov, vb), -nxq, nl, -nzq, u1, vb), p3 = mb.v(toX(u0 - ov, vb), yb, toZ(u0 - ov, vb), -nxq, nl, -nzq, u0, vb);
+      townQuad(mb, p0, p1, p2, p3, -nxq, nl, -nzq); townQuad(mb, p0, p3, p2, p1, nxq, -nl, nzq);
+    }
+    // the gable ends of the vault
+    mb.mat(10, 8, (0 << 6) | 42, Math.min(255, Math.round(hv * 2))).color(0.74, 0.74, 0.72, bh).weight(Math.min(1, (eaveY + ry - base) / 64));
+    for (const ue of [u0, u1]) {
+      const sg = ue === u0 ? -1 : 1, enx = cr * sg, enz = sr * sg, c0 = mb.v(toX(ue, vc), eaveY, toZ(ue, vc), enx, 0, enz, hv, eaveY - base);
+      for (let q = 0; q < nseg; q++) {
+        const va = v0 + hv * 2 * q / nseg, vb = v0 + hv * 2 * (q + 1) / nseg;
+        const pa = mb.v(toX(ue, va), eaveY + ry * (1 - Math.pow((va - vc) / (hv + ov), 2)), toZ(ue, va), enx, 0, enz, va - v0, eaveY - base), pb = mb.v(toX(ue, vb), eaveY + ry * (1 - Math.pow((vb - vc) / (hv + ov), 2)), toZ(ue, vb), enx, 0, enz, vb - v0, eaveY - base);
+        townTri(mb, c0, pa, pb, enx, 0, enz);
+      }
+    }
+    mb.weight(0);
+    townPavTowers(mb, base, eaveY, u0, u1, v0, v1, toX, toZ);
   }
   // ---- roof
   const tris = [];
@@ -412,6 +450,36 @@ function townBuilding(mb, b) {
     for (let q = 0; q < tris.length; q += 3) townTri(mb, v0i + tris[q], v0i + tris[q + 1], v0i + tris[q + 2], nx, ny, nz);
   }
 }
+// the pavilion's slim round towers with grey-green domes: where the LIDAR saw them, else at the corners of the hall
+function townPavTowers(mb, base, eaveY, u0, u1, v0, v1, toX, toZ) {
+  const TW = TOWN.towers, tw = [];
+  if (TW && TW.length >= 8 && TW[2] > 0) for (let q = 0; q < TW.length; q += 4) if (TW[q + 2] > 120) tw.push([TW[q] * 0.01, TW[q + 1] * 0.01, TW[q + 3] * 0.1 + TW[q + 2] * 0.1]);
+  if (tw.length === 3) {   // the towers stand at the corners of a rectangle: the missing one is opposite the right-angle corner
+    let best = 0, bd = 1e9;
+    for (let k = 0; k < 3; k++) { const a = tw[k], b = tw[(k + 1) % 3], c = tw[(k + 2) % 3], d = Math.abs((b[0] - a[0]) * (c[0] - a[0]) + (b[1] - a[1]) * (c[1] - a[1])); if (d < bd) { bd = d; best = k; } }
+    const a = tw[best], b = tw[(best + 1) % 3], c = tw[(best + 2) % 3];
+    tw.push([b[0] + c[0] - a[0], b[1] + c[1] - a[1], Math.max(b[2], c[2])]);
+  }
+  if (tw.length < 4) { tw.length = 0; for (const [cu, cv] of [[u0 + 1.5, v0 + 1.5], [u1 - 1.5, v0 + 1.5], [u0 + 1.5, v1 - 1.5], [u1 - 1.5, v1 - 1.5]]) tw.push([toX(cu, cv), toZ(cu, cv), eaveY + 9]); }
+  for (const [x, z, top] of tw) {
+    const rt = 2.3, ycap = top - 3.2;
+    mb.mat(15).color(0.78, 0.78, 0.76, 1); mb.cyl(x, base, z, rt, ycap, rt, 18, false, false);
+    mb.mat(13, 60).color(0.9, 0.9, 0.88, 1); mb.cyl(x, ycap, z, rt + 0.35, ycap + 0.35, rt + 0.35, 18, true, true);
+    mb.mat(15).color(0.6, 0.66, 0.64, 1); mb.cyl(x, ycap + 0.35, z, rt * 0.8, ycap + 1.1, rt * 0.8, 14, false, false);
+    mb.mat(13, 70).color(0.22, 0.3, 0.28, 1);
+    const prof = []; for (let q = 0; q <= 8; q++) { const a = q / 8 * PI / 2; prof.push([ycap + 1.1 + Math.sin(a) * 2.0, rt * 0.95 * Math.cos(a) + 0.02]); }
+    mb.push(m4mul(m4(), m4translate(m4(), x, 0, z), m4rotZ(m4(), PI / 2))); mb.lathe(prof, 16); mb.pop();
+    mb.cyl(x, ycap + 3.0, z, 0.08, top + 0.6, 0.02, 6, false, false);
+  }
+}
+// the pavilion's roof height above its deck (DSM grid, bilinear), 0 outside the grid
+function townPavH(x, z) {
+  const P = TOWN.pav, ca = Math.cos(P.ang), sa = Math.sin(P.ang), u = x * ca + z * sa, v = -x * sa + z * ca;
+  const fi = clamp((u - P.u0) / (P.u1 - P.u0) * (P.gu - 1), 0, P.gu - 1.001), fj = clamp((v - P.v0) / (P.v1 - P.v0) * (P.gv - 1), 0, P.gv - 1.001);
+  const i = fi | 0, j = fj | 0, a = fi - i, b = fj - j, G = P.grid, w = P.gu;
+  const h = ((G[j * w + i] * (1 - a) + G[j * w + i + 1] * a) * (1 - b) + (G[(j + 1) * w + i] * (1 - a) + G[(j + 1) * w + i + 1] * a) * b) * 0.1;
+  return h < 2.5 ? 1.1 : h;   // below a storey: a parapet round the open deck
+}
 function townInRing(ring, x, z) {
   let inside = false; const n = ring.length / 2;
   for (let i = 0, j = n - 1; i < n; j = i++) { const zi = ring[i * 2 + 1], zj = ring[j * 2 + 1]; if ((zi > z) !== (zj > z) && x < (ring[j * 2] - ring[i * 2]) * (z - zi) / (zj - zi) + ring[i * 2]) inside = !inside; }
@@ -429,7 +497,7 @@ function townPiersBuild(mb, rs) {
       const k0 = A.off[r], k1 = A.off[r + 1], n = k1 - k0, ring = new Float32Array(n * 2);
       let sx = -1e9, sz = 0, x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
       for (let k = 0; k < n; k++) { const x = A.p[(k0 + k) * 2], z = A.p[(k0 + k) * 2 + 1]; ring[k * 2] = x; ring[k * 2 + 1] = z; if (x > sx) { sx = x; sz = z; } x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
-      const y = hfAt(sx + 4, sz) + 0.6; TOWNW.decks.push({ ring, y, x0, z0, x1, z1 });
+      const y = T.alvl[i] > 0 ? T.alvl[i] * 0.1 : hfAt(sx + 4, sz) + 0.6; TOWNW.decks.push({ ring, y, x0, z0, x1, z1 });   // (LIDAR DSM)
       const i0 = mb.ni, us = [], vs = []; let ar = 0;
       for (let k = 0; k < n; k++) { us.push(ring[k * 2]); vs.push(ring[k * 2 + 1]); const j = (k + 1) % n; ar += ring[k * 2] * ring[j * 2 + 1] - ring[j * 2] * ring[k * 2 + 1]; }
       if (ar < 0) { us.reverse(); vs.reverse(); }
@@ -452,11 +520,20 @@ function townPiersBuild(mb, rs) {
         for (let q = 0; q < np; q++) { const f = q / np; post(us[k] + ex * f - nx * 0.15, y, vs[k] + ez * f - nz * 0.15, y + 1.05, 0.035, 5); }
         mb.tube([[us[k] - nx * 0.15, y + 1.05, vs[k] - nz * 0.15], [us[j] - nx * 0.15, y + 1.05, vs[j] - nz * 0.15]], 0.04, 5);
       }
-      // piles: a grid inside the deck outline, down into the beach
-      mb.mat(13, 160).color(0.05, 0.05, 0.055, 1);
-      for (let px = Math.ceil(x0 / 7.5) * 7.5; px < x1; px += 7.5) for (let pz = Math.ceil(z0 / 4.5) * 4.5; pz < z1; pz += 4.5) {
-        if (!townInRing(ring, px, pz) || px > sx - 6) continue;
-        post(px, hfAt(px, pz) - 1.5, pz, y - 0.85, 0.22, 8);
+      // trestles: rows of dark cast-iron legs across the deck every 6 m, a girder on top and cross-bracing between the legs
+      for (let px = Math.ceil(x0 / 6) * 6; px < x1; px += 6) {
+        if (px > sx - 5) continue;
+        const legs = [];
+        for (let pz = Math.ceil(z0 / 3.4) * 3.4; pz < z1; pz += 3.4) if (townInRing(ring, px, pz)) legs.push(pz);
+        if (!legs.length) continue;
+        mb.mat(13, 170).color(0.055, 0.04, 0.032, 1);
+        for (const pz of legs) post(px, hfAt(px, pz) - 1.5, pz, y - 0.85, 0.16, 7);
+        const za = legs[0] - 0.3, zb = legs[legs.length - 1] + 0.3;
+        mb.push(m4translate(m4(), px, 0, 0)); mb.box(0, y - 1.15, (za + zb) / 2, 0.35, 0.6, zb - za); mb.pop();
+        for (let q = 0; q + 1 < legs.length; q++) {
+          const g0 = hfAt(px, legs[q]), g1 = hfAt(px, legs[q + 1]), lo = Math.max(g0, g1) + 0.6, hi = y - 1.4; if (hi - lo < 1) continue;
+          mb.tube([[px, lo, legs[q]], [px, hi, legs[q + 1]]], 0.05, 4); mb.tube([[px, hi, legs[q]], [px, lo, legs[q + 1]]], 0.05, 4);
+        }
       }
       if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 500); }
     }
@@ -501,6 +578,53 @@ function townPiersBuild(mb, rs) {
     }
     if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 500); }
   }
+}
+
+// ---------------------------------------------------------------- church towers and spires (where the DSM rises well above the roof)
+function townSpiresBuild(mb, rs) {
+  const S = TOWN.spires; if (!S || S.length < 4 || !S[2]) return;
+  const i0 = mb.ni;
+  for (let i = 0; i < S.length; i += 4) {
+    const x = S[i] * 0.01, z = S[i + 1] * 0.01, g = hfAt(x, z), top = g + S[i + 2] * 0.1, hgt = top - g; if (hgt < 10) continue;
+    const spire = hgt > 26, tt = spire ? Math.max(g + 10, top - Math.min(22, hgt * 0.45)) : top, w = 5.2;
+    mb.mat(10, 4, (2 << 6) | 45, 5).color(0.34, 0.33, 0.31, 0.3).weight(Math.min(1, (tt - g) / 64));
+    mb.box(x, (g - 0.5 + tt) / 2, z, w, tt - g + 0.5, w);
+    mb.weight(0);
+    if (spire) {   // a slate-grey stone spire with a weathervane rod
+      mb.mat(15).color(0.3, 0.3, 0.3, 1); mb.cyl(x, tt, z, w * 0.62, top, 0.05, 8, true, false);
+      mb.mat(13, 60).color(0.25, 0.22, 0.1, 1); mb.cyl(x, top, z, 0.04, top + 1.6, 0.04, 4, false, false);
+    } else {       // a parapet and four pinnacles
+      mb.mat(15).color(0.38, 0.37, 0.34, 1);
+      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) mb.cyl(x + dx * (w / 2 - 0.3), tt, z + dz * (w / 2 - 0.3), 0.32, tt + 2.2, 0.04, 6, true, false);
+    }
+  }
+  if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 600); }
+}
+
+// ---------------------------------------------------------------- the sea wall (TOWN.walls, from townSeaWalls)
+// grey coursed stone from the sand to a coping 0.9 m above the promenade
+function townSeaWallBuild(mb, rs) {
+  const W = TOWN.walls, i0 = mb.ni;
+  for (let i = 0; i < W.length; i += 6) {
+    const ax = W[i], az = W[i + 1], bx = W[i + 2], bz = W[i + 3], foot = W[i + 4], top = W[i + 5], L = Math.hypot(bx - ax, bz - az); if (L < 0.2) continue;
+    const tx = (bx - ax) / L, tz = (bz - az) / L, mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    let nx = -tz, nz = tx; if (hfAt(mx + nx * 4, mz + nz * 4) > hfAt(mx - nx * 4, mz - nz * 4)) { nx = -nx; nz = -nz; }   // n: towards the beach
+    const th = 0.55, bxo = -nx * th, bzo = -nz * th, back = Math.min(hfAt(mx - nx * 1.5, mz - nz * 1.5), top - 0.9) - 0.3;
+    const u0 = ax * tx + az * tz, u1 = u0 + L;
+    mb.mat(10, 9, (2 << 6) | 30, 255).color(0.31, 0.3, 0.28, 0.5).weight(0);
+    let a = mb.v(ax, foot, az, nx, 0, nz, u0, 0), b = mb.v(bx, foot, bz, nx, 0, nz, u1, 0), c = mb.v(bx, top - 0.12, bz, nx, 0, nz, u1, top - 0.12 - foot), d = mb.v(ax, top - 0.12, az, nx, 0, nz, u0, top - 0.12 - foot);
+    townQuad(mb, a, b, c, d, nx, 0, nz);
+    a = mb.v(ax + bxo, back, az + bzo, -nx, 0, -nz, u0, 0); b = mb.v(bx + bxo, back, bz + bzo, -nx, 0, -nz, u1, 0); c = mb.v(bx + bxo, top - 0.12, bz + bzo, -nx, 0, -nz, u1, top - 0.12 - back); d = mb.v(ax + bxo, top - 0.12, az + bzo, -nx, 0, -nz, u0, top - 0.12 - back);
+    townQuad(mb, a, b, c, d, -nx, 0, -nz);
+    // coping: a pale dressed stone cap, a little proud of the wall
+    mb.mat(15).color(0.42, 0.4, 0.36, 1);
+    const ox = nx * 0.08, oz = nz * 0.08;
+    a = mb.v(ax + ox, top, az + oz, 0, 1, 0, 0, 0); b = mb.v(bx + ox, top, bz + oz, 0, 1, 0, 0, 0); c = mb.v(bx + bxo - ox, top, bz + bzo - oz, 0, 1, 0, 0, 0); d = mb.v(ax + bxo - ox, top, az + bzo - oz, 0, 1, 0, 0, 0);
+    townQuad(mb, a, b, c, d, 0, 1, 0);
+    a = mb.v(ax + ox, top - 0.14, az + oz, nx, 0, nz, 0, 0); b = mb.v(bx + ox, top - 0.14, bz + oz, nx, 0, nz, 0, 0); c = mb.v(bx + ox, top, bz + oz, nx, 0, nz, 0, 0); d = mb.v(ax + ox, top, az + oz, nx, 0, nz, 0, 0);
+    townQuad(mb, a, b, c, d, nx, 0, nz);
+  }
+  if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 400); }
 }
 
 // ---------------------------------------------------------------- the circuit: start line, kerbs, gantry
@@ -618,7 +742,7 @@ function townTvCams() {
 function townVegPlace(push) {
   const T = TOWN, rnd = mkRng(5153), Z = T.zone, zw = T.zw, zh = T.zh;
   const zoneAt = (x, z) => { if (x < T.x0 || z < T.z0) return TZ.OUT; const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i >= zw || j >= zh ? TZ.OUT : Z[j * zw + i]; };
-  const hard = new Uint8Array(16); for (const c of [TZ.BLD, TZ.ROAD, TZ.WATER, TZ.OUT, TZ.KERB, TZ.PAVE, TZ.SAND, TZ.MUD]) hard[c] = 1;
+  const hard = new Uint8Array(17); for (const c of [TZ.BLD, TZ.ROAD, TZ.WATER, TZ.OUT, TZ.KERB, TZ.PAVE, TZ.SAND, TZ.MUD, TZ.WALL]) hard[c] = 1;
   const clear = (x, z, r) => !hard[zoneAt(x, z)] && !hard[zoneAt(x + r, z)] && !hard[zoneAt(x - r, z)] && !hard[zoneAt(x, z + r)] && !hard[zoneAt(x, z - r)];
   const tree = (x, z, s, arch) => push(x, hfAt(x, z) - 0.25, z, s, rnd() * TAU, rnd(), arch);
   // OSM trees: street trees and the rows along the Boulevard and the parks (they stand on pavements: only buildings and
@@ -680,6 +804,8 @@ function townWorldBuild() {
     for (const b of tiles[k][1]) townBuilding(mb, b);
     if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 420); }
   }
+  townSeaWallBuild(mb, rs);
+  townSpiresBuild(mb, rs);
   townCircuitBuild(mb, rs);
   TOWNW.stats.town = mb.ni / 3; TOWNW.stats.ranges = rs.r.length;
   rs.upload(mb);
