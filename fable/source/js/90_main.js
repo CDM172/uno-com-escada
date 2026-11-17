@@ -40,11 +40,11 @@ function buildTestScene() {
 async function main() {
   try {
     await gpuInit();
-    setMsg('gerando circuito…'); await new Promise(r => setTimeout(r));
+    setMsg('building the circuit…'); await new Promise(r => setTimeout(r));
     trackBuild(); heightFieldBuild(); worldMapBuild(); aiBuild();   // aiBuild define TRK.line (trajetória) antes dos construtores de cena
     rendererInit();
-    setMsg('gerando céu…'); await skyInit();
-    setMsg('gerando cenário…'); await new Promise(r => setTimeout(r));
+    setMsg('building the sky…'); await skyInit();
+    setMsg('building the scenery…'); await new Promise(r => setTimeout(r));
     if (GAME.mode === 'test') buildTestScene();
     if (GAME.mode === 'placeholder') { buildPlaceholderWorld(); GAME.init = () => { const p = trackPos(40, 0, new Float64Array(5)); setCamera(p[0] - 12, p[1] + 3, p[2] + 4, p[0] + 30, p[1] + 1, p[2], 0.9); R.cube.pos.set([p[0], p[1] + 1.2, p[2]]); }; }
     for (const b of BUILD) await b();
@@ -56,7 +56,7 @@ async function main() {
     else { setCamera(6, 2.2, 7, 0, 0.6, 0, 0.9); R.cube.pos.set([0, 1.2, 0]); }
     // aquece o cubemap de ambiente e calcula a luz ambiente (SH) a partir dele; duas rodadas para incluir o rebote
     for (let k = 0; k < 2; k++) { for (let i = 0; i < 6; i++) renderFrame(); await computeSH(); }
-    if (GAME.prewarm) {
+    if (GAME.prewarm && !Q.has('nowarm')) {   // ?nowarm skips the GPU warm-up (test harness on a software GPU)
       const worst = await GAME.prewarm(); await computeSH();
       // Cadência: a 120 Hz só sobram 8,3 ms por quadro. Se a vista mais pesada não cabe com folga, os quadros se enfileiram
       // na GPU e o tempo de quadro oscila; nesse caso o jogo roda estável a 60 quadros por segundo (um quadro a cada dois
@@ -69,7 +69,7 @@ async function main() {
     if (GAME.ui) uiInit();
     GAME.ready = true;
     if (!GAME.capture) requestAnimationFrame(rafLoop);
-  } catch (e) { setMsg('erro: ' + e.message); console.error(e); GAME.error = e.message; }
+  } catch (e) { setMsg('error: ' + e.message); console.error(e); GAME.error = e.message; }
 }
 let _lastT = 0;
 function rafLoop(t) {
@@ -125,6 +125,6 @@ window.__cap = {
   ui() { return { ligada: GAME.ui, estado: GAME.ui ? Object.keys(ST)[UI.st] : null, menu: GAME.ui && UI.el.style.display !== 'none', painel: HUD.vis, stats: HUD.stats, mudo: SND.mute, som: SND.ctx ? SND.ctx.state : 'nenhum', somOk: SND.ok, somVia: SND.P ? 'AudioWorklet' : SND.node ? 'ScriptProcessor' : null, tempoAudio: SND.ctx ? SND.ctx.currentTime : 0, pose: UI.pose, bench: UI.bench, pad: UI.padN, replay: GS.replayOn, gpuTempo: G.hasTS, perfOn: PERF.on, gpuVivo: PERF.live[0] }; },
   state() { const V = VEH; return { rpm: V.rpm, thr: V.ctl[0], brk: V.ctl[1], keys: GS.keys, volta: LAP[3] === 1 ? V.time - LAP[0] : 0, ultima: LAP[1], melhor: LAP[2], voltas: V.laps, tempo: V.time, camPos: Array.from(R.cam.pos), camFwd: Array.from(R.cam.fwd), x: V.x, z: V.z, y: V.y, yaw: V.yaw, speed: Math.hypot(V.vx, V.vy), vx: V.vx, steer: V.steer, s: V.s, d: V.d, gear: V.gear, cam: GS.cam, lapS: V.lapS, off: V.offCount, hits: V.hits, tick: GS.tick60, zone: V.zone, brake: objParams(carObj().slotBody)[0], slip: Array.from(V.slip), particles: FX.pAlive, roll: V.roll, pitch: V.pitch, spin: V.spin[0] }; },
   dbg(name, scale, alpha) { setDebugView(name, scale, alpha); },
-  R, G, GAME, TRK, GS, VEH, FX, RT, renderFrame, SND, HUD, UI, PERF, LAP,
+  R, G, GAME, TRK, GS, VEH, FX, RT, renderFrame, SND, HUD, UI, PERF, LAP, GAD, AI,
 };
 main();

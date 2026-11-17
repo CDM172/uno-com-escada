@@ -1,6 +1,32 @@
 // Linha de corrida e piloto automático. O piloto só "aperta teclas" (mesma via de entrada do jogador);
 // é usado fora de linha para gravar os comandos da volta roteirizada (ver trabalho/scripts/gravar_volta).
-const AI = { line: null, vt: null, kline: null, enabled: false, script: null };
+const AI = { line: null, vt: null, kline: null, enabled: false, script: null, pw: new Float64Array(2), still: 0 };
+// What the autopilot plans for with each car: cornering and braking acceleration (m/s²) and top speed (m/s). The DB5 on its
+// cross-ply tyres corners and stops far less hard than the Uno.
+// (DB5 only — aTot: braking and cornering share one grip budget in the speed profile; margin, slide, brakeLat: see aiFeather)
+const AIP = CARSEL === 'db5' ? { aLat: 7.2, aBrk: 5.6, vMax: 62, over: 0.6, look0: 4.5, lookV: 0.3, aTot: 7.2, margin: 1.25, slide: 1.5, brakeLat: 0.3 } : { aLat: 11.4, aBrk: 7.6, vMax: 62, over: 1.2, look0: 4.5, lookV: 0.3, aTot: 0 };
+// Script of the DB5's scripted lap (benchmark, demo lap, lap poses), by time: [from (s), to (s), keys pressed, keys released].
+// The autopilot drives; the script changes cameras as the Uno's recorded lap does and shows each gadget where it is seen best.
+const AI_DEMO = CARSEL !== 'db5' ? null : [
+  [1.0, 1.1, K_GPLATE, 0], [2.6, 2.7, K_GPLATE, 0],              // chase camera: the number plates revolve (France, Switzerland)
+  [4.5, 4.6, K_GSHIELD, 0], [6.5, 6.6, K_GRAM | K_GSLASH, 0],    // bullet shield up; bumper rams and tyre slashers out
+  [10.0, 10.1, K_GSHIELD | K_GRAM | K_GSLASH, 0],                // ... and all back in
+  [12.0, 12.05, K_C, 0],                                         // bonnet camera
+  [14.0, 17.0, K_GGUN, 0],                                       // machine guns
+  [19.0, 19.1, K_GLAMP, 0],                                      // headlamps on
+  [19.5, 19.55, K_C, 0],                                         // trackside TV cameras
+  [20.5, 20.6, K_GSMOKE, 0],                                     // smoke screen down to the hairpin (8 s)
+  [28.4, 29.3, K_W, 0],                                          // a power slide out of the hairpin
+  [30.5, 30.55, K_C, 0],                                         // cockpit
+  [31.0, 31.1, K_GLAMP, 0],                                      // headlamps off
+  [33.5, 36.0, K_GGUN, 0],                                       // guns again, seen from the driver's seat
+  [41.0, 41.05, K_C, 0],                                         // chase camera
+  [42.0, 42.1, K_GPLATE, 0],                                     // back to the British plate
+  [47.0, 47.05, K_C, 0],                                         // bonnet camera
+  [48.5, 51.0, K_V | K_GOIL, 0],                                 // looking back at the oil going down
+  [53.0, 53.05, K_C, 0],                                         // TV cameras
+  [56.0, 56.1, K_GEJECT, 0],                                     // ejector seat
+];
 function aiBuild() {
   const N = TRK.N, ds = TRK.ds, hw = TRK.hw, lim = hw - 2.0;
   const o = new Float64Array(N), px = new Float64Array(N), pz = new Float64Array(N);
@@ -30,9 +56,15 @@ function aiBuild() {
     kl[i] = 2 * cr / (l1 * l2 * l3 + 1e-9);
   }
   // perfil de velocidade: limite lateral, depois passes de frenagem (trás) e aceleração (frente)
-  const aLat = 11.4, aBrk = 7.6, vMax = 62;
-  for (let i = 0; i < N; i++) { let k = 0; for (let q = -3; q <= 3; q++) k = Math.max(k, Math.abs(kl[(i + q + N) % N])); vt[i] = Math.min(vMax, Math.sqrt(aLat / Math.max(k, 1e-4))); }
-  for (let pass = 0; pass < 2; pass++) for (let i = N - 1; i >= 0; i--) { const nx = (i + 1) % N; const g = -9.81 * TRK.slope[i]; vt[i] = Math.min(vt[i], Math.sqrt(vt[nx] * vt[nx] + 2 * Math.max(2, aBrk + g) * ds)); }
+  const aLat = AIP.aLat, aBrk = AIP.aBrk, vMax = AIP.vMax;
+  const km = new Float32Array(N), aTot = AIP.aTot;
+  for (let i = 0; i < N; i++) { let k = 0; for (let q = -3; q <= 3; q++) k = Math.max(k, Math.abs(kl[(i + q + N) % N])); km[i] = k; vt[i] = Math.min(vMax, Math.sqrt(aLat / Math.max(k, 1e-4))); }
+  for (let pass = 0; pass < 2; pass++) for (let i = N - 1; i >= 0; i--) {
+    const nx = (i + 1) % N; const g = -9.81 * TRK.slope[i];
+    let aB = aBrk;
+    if (aTot > 0) { const al = vt[nx] * vt[nx] * km[i]; aB = Math.min(aBrk, Math.sqrt(Math.max(1, aTot * aTot - al * al))); }   // DB5: what the cornering leaves for braking
+    vt[i] = Math.min(vt[i], Math.sqrt(vt[nx] * vt[nx] + 2 * Math.max(2, aB + g) * ds));
+  }
 }
 const _ai = new Float64Array(5);
 // decide as teclas deste instante a partir do estado do veículo
@@ -40,7 +72,7 @@ function aiKeys(t) {
   const V = VEH, N = TRK.N, ds = TRK.ds; let keys = 0;
   const speed = Math.hypot(V.vx, V.vy), i0 = ((Math.floor(V.s / ds) % N) + N) % N;
   // ponto de mira na linha, à frente
-  const Ld = 4.5 + speed * 0.3, ia = (i0 + Math.round(Ld / ds)) % N;
+  const Ld = AIP.look0 + speed * AIP.lookV, ia = (i0 + Math.round(Ld / ds)) % N;
   trackPos(ia * ds, AI.line[ia], _ai);
   const dx = _ai[0] - V.x, dz = _ai[2] - V.z, c = Math.cos(V.yaw), s = Math.sin(V.yaw);
   const lx = dx * c + dz * s, lz = -dx * s + dz * c, eta = Math.atan2(lz, lx);
@@ -51,9 +83,31 @@ function aiKeys(t) {
   // velocidade alvo um pouco à frente (antecipa o freio)
   let vT = 1e9; for (let q = 0; q < 6; q++) vT = Math.min(vT, AI.vt[(i0 + q * 2) % N]);
   const sc = AI.script;
-  if (speed < vT - 0.3) keys |= K_W; else if (speed > vT + 1.2) keys |= K_S;
+  if (speed < vT - 0.3) keys |= K_W; else if (speed > vT + AIP.over) keys |= K_S;
   else if (speed < vT + 0.3 && (V.steps & 1)) keys |= K_W;
+  if (VP.rwd) keys = aiFeather(keys);
   // roteiro: eventos por tempo (freio de mão, trocas de câmera)
   if (sc) for (let i = 0; i < sc.length; i++) { const e = sc[i]; if (t >= e[0] && t < e[1]) { keys |= e[2]; if (e[3]) keys &= ~e[3]; } }
+  return keys;
+}
+// Rear-wheel drive on cross-ply tyres (the DB5): the autopilot cannot simply floor the throttle or stand on the brake in a
+// corner. A key is all or nothing, so it is pulsed: the share of the time it is held is what the tyres can take on top of the
+// cornering they are doing at that moment (the same friction circle the physics uses).
+function aiFeather(keys) {
+  const V = VEH, P = VP, g = 9.81, a = AI.pw;
+  const beta = Math.atan2(V.vy, V.vx > 3 ? V.vx : 3);
+  const f = (V.ay < 0 ? -V.ay : V.ay) / (P.mu * g) * AIP.margin + (beta < 0 ? -beta : beta) * AIP.slide;   // share of the grip the cornering asks for (more once the tail is out)
+  if (keys & K_W) {
+    // side grip left at the rear with the throttle open: the drive force comes first, up to wheelspin
+    const capR = P.mu * (P.m * g * P.a / P.L + P.m * (V.ax > 0 ? V.ax : 0) * P.h / P.L);
+    const x = engineTorque(V.rpm) * P.gears[(V.gear > 0 ? V.gear : 1) - 1] * P.final * P.eff / P.R / capR, cOn = x < 0.985 ? Math.sqrt(1 - x * x) : P.spinLat;
+    const duty = cOn >= f ? 1 : f >= 1 ? 0 : (1 - f) / (1 - cOn);
+    a[0] += duty; if (a[0] >= 1) a[0] -= 1; else keys &= ~K_W;
+  } else if (keys & K_S) {
+    const duty = AIP.brakeLat >= f ? 1 : f >= 1 ? 0 : (1 - f) / (1 - AIP.brakeLat);
+    a[1] += duty; if (a[1] >= 1) a[1] -= 1; else keys &= ~K_S;
+  }
+  // should it ever come to rest against a barrier, it asks to be put back on the track (the R key) and carries on
+  if (V.vx * V.vx + V.vy * V.vy < 1 && V.time > 3) { if (++AI.still > 150) { AI.still = 0; keys |= K_R; } } else AI.still = 0;
   return keys;
 }

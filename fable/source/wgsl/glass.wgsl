@@ -3,10 +3,30 @@
 // material: id 0 = vidro de janela (cor do vértice = tinta), 1 = lente transparente canelada (farol)
 #include mesh_vert
 #include fwd_common
+#ifdef DB5
+// DB5: material id 2 = the Perspex cowl over each headlamp: thin, colourless and plain (no flutes) — only a faint reflection
+// of the sky and the glint of the sun give it away.
+fn shadeCowl(in: V2F, N: vec3f, V: vec3f) -> vec4f {
+  let nv = max(dot(N, V), 1e-3); let fr = min(fSchlick1(0.045, nv), 0.5);
+#ifdef GLASS_MUL
+  return vec4f(in.col.rgb * (1.0 - fr), 1.0);
+#else
+  let R = reflect(-V, N);
+  var env = textureSampleLevel(tEnv, sClamp, R, 0.4).rgb; env = mix(vec3f(lum(env)), env, 0.7);
+  let L = F.sunDir.xyz; let H = normalize(L + V); let nl = sat(dot(N, L));
+  let sh = sunShadow(in.wpos, N, in.pos.xy, nl);
+  let spec = F.sunCol.rgb * nl * sh * fr * min(dGGX(sat(dot(N, H)), 0.003) * vSmith(nv, nl, 0.003), 14.0);
+  return vec4f(env * fr + spec, 0.0);
+#endif
+}
+#endif
 fn shade(in: V2F, ff: bool) -> vec4f {
   var N = normalize(in.nrm); if (!ff) { N = -N; }
   let V = normalize(F.camPos.xyz - in.wpos);
   let id = matId(in.mat);
+#ifdef DB5
+  if (id == 2u) { return shadeCowl(in, N, V); }
+#endif
   var milk = 0.0;
   var flute = 1.0;
   if (id == 1u) {

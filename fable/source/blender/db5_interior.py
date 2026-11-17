@@ -70,7 +70,7 @@ def build_interior(fast=False):
     sym.mat('leather_trim')
     sym.grid(lambda u, v: (0.95 - 1.80 * u, FLOOR + 0.04 + (S.BELT - 0.012 - FLOOR - 0.04) * v,
                            card_z(0.95 - 1.80 * u, FLOOR + 0.04 + (S.BELT - 0.012 - FLOOR - 0.04) * v)), 30, 6, flip=True)
-    sym.grid(lambda u, v: (-0.85 - 0.65 * u, 0.70 + (S.BELT - 0.012 - 0.70) * v, min(S.side_z(-0.85 - 0.65 * u, 0.80) - 0.07, 0.655) - 0.10 * u * u), 10, 2, flip=True)
+    sym.grid(lambda u, v: (-0.85 - 0.55 * u, 0.70 + (S.BELT - 0.03 - 0.70) * v, min(S.side_z(-0.85 - 0.55 * u, 0.80) - 0.08, 0.650, float(S.Z_FOOT(-0.85 - 0.55 * u)) - 0.03) - 0.06 * u * u), 10, 2, flip=True)
     # waist rail under the glass
     sym.grid(lambda u, v: (0.33 - 1.80 * u, S.BELT - 0.012 + 0.010 * v, card_z(0.33 - 1.80 * u, S.BELT - 0.02) + (float(S.Z_FOOT(0.33 - 1.80 * u)) - 0.012 - card_z(0.33 - 1.80 * u, S.BELT - 0.02)) * v), 24, 1, flip=True)
     # pleated lower door panel, armrest/door pull, window winder, interior handle, map pocket
@@ -89,12 +89,12 @@ def build_interior(fast=False):
     sym.mat('headlining')
 
     def head(u, v):
-        x = 0.12 - 1.26 * u
-        z = 0.575 * v
+        x = 0.045 - 1.185 * u
+        z = (0.575 - 0.10 * max(0.0, 1 - u * 6) ** 2) * v
         return (x, float(S.h_up(x, np.array([z]))[0]) - 0.028 - 0.018 * (1 - abs(2 * u - 1) ** 6), z)
     sym.grid(head, 26, 10, flip=True)
     sym.mat('leather_trim')
-    sym.box((0.035, 1.215, 0.30), (0.13, 0.014, 0.40), bevel=0.006)
+    sym.box((-0.035, 1.228, 0.29), (0.12, 0.014, 0.34), bevel=0.006)
 
     # ---- rear seats: two shaped squabs and backs, parcel shelf under the rear window
     sym.mat('leather_trim')
@@ -107,13 +107,15 @@ def build_interior(fast=False):
     sym.mat('leather')
     sym.box((-1.09, 0.542, 0.225), (0.34, 0.026, 0.30), bevel=0.01)
     sym.mat('carpet')
-    sym.quad((-1.45, 0.935, 0), (-1.45, 0.935, 0.52), (-1.74, 0.975, 0.47), (-1.74, 0.975, 0))
+    sym.quad((-1.45, 0.930, 0), (-1.45, 0.930, 0.50), (-1.72, 0.885, 0.40), (-1.72, 0.955, 0))
 
     # ---- dashboard: padded top roll, fascia with the glovebox, binnacle, centre console
     asym.mat('leather_trim')
     asym.grid(lambda u, v: (0.415 - 0.24 * (abs(-0.66 + 1.32 * u) / 0.68) ** 2.2 + 0.005 - (0.235 - 0.24 * (abs(-0.66 + 1.32 * u) / 0.68) ** 2.2 + 0.03) * v,
                             0.955 - 0.072 * (abs(-0.66 + 1.32 * u) / 0.68) ** 2 - 0.022 * v - 0.03 * v * v, -0.66 + 1.32 * u), 28, 6, flip=True)   # dash top from the screen
-    asym.box((DASH_X + 0.03, 0.885, 0.0), (0.085, 0.060, 1.30), bevel=0.028, seg=3)                      # crash roll
+    _, fs = asym.sweep([(DASH_X + 0.03 - 2.2 * max(abs(z) - 0.42, 0.0) ** 2, 0.885 - 0.05 * max(abs(z) - 0.42, 0.0), z) for z in np.linspace(-0.63, 0.63, 25)],
+                       [(0.030 * math.cos(a), 0.030 * math.sin(a)) for a in np.linspace(0, TAU, 13)[:-1]], up=(0, 1, 0))      # crash roll, following the screen
+    fix(asym, fs)
     asym.mat('dash')
     asym.box((DASH_X + 0.045, 0.790, 0.0), (0.05, 0.150, 1.28), bevel=0.012)                             # fascia panel
     # binnacle ahead of the driver: hooded oval pod with seven dials
@@ -177,7 +179,7 @@ def build_interior(fast=False):
     # centre armrest with the gadget switch panel under its open lid
     asym.mat('leather_trim')
     asym.box((-0.40, FLOOR + 0.225, 0.0), (0.36, 0.07, 0.17), bevel=0.022)
-    asym.push(tr(-0.58, FLOOR + 0.262, 0.0) @ rot_z(-1.20))
+    asym.push(tr(-0.58, FLOOR + 0.262, 0.0) @ rot_z(1.92))
     asym.box((0.18, 0.0, 0.0), (0.36, 0.022, 0.17), bevel=0.009)                                       # lid, flipped open
     asym.pop()
     asym.mat('decal_panel')
@@ -257,7 +259,7 @@ def build_gadgets(fast=False):
     hw, hh, ap = 0.262, 0.057, 0.034
     xf = S.surf_x(0.0, 0.47, True) + 0.016 + 0.034 + 0.012
     xr = S.surf_x(0.0, 0.61, False) + 0.020
-    for name, front, piv in (('plateF', True, (xf, 0.386, 0.0)), ('plateR', False, (xr, 0.610, 0.0))):
+    for name, front, piv in (('plateF', True, (xf, 0.362, 0.0)), ('plateR', False, (xr, 0.610, 0.0))):
         p = Part(name, target=name)
         p.pivot = piv
         for k in range(3):
@@ -285,8 +287,8 @@ def build_gadgets(fast=False):
     sh = Part('shield', target='shield')
     sh.mat('armour')
     sh.pivot = (-1.80, 1.00, 0.0)
-    sh.push(tr(-1.845, 0.730, 0.0) @ rot_z(-0.22))
-    sh.box((0, 0.0, 0), (0.014, 0.52, 1.00), bevel=0.004)
+    sh.push(tr(-1.845, 0.620, 0.0) @ rot_z(-0.22))
+    sh.box((0, 0.0, 0), (0.014, 0.52, 0.90), bevel=0.004)
     sh.pop()
     out.append(sh)
     # ---- tyre slashers: three-bladed cutters that telescope out of the rear wheel spinners (wheel frame, axle = Z)

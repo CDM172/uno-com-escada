@@ -7,6 +7,10 @@ const HUD = {
   cg: null, ct: null, cs: null, g: null, t: null, s: null, face: null, hub: null, bgT: null, bgS: null, A: null, B: null, C: null,
   L: new Int32Array(40), K: new Int32Array(12), acc: new Float64Array(4), stats: false, vis: false,
   V: new Int32Array(6),   // o que o painel mostra: km/h × 10, rpm, marcha, volta atual, última e melhor (centésimos de segundo; -1 = sem tempo)
+  // Scale of the speedometer: the Uno's reads to 200 km/h, the DB5's to 260 (and its rev counter has the red line at 6,000).
+  // kmh10 = full scale in tenths of km/h, kS = degrees of needle per tenth of km/h.
+  kmh10: GAD.on ? 2600 : 2000, kS: GAD.on ? 250 / 2600 : 250 / 2000,
+  gd: null, gdS: null, gadK: -1,   // gadget status line of the DB5: element, its labels, what is shown
 };
 const HCH = '0123456789:.,-R';
 // atlas de algarismos: cada caractere centrado numa célula; os algarismos têm todos a mesma largura (números não "dançam")
@@ -21,6 +25,7 @@ function hudAtlas(px) {
 function hudInit() {
   const H = HUD; H.cg = document.getElementById('hg'); H.ct = document.getElementById('ht'); H.cs = document.getElementById('hs');
   H.g = H.cg.getContext('2d'); H.t = H.ct.getContext('2d'); H.s = H.cs.getContext('2d');
+  H.gd = document.getElementById('gd'); H.gdS = H.gd ? H.gd.querySelectorAll('span') : [];
   hudLayout(); addEventListener('resize', hudLayout);
 }
 // tira com rótulos fixos e vãos para os números; devolve o canvas de fundo e grava em L[o + i] o x de cada número
@@ -42,7 +47,7 @@ function hudLayout() {
   const cx1 = Math.round(r * 1.12), cy = Math.round(r * 1.12), cx2 = W - cx1; L[0] = cx1; L[1] = cy; L[2] = cx2; L[3] = r; L[4] = W; L[5] = Hh;
   const fc = H.face = document.createElement('canvas'); fc.width = W; fc.height = Hh; const f = fc.getContext('2d');
   f.textAlign = 'center'; f.textBaseline = 'middle';
-  const dial = (cx, max, step, minor, red0, unit) => {
+  const dial = (cx, max, step, minor, red0, unit, every) => {   // every: a number on every n-th major tick (default: all)
     const ang = v => (145 + 250 * v / max) * PI / 180;
     f.beginPath(); f.arc(cx, cy, r, 0, TAU); f.fillStyle = 'rgba(9,11,14,.66)'; f.fill(); f.lineWidth = r * 0.02; f.strokeStyle = 'rgba(255,255,255,.3)'; f.stroke();
     if (red0) { f.beginPath(); f.arc(cx, cy, r * 0.9, ang(red0), ang(max)); f.lineWidth = r * 0.075; f.strokeStyle = '#d8351c'; f.stroke(); }
@@ -50,18 +55,19 @@ function hudLayout() {
     for (let k = 0; k <= Math.round(max / minor); k++) {
       const v = k * minor, major = k % Math.round(step / minor) === 0, a = ang(v), co = Math.cos(a), si = Math.sin(a);
       f.beginPath(); f.moveTo(cx + co * r * 0.945, cy + si * r * 0.945); f.lineTo(cx + co * r * (major ? 0.8 : 0.87), cy + si * r * (major ? 0.8 : 0.87)); f.lineWidth = r * (major ? 0.028 : 0.014); f.strokeStyle = 'rgba(255,255,255,.9)'; f.stroke();
-      if (major) f.fillText(String(v), cx + co * r * 0.64, cy + si * r * 0.64);
+      if (major && (!every || Math.round(v / step) % every === 0)) f.fillText(String(v), cx + co * r * 0.64, cy + si * r * 0.64);
     }
     f.fillStyle = 'rgba(255,255,255,.6)'; f.font = '600 ' + Math.round(r * 0.115) + 'px "Helvetica Neue",Helvetica,Arial,sans-serif'; f.fillText(unit, cx, cy + r * 0.84);
   };
-  dial(cx1, 200, 20, 10, 0, 'km/h'); dial(cx2, 7, 1, 0.5, 6.25, 'rpm × 1000');
+  if (GAD.on) { dial(cx1, 260, 20, 10, 0, 'km/h', 2); dial(cx2, 7, 1, 0.5, 6, 'rpm × 1000'); }
+  else { dial(cx1, 200, 20, 10, 0, 'km/h'); dial(cx2, 7, 1, 0.5, 6.25, 'rpm × 1000'); }
   const hb = H.hub = document.createElement('canvas'), hr = Math.round(r * 0.085); hb.width = hb.height = hr * 2; const hg = hb.getContext('2d'); hg.beginPath(); hg.arc(hr, hr, hr, 0, TAU); hg.fillStyle = '#16181b'; hg.fill(); hg.lineWidth = hr * 0.25; hg.strokeStyle = '#ff5a36'; hg.stroke();
   L[6] = hr; L[7] = Math.round(cy + r * 0.3);                                   // raio do cubo; y dos números grandes
   const g = H.g; g.setTransform(1 / 16, 0, 0, 1 / 16, 0, 0); g.lineCap = 'round'; g.lineWidth = Math.round(r * 0.034 * 16); g.strokeStyle = '#ff5a36';
   // cronômetro (m:ss.cc) e estatísticas
   const tw = B.w[0] * 5 + B.w[10] + B.w[11];
-  H.bgT = hudStrip(H.ct, ['VOLTA', 'ÚLTIMA', 'MELHOR'], [tw, tw, tw], ['', '', ''], B, B.h / 1.16, 10);
-  H.bgS = hudStrip(H.cs, ['QPS', 'QUADRO', 'GPU'], [C.w[0] * 3, C.w[0] * 4 + C.w[12], C.w[0] * 4 + C.w[12]], ['', 'ms', 'ms'], C, C.h / 1.16, 20);
+  H.bgT = hudStrip(H.ct, ['LAP', 'LAST', 'BEST'], [tw, tw, tw], ['', '', ''], B, B.h / 1.16, 10);
+  H.bgS = hudStrip(H.cs, ['FPS', 'FRAME', 'GPU'], [C.w[0] * 3, C.w[0] * 4 + C.w[11], C.w[0] * 4 + C.w[11]], ['', 'ms', 'ms'], C, C.h / 1.16, 20);
   H.K.fill(-9);
 }
 // copia o caractere i do atlas para (x, y) em pixels (q = 16 no canvas dos mostradores, 1 nos outros); devolve a largura
@@ -75,16 +81,24 @@ function hudTime(g, A, cs, x, y) {
   x += hudCh(g, A, no ? 13 : m, x, y, 1); x += hudCh(g, A, 10, x, y, 1); x += hudCh(g, A, no ? 13 : (s / 10) | 0, x, y, 1); x += hudCh(g, A, no ? 13 : s % 10, x, y, 1);
   x += hudCh(g, A, 11, x, y, 1); x += hudCh(g, A, no ? 13 : (c / 10) | 0, x, y, 1); hudCh(g, A, no ? 13 : c % 10, x, y, 1);
 }
-// valor com uma casa decimal (v10 = valor × 10) em NN,N; negativo = indisponível
+// valor com uma casa decimal (v10 = valor × 10) em NN.N; negativo = indisponível
 function hudDec(g, A, v10, x, y) {
   const w = A.w[0]; if (v10 > 9999) v10 = 9999;
-  if (v10 < 0) { hudCh(g, A, 13, x + w * 2, y, 1); hudCh(g, A, 13, x + w * 3 + A.w[12], y, 1); return; }
-  hudInt(g, A, (v10 / 10) | 0, 3, x, y, 1); hudCh(g, A, 12, x + w * 3, y, 1); hudCh(g, A, v10 % 10, x + w * 3 + A.w[12], y, 1);
+  if (v10 < 0) { hudCh(g, A, 13, x + w * 2, y, 1); hudCh(g, A, 13, x + w * 3 + A.w[11], y, 1); return; }
+  hudInt(g, A, (v10 / 10) | 0, 3, x, y, 1); hudCh(g, A, 11, x + w * 3, y, 1); hudCh(g, A, v10 % 10, x + w * 3 + A.w[11], y, 1);
 }
 // chamado a cada quadro do jogo: lê o estado (hudRead) e redesenha só o que mudou (hudDraw)
-function hudFrame() { hudRead(); hudDraw(); }
+function hudFrame() { hudRead(); hudDraw(); if (GAD.on) hudGad(); }
+// Gadget status line (DB5): one fixed label per gadget, shown while that gadget is active. The page is only touched when
+// the set of active gadgets changes; otherwise this is one integer comparison per frame.
+function hudGad() {
+  let a = HUD.vis ? GAD.act : 0; if (a & GA_FIRE) a &= ~GA_GUNS;
+  if (a === HUD.gadK || !HUD.gd) return;
+  HUD.gadK = a; const sp = HUD.gdS; HUD.gd.style.display = a ? 'block' : 'none';
+  for (let i = 0; i < sp.length; i++) sp[i].className = (a >> i) & 1 ? 'on' : '';
+}
 function hudRead() {
-  const V = HUD.V, v = VEH; let kmh = GS.speed * 36; if (kmh > 2000) kmh = 2000; let rpm = v.rpm; if (rpm > 7000) rpm = 7000;
+  const V = HUD.V, v = VEH; let kmh = GS.speed * 36; if (kmh > HUD.kmh10) kmh = HUD.kmh10; let rpm = v.rpm; if (rpm > 7000) rpm = 7000;
   V[0] = kmh; V[1] = rpm; V[2] = v.gear; V[3] = LAP[3] === 1 ? (v.time - LAP[0]) * 100 : 0; V[4] = LAP[1] > 0 ? LAP[1] * 100 : -1; V[5] = LAP[2] > 0 ? LAP[2] * 100 : -1;
 }
 function hudDraw() {
@@ -96,7 +110,7 @@ function hudDraw() {
     hudInt(g, A, ki, 3, L[0] - ((w * 3) >> 1), L[7], 16); hudCh(g, A, gear === 0 ? 14 : gear, L[2] - (A.w[gear === 0 ? 14 : gear] >> 1), L[7], 16);
     g.beginPath();
     for (let d = 0; d < 2; d++) {
-      const a = (145 + (d ? ar * (250 / 700) : an * (250 / 2000))) * 0.017453292519943295, co = Math.cos(a), si = Math.sin(a), cx = L[d * 2] * 16, cY = cy * 16, len = r * 16;
+      const a = (145 + (d ? ar * (250 / 700) : an * H.kS)) * 0.017453292519943295, co = Math.cos(a), si = Math.sin(a), cx = L[d * 2] * 16, cY = cy * 16, len = r * 16;
       g.moveTo((cx - co * len * 0.16) | 0, (cY - si * len * 0.16) | 0); g.lineTo((cx + co * len * 0.86) | 0, (cY + si * len * 0.86) | 0);
     }
     g.stroke();
@@ -116,5 +130,5 @@ function hudStatsFrame() {
   a[0] = 0; a[1] = 0;
   s.clearRect(0, 0, L[27], L[28]); s.drawImage(H.bgS, 0, 0); hudInt(s, C, fps > 999 ? 999 : fps, 3, L[20], y, 1); hudDec(s, C, ms, L[21], y); hudDec(s, C, gpu, L[22], y);
 }
-function hudShow(on) { HUD.vis = on; HUD.cg.style.display = HUD.ct.style.display = on ? 'block' : 'none'; HUD.K.fill(-9); }
+function hudShow(on) { HUD.vis = on; HUD.cg.style.display = HUD.ct.style.display = on ? 'block' : 'none'; HUD.K.fill(-9); if (GAD.on) { HUD.gadK = -1; hudGad(); } }
 function hudStats(on) { HUD.stats = on; HUD.cs.style.display = on ? 'block' : 'none'; HUD.acc[0] = 0; HUD.acc[1] = 0; if (on) { const L = HUD.L; HUD.s.clearRect(0, 0, L[27], L[28]); HUD.s.drawImage(HUD.bgS, 0, 0); } }

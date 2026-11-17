@@ -1,18 +1,43 @@
 // Jogo: entrada, laço de passo fixo, reprodução dos comandos gravados, câmeras e pose do carro.
 const GS = {
-  held: 0, keys: 0, prevKeys: 0, cam: 0, replay: null, replayOn: false, ai: false, tick60: 0, acc: 0, sub: 0, alpha: 1, cut: true,
+  held: 0, keys: 0, prevKeys: 0, cam: 0, replay: null, replayLen: 0, replayOn: false, ai: false, tick60: 0, acc: 0, sub: 0, alpha: 1, cut: true,
   body: m4(), tmp: m4(), tmp2: m4(), ground: m4(), spin: new Float32Array(4), susp: new Float32Array(4),
   cx: 0, cy: 0, cz: 0, yaw: 0, steer: 0, speed: 0,                 // estado interpolado
   chaseYaw: 0, chaseY: 0, chaseInit: false, hoodPos: new Float32Array(6),
   tvData: new Float32Array(64 * 4), tvN: 0, tvCur: -1, tvAim: new Float32Array(3), tvFov: 0.3, pl: new Float64Array(2),
   v3: new Float32Array(6), fxOn: true, frozen: false, freeCam: false,
   padKeys: 0, lapSeen: 0, lapMax: 0, lapNew: false,
+  viewRoll: 0,   // car viewer (?scene=car) with the DB5: speed at which the car rolls along the floor (m/s; set by the test scripts)
 };
 // Cronômetro: LAP[0] instante (s de simulação) em que a volta atual começou, [1] última volta, [2] melhor volta, [3] 1 = cronômetro correndo
 const LAP = new Float64Array(4);
 // Controle (Gamepad API): PADV[0] gatilho direito, [1] gatilho esquerdo, [2] analógico esquerdo já com zona morta e curva. Preenchido por padPoll.
 const PADV = new Float64Array(3);
 const KEYMAP = { KeyW: K_W, ArrowUp: K_W, KeyS: K_S, ArrowDown: K_S, KeyA: K_A, ArrowLeft: K_A, KeyD: K_D, ArrowRight: K_D, Space: K_SPACE, KeyC: K_C, KeyR: K_R, KeyV: K_V };
+// DB5 only: the gadget keys (see 41_gadgets.js) and a fourth camera, in the cockpit (GS.cam = 3)
+if (GAD.on) Object.assign(KEYMAP, { KeyP: K_GPLATE, KeyG: K_GGUN, KeyK: K_GSHIELD, KeyT: K_GSLASH, KeyU: K_GRAM, KeyJ: K_GSMOKE, KeyO: K_GOIL, KeyE: K_GEJECT, KeyQ: K_GHORN, KeyL: K_GLAMP });
+const NCAM = GAD.on ? 4 : 3;
+// Cameras fixed to the body of the DB5, in the car frame [eye x, y, z, target x, y, z]: bonnet (above the scuttle, looking
+// down the long bonnet), bonnet looking back (behind the tail, the car out of the picture), cockpit (the driver's eyes, on
+// the right: steering wheel, dials and bonnet in view) and cockpit looking back over the left shoulder through the rear
+// window. The eye points come with the model (DB5C, from DB5_META.car); the rest is relative to them.
+const CAMP = new Float32Array(24);
+if (GAD.on) {
+  const e = DB5C.eye, b = DB5C.bonnetCam, tail = -(DB5C.rear + DB5C.bumper);
+  CAMP.set([
+    b[0], b[1], b[2], b[0] + 6.4, b[1] - 0.5, b[2],
+    tail - 0.1, 1.0, 0, tail - 7, 0.62, 0,
+    e[0], e[1], e[2], e[0] + 2, e[1] - 0.28, e[2] * 0.87,
+    e[0] - 0.04, e[1], e[2] * 0.87, e[0] - 2.8, e[1] - 0.15, -e[2] * 0.87,
+  ]);
+}
+// eye and target i of CAMP carried by the body matrix into the camera register (CAMQ[0..5])
+function camBody(i) {
+  const B = GS.body, p = CAMP, o = i * 6, q = CAMQ;
+  const ex = p[o], ey = p[o + 1], ez = p[o + 2], tx = p[o + 3], ty = p[o + 4], tz = p[o + 5];
+  q[0] = B[0] * ex + B[4] * ey + B[8] * ez + B[12]; q[1] = B[1] * ex + B[5] * ey + B[9] * ez + B[13]; q[2] = B[2] * ex + B[6] * ey + B[10] * ez + B[14];
+  q[3] = B[0] * tx + B[4] * ty + B[8] * tz + B[12]; q[4] = B[1] * tx + B[5] * ty + B[9] * tz + B[13]; q[5] = B[2] * tx + B[6] * ty + B[10] * tz + B[14];
+}
 function onKeyDown(e) { const k = KEYMAP[e.code]; if (k) { GS.held |= k; e.preventDefault(); } }
 function onKeyUp(e) { const k = KEYMAP[e.code]; if (k) { GS.held &= ~k; e.preventDefault(); } }
 function onBlur() { GS.held = 0; }
@@ -46,11 +71,15 @@ const carObj = () => (typeof CAR !== 'undefined' ? CAR : CARP);
 
 function gameInit() {
   addEventListener('keydown', onKeyDown); addEventListener('keyup', onKeyUp); addEventListener('blur', onBlur);
-  if (typeof REPLAY_B64 !== 'undefined') {
+  // The recorded keys of the scripted lap only suit the Uno. With the DB5 the same "scripted lap" (benchmark, demo lap, lap
+  // poses) is driven by the autopilot for the same 60 s: GS.replay stays null and GS.replayLen is the length in 1/60 s ticks.
+  if (typeof REPLAY_B64 !== 'undefined' && !GAD.on) {
     const bin = atob(REPLAY_B64); let n = 0; for (let i = 1; i < bin.length; i += 2) n += bin.charCodeAt(i);
     GS.replay = new Uint8Array(n); let o = 0; for (let i = 0; i < bin.length; i += 2) { const k = bin.charCodeAt(i), c = bin.charCodeAt(i + 1); for (let q = 0; q < c; q++) GS.replay[o++] = k; }
+    GS.replayLen = n;
   }
-  GS.replayOn = Q.has('replay') && !!GS.replay; GS.ai = Q.has('auto');
+  if (GAD.on) GS.replayLen = 3600;
+  GS.replayOn = Q.has('replay') && GS.replayLen > 0; GS.ai = Q.has('auto');
   // câmeras de TV: as torres do cenário (WORLD.tvCams), ou posições calculadas do lado de fora das curvas
   if (typeof WORLD !== 'undefined' && WORLD.tvCams && WORLD.tvCams.length) {
     const q = new Float64Array(5);
@@ -84,6 +113,7 @@ function gameWarmup() {
     const ph = (i / 300) | 0, t = i / 120; let k = aiKeys(t);
     if (ph % 7 === 3) k = K_S; else if (ph % 7 === 5) k = K_W | K_D | (i % 60 < 30 ? K_SPACE : 0); else if (ph % 11 === 9) k = K_W | K_A;
     if (i % 1500 === 1499) k |= K_R; if (i % 400 === 399) k |= K_C;
+    if (GAD.on) k |= gadWarmKeys(i);   // DB5: every gadget, in every state
     // metade das fases com as mesmas manobras vindas do controle (gatilhos e alavanca analógicos, olhar para trás)
     if (ph & 1) { const f = 0.3 + (i % 71) / 100; GS.padKeys = K_PAD | K_PADS | (ph % 4 === 1 ? K_V : 0) | (k & (K_W | K_S | K_SPACE | K_C | K_R)); PADV[0] = (k & K_W) ? f : 0; PADV[1] = (k & K_S) ? f : 0; PADV[2] = (((k & K_D) ? 1 : 0) - ((k & K_A) ? 1 : 0)) * f; k = i % 9 === 0 ? k & (K_A | K_D) : 0; } else GS.padKeys = 0;
     GS.held = k; GS.acc = PHYS_DT * (1 + (i % 3 === 0 ? 0.5 : 0)); gameTick(i % 4 === 0); sndControl();
@@ -102,6 +132,15 @@ function gameWarmup() {
     }
   }
   GS.held = 0; GS.padKeys = 0; LAP[2] = 0; GS.fxOn = fx; GS.replayOn = rp; GS.ai = Q.has('auto'); RT[0] = 0; RT[2] = 1 / 60;
+  if (GAD.on) GAD.snd.fill(0);   // the counters the sound code follows start from zero
+}
+// gadget keys for step i of the warm-up: each gadget is switched on and off several times, alone and together with others
+function gadWarmKeys(i) {
+  const ph = (i / 150) | 0; let k = 0;
+  if (ph % 3 === 1) k |= K_GGUN; if (ph % 5 === 2) k |= K_GOIL; if (ph % 7 === 3) k |= K_GHORN;
+  const q = i % 150;
+  if (q === 0) k |= (ph & 1 ? K_GPLATE : 0) | (ph % 4 === 0 ? K_GSHIELD : 0) | (ph % 4 === 1 ? K_GSLASH : 0) | (ph % 4 === 2 ? K_GRAM : 0) | (ph % 6 === 3 ? K_GSMOKE : 0) | (ph % 9 === 4 ? K_GEJECT : 0) | (ph % 4 === 3 ? K_GLAMP : 0);
+  return k;
 }
 // Aquece a GPU antes do jogo começar: renderiza quadros de vários pontos do circuito nas três câmeras (com fumaça e marcas),
 // para o driver compilar todas as variantes de pipeline e carregar todas as texturas agora, e não no meio da volta.
@@ -111,7 +150,7 @@ async function gamePrewarm() {
   RT[2] = 1 / 60; GS.frozen = true; let worst = 0;
   for (let i = 0; i < 36; i++) {
     vehicleReset(i * TRK.L / 36, (i % 3) - 1, 0); VEH.slip.fill(1); VEH.vx = 25; for (let k = 0; k < 6; k++) fxStep(); VEH.slip.fill(0); VEH.vx = 0;   // com velocidade: emite fumaça (estreia o pipeline de partículas)
-    GS.cam = i % 3; GS.chaseInit = false; GS.tvCur = -1; GS.cut = true; gameTick(true); renderFrame(); gameTick(true); renderFrame();
+    GS.cam = i % NCAM; GS.chaseInit = false; GS.tvCur = -1; GS.cut = true; gameTick(true); renderFrame(); gameTick(true); renderFrame();
     if (i >= 6) {   // as primeiras vistas ainda pagam compilação de pipelines: não entram na medida
       await G.dev.queue.onSubmittedWorkDone(); const t0 = performance.now();
       for (let k = 0; k < 4; k++) { gameTick(true); renderFrame(); }
@@ -124,6 +163,7 @@ function gameRestart() {
   const V = VEH; V.lapS = 0; V.offCount = 0; V.hits = 0; V.laps = 0; V.time = 0; V.steps = 0; V.spin.fill(0); V.susp.fill(0);
   vehicleReset(TRK.L + TRK.startS, TRK.startD, 0); GS.held = 0; GS.tick60 = 0; GS.acc = 0; GS.sub = 0; GS.keys = GS.prevKeys = 0; GS.cam = +(Q.get('cam') || 0); GS.chaseInit = false; GS.tvCur = -1; GS.cut = true;
   if (typeof fxReset === 'function') fxReset();
+  if (GAD.on) { gadReset(); AI.script = GS.replayOn ? AI_DEMO : null; }   // the scripted lap of the DB5 changes cameras and shows the gadgets
   GS.lapSeen = GS.lapMax = 0; LAP[0] = LAP[1] = LAP[3] = 0;
   GS.alpha = 1; gamePose(); gameCamera();
 }
@@ -131,13 +171,13 @@ function gameRestart() {
 function gameStep() {
   if ((GS.sub & 1) === 0) {
     const t = GS.tick60 / 60; let k;
-    if (GS.replayOn && GS.tick60 < GS.replay.length) k = GS.replay[GS.tick60];
+    if (GS.replayOn && GS.tick60 < GS.replayLen) k = GS.replay !== null ? GS.replay[GS.tick60] : t < 0.5 ? 0 : aiKeys(t);
     else if (GS.ai) k = t < 0.5 ? 0 : aiKeys(t);
     else { k = GS.held; if (GS.padKeys) k = padMerge(k); }
     GS.prevKeys = GS.keys; GS.keys = k; GS.tick60++;
     const edge = k & ~GS.prevKeys;
     if ((k ^ GS.prevKeys) & K_V) { GS.cut = true; GS.chaseInit = false; }   // olhar para trás é um corte de câmera
-    if (edge & K_C) { GS.cam = (GS.cam + 1) % 3; GS.cut = true; GS.chaseInit = false; GS.tvCur = -1; }
+    if (edge & K_C) { GS.cam = (GS.cam + 1) % NCAM; GS.cut = true; GS.chaseInit = false; GS.tvCur = -1; }
     if (edge & K_R) { // devolve o carro à pista: no eixo, alinhado, parado
       const s = VEH.s; vehicleReset(s, clamp(VEH.d, -2, 2), 0); GS.cut = true; GS.chaseInit = false;
     }
@@ -145,6 +185,7 @@ function gameStep() {
   GS.sub++;
   vehicleStep(GS.keys);
   if (VEH.laps !== GS.lapSeen) lapCross();
+  if (GAD.on) gadStep(GS.keys);
   if (GS.fxOn && typeof fxStep === 'function') fxStep();
 }
 // junta o controle ao teclado: gatilhos e alavanca valem como entrada analógica (VIN); A/D do teclado têm prioridade na direção
@@ -202,13 +243,17 @@ function gamePose() {
     let su = V.wy[i] + C.wheelR - hy; su = su < -0.09 ? -0.09 : su > 0.09 ? 0.09 : su;
     GS.susp[i] = su; GS.spin[i] = V.pspin[i] + (V.spin[i] - V.pspin[i]) * al;
   }
-  C.inp[0] = GS.steer; C.inp[1] = GS.steer * 14; C.place(B, GS.spin, GS.susp);
+  C.inp[0] = GS.steer; C.inp[1] = GS.steer * P.steerRatio; C.place(B, GS.spin, GS.susp);
   const bp = objParams(C.slotBody), k = GS.keys; bp[0] = ((k & K_S) && V.gear !== 0) || ((k & K_W) && V.gear === 0) ? 1 : 0; bp[1] = V.gear === 0 ? 1 : 0; bp[2] = 1;
+  if (GAD.on) bp[2] = GAD.pv[GV_LIGHT] + (GAD.v[GV_LIGHT] - GAD.pv[GV_LIGHT]) * al;   // DB5: the headlamps have a switch
   for (let i = 0; i < 4; i++) { const w = V.omega[i]; objParams(C.slotWheel[i])[0] = w < 0 ? -w : w; }
   FR.data.set(B, FO.carMat); m4inv(T, B); FR.data.set(T, FO.carInv);
   // rodas: a matriz anterior passa a ser a roda atual levada pelo deslocamento rígido da carroceria (anterior × atual⁻¹).
   // Assim o desfoque de movimento não espalha o pneu pelo asfalto por causa do giro; a rotação é mostrada pelo material.
-  if (C.slotWheel[0] !== C.slotBody) { const D2 = GS.tmp2; m4mul(D2, objPrev(C.slotBody), T); for (let i = 0; i < 4; i++) m4mul(objPrev(C.slotWheel[i]), D2, objModel(C.slotWheel[i])); }
+  if (C.slotWheel[0] !== C.slotBody) {
+    const D2 = GS.tmp2; m4mul(D2, objPrev(C.slotBody), T); for (let i = 0; i < 4; i++) m4mul(objPrev(C.slotWheel[i]), D2, objModel(C.slotWheel[i]));
+    if (GAD.on) for (let i = 0; i < 2; i++) m4mul(objPrev(C.slotSlash[i]), D2, objModel(C.slotSlash[i]));   // the tyre slashers turn with the rear wheels
+  }
   const f = FR.data, o = FO.car; f[o] = bp[0]; f[o + 1] = GS.speed; f[o + 2] = GS.steer; f[o + 3] = 0;
   f[FO.car2] = (GS.tick60 < 30 && GS.speed < 0.5) ? 1 : 0;   // luzes de largada: acesas só enquanto o carro espera no grid
   R.cube.pos[0] = B[4] * 1.15 + B[12]; R.cube.pos[1] = B[5] * 1.15 + B[13]; R.cube.pos[2] = B[6] * 1.15 + B[14];
@@ -232,6 +277,12 @@ function gameCamera() {
     _gq[0] = ex; _gq[1] = ez; hfAtQ(_gq); if (ey < _gq[6] + 0.55) ey = _gq[6] + 0.55;
     let rl = -V.ay * 0.004; rl = rl < -0.05 ? -0.05 : rl > 0.05 ? 0.05 : rl;
     q[0] = ex; q[1] = ey; q[2] = ez; q[3] = GS.cx + c * 1.6 * lb; q[4] = GS.cy + 0.95 + V.gPitch * 1.6; q[5] = GS.cz + s * 1.6 * lb; q[6] = 0.93 + (GS.speed < 50 ? GS.speed : 50) * 0.0042; q[7] = rl;
+  } else if (GS.cam === 1 && GAD.on) {
+    // DB5, bonnet camera
+    camBody(lb < 0 ? 1 : 0); q[6] = 1.0; q[7] = -(V.gRoll + V.roll) * 0.8 * lb;
+  } else if (GS.cam === 3 && GAD.on) {
+    // DB5, cockpit: the driver's eyes
+    camBody(lb < 0 ? 3 : 2); q[6] = 1.05; q[7] = -(V.gRoll + V.roll) * 0.8 * lb;
   } else if (GS.cam === 1) {
     // capô: presa à carroceria
     const B = GS.body;

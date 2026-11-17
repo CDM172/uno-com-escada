@@ -212,10 +212,10 @@ def lamp(p, c, n, r, lens_mat, ring_mat='chrome', depth=0.02, bulge=0.012, seg=2
 
 
 # ---------------------------------------------------------------------------------- exterior
-HL = dict(x=1.668, y=0.700, z=0.687, r=0.089)        # headlamp unit (lens plane, centre, lens radius)
-SIDELAMP = dict(z=0.612, y=0.505)
+HL = dict(x=1.822, y=0.682, z=0.650, r=0.087)        # headlamp unit (lens plane, centre, lens radius)
+SIDELAMP = dict(z=0.655, y=0.503)
 TAILZ = 0.649
-ORZ, ORZR = 0.325, 0.385                             # over-riders: lateral position, front / rear
+ORZ, ORZR = 0.470, 0.385                             # over-riders: lateral position, front / rear
 F_BUMP = dict(y=0.386, h=0.088, d=0.034)             # front blade: centre height, height, depth
 R_BUMP = dict(y=0.421, h=0.078, d=0.034)
 
@@ -234,7 +234,7 @@ def build_exterior(fast=False):
     path, o = bumper_path(0.52, R_BUMP['y'], False, 0.86, nb, 0.022)
     blade(ext, path, o, R_BUMP['h'], R_BUMP['d'])
     xf = S.surf_x(ORZ, 0.47, True) + 0.016 + F_BUMP['d'] * 0.6
-    overrider(ramF, xf, 0.468, ORZ, 0.092, True)
+    overrider(ramF, xf, 0.455, ORZ, 0.097, True)
     xr = S.surf_x(ORZR, 0.52, False) - 0.022 - R_BUMP['d'] * 0.6
     overrider(ramR, xr, 0.487, ORZR, 0.107, False)
     for part, x, y, sgn, oz in ((ramF, xf, 0.44, 1, ORZ), (ramR, xr, 0.455, -1, ORZR)):
@@ -263,9 +263,9 @@ def build_exterior(fast=False):
     ext.mat('black')
     ext.grid(lambda u, v: (S.surf_x(u * 0.50, 0.52, True) - 0.085, 0.455 + v * (min(0.66, S.top_y(S.surf_x(u * 0.50, 0.52, True) - 0.085, u * 0.50) - 0.03) - 0.455), u * 0.50), 8, 4, flip=True)
     ext.mat('chrome')
-    ns = 12
+    ns = 13
     for k in range(ns):
-        y = 0.493 + k * (0.172 / (ns - 1))
+        y = 0.478 + k * (0.186 / (ns - 1))
         zm = gz(y)
         if zm < 0.02:
             continue
@@ -275,10 +275,10 @@ def build_exterior(fast=False):
         ys = [y for y in np.linspace(0.482, 0.675, 14) if F.f_grille(Vector((1.9, y, z))) < -0.004]
         if len(ys) < 2:
             continue
-        ext.sweep([(gx(z, y) - 0.003, y, z) for y in ys], [(-0.0025, -0.005), (0.0025, -0.005), (0.0025, 0.005), (-0.0025, 0.005)], up=(1, 0, 0))
+        ext.sweep([(gx(z, y) - 0.010, y, z) for y in ys], [(-0.0015, -0.003), (0.0015, -0.003), (0.0015, 0.003), (-0.0015, 0.003)], up=(1, 0, 0))
 
     # ---- headlamps: painted tunnel from the cowl rim back to the lamp, chrome-rimmed 7 in unit
-    cy, cz = HL['y'] + 0.008, HL['z'] - 0.002
+    cy, cz = HL['y'], HL['z']
     nphi = 24 if fast else 40
     ring0, ring1 = [], []
     for k in range(nphi):
@@ -289,13 +289,34 @@ def build_exterior(fast=False):
             m = (lo + hi) / 2
             z, y = cz + dz * m, cy + dy * m
             x = S.COWL['x0'] - (y - S.COWL['y0']) / S.COWL['slope']
-            if S.inside_nocowl(x, y - 0.003, z):
+            if S.COWL['zin'] + 0.006 < abs(z) < 0.80 and S.inside_nocowl(x, y - 0.003, z):
                 lo = m
             else:
                 hi = m
         z, y = cz + dz * lo, cy + dy * lo
         ring0.append(Vector((S.COWL['x0'] - (y - S.COWL['y0']) / S.COWL['slope'] - 0.004, y - 0.004, z)))
         ring1.append(Vector((HL['x'] - 0.004, HL['y'] + dy * (HL['r'] + 0.014), HL['z'] + dz * (HL['r'] + 0.014))))
+    # Perspex cover (gently domed) and its chrome rim, built on the aperture outline
+    nrm = Vector((S.COWL['slope'], 1.0, 0.0)).normalized()
+    cen0 = Vector((S.COWL['x0'] - (cy - S.COWL['y0']) / S.COWL['slope'], cy, cz))
+    rim_pts = [q + Vector((0.004, 0.004, 0)) for q in ring0]
+    cover = Part('lampglass', mirror=True, target='glass').mat('glass_lamp')
+    nr = 6
+    rows = [[cover.bm.verts.new(cen0 + (rim_pts[k] - cen0) * (j / nr) + nrm * 0.016 * (1 - (j / nr) ** 2)) for k in range(nphi)] for j in range(1, nr + 1)]
+    vc0 = cover.bm.verts.new(cen0 + nrm * 0.016)
+    cf = []
+    for k in range(nphi):
+        k2 = (k + 1) % nphi
+        cf.append(cover.bm.faces.new([vc0, rows[0][k], rows[0][k2]]))
+        for j in range(nr - 1):
+            cf.append(cover.bm.faces.new([rows[j][k], rows[j + 1][k], rows[j + 1][k2], rows[j][k2]]))
+    cover._finish([vc0] + [v for r in rows for v in r])
+    cover.bm.normal_update()
+    bmesh.ops.reverse_faces(cover.bm, faces=[f for f in cf if f.normal.dot(nrm) < 0])
+    out.append(cover)
+    ext.mat('chrome')
+    _, fs = ext.sweep([q + nrm * 0.002 for q in rim_pts], [(-0.009, -0.003), (-0.006, 0.005), (0.0, 0.0075), (0.006, 0.005), (0.009, -0.003)], closed=True, up=tuple(nrm))
+    fix(ext, fs)
     ext.mat('paint')
     vr0 = [ext.bm.verts.new(q) for q in ring0]
     vr1 = [ext.bm.verts.new(q) for q in ring1]
@@ -306,9 +327,11 @@ def build_exterior(fast=False):
         tf.append(ext.bm.faces.new([vr0[k], vr0[k2], vr1[k2], vr1[k]]))
         tf.append(ext.bm.faces.new([vr1[k], vr1[k2], vc]))
     ext._finish(vr0 + vr1 + [vc])
+    fix(ext, tf)                                          # consistent winding, then make the tunnel look inwards
     ext.bm.normal_update()
-    cen = Vector((HL['x'] + 0.08, HL['y'], HL['z']))
-    bmesh.ops.reverse_faces(ext.bm, faces=[f for f in tf if f.normal.dot(cen - f.calc_center_median()) < 0])   # tunnel faces look inwards
+    cen = Vector((HL['x'] + 0.05, HL['y'], HL['z']))
+    if sum(f.normal.dot(cen - f.calc_center_median()) for f in tf) < 0:
+        bmesh.ops.reverse_faces(ext.bm, faces=tf)
     ext.push(tr(HL['x'], HL['y'], HL['z']))
     r = HL['r']
     ext.mat('chrome')

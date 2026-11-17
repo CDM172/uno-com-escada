@@ -1,5 +1,8 @@
 // Dispositivo WebGPU, utilitários de recurso e pré-processador de WGSL.
 const Q = new URLSearchParams(location.search);
+// Which car is driven: ?car=db5 (Aston Martin DB5, the default) or ?car=uno (the original Fiat Uno with the ladder).
+// The choice is remembered between sessions.
+const CARSEL = (() => { let c = Q.get('car'); try { if (c) localStorage.setItem('car', c); else c = localStorage.getItem('car'); } catch (e) { } return c === 'uno' ? 'uno' : 'db5'; })();
 const BUILD = [];           // construtores de cena registrados pelos outros arquivos: async fn(), executados em ordem por main()
 const GAME = { ready: false, mode: Q.get('scene') || 'game', capture: Q.has('cap'), tick: null, init: null, minFrameMs: 0, gpuWorstMs: 0, ui: false };
 // Jogo aberto por uma pessoa (tela de início, painel, som) × ferramenta (captura, poses, teste, medição): as ferramentas de
@@ -11,14 +14,14 @@ const RT = new Float64Array([0, 1 / 60, 1 / 60, 0]);   // RT[3] = intervalo real
 const G = { dev: null, ctx: null, fmt: 'bgra8unorm', W: 0, H: 0, hasTS: false, canvas: null };
 
 async function gpuInit() {
-  if (!navigator.gpu) throw new Error('WebGPU indisponível neste navegador.');
+  if (!navigator.gpu) throw new Error('WebGPU is not available in this browser.');
   const ad = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-  if (!ad) throw new Error('Nenhum adaptador WebGPU.');
+  if (!ad) throw new Error('No WebGPU adapter was found.');
   const feats = [];
   // 'timestamp-query' é pedido na medição de desempenho (?perf) e no jogo aberto por uma pessoa (benchmark e estatísticas
   // mostram o tempo de GPU quando o navegador permite); ?nots desliga. Captura, poses e testes continuam sem o recurso.
   for (const f of ['float32-filterable', 'rg11b10ufloat-renderable'].concat((Q.has('perf') || GAME.ui) && !Q.has('nots') ? ['timestamp-query'] : [])) if (ad.features.has(f)) feats.push(f);
-  if (!ad.features.has('float32-filterable')) throw new Error('GPU sem float32-filterable.');
+  if (!ad.features.has('float32-filterable')) throw new Error('This GPU cannot filter 32-bit float textures (float32-filterable), which the game needs.');
   G.hasTS = feats.includes('timestamp-query');
   G.dev = await ad.requestDevice({
     requiredFeatures: feats,
@@ -55,7 +58,7 @@ function wgslPP(name, defs) {
   defs = Object.assign({}, defs);
   const seen = {};
   const run = (nm) => {
-    const src = WGSL[nm]; if (src === undefined) throw new Error('wgsl ausente: ' + nm);
+    const src = WGSL[nm]; if (src === undefined) throw new Error('missing wgsl: ' + nm);
     const out = []; const st = []; let on = true;
     for (const line of src.split('\n')) {
       const t = line.trim();

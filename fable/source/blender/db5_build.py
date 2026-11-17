@@ -34,7 +34,7 @@ material('black', 2, 0, (0.02, 0.02, 0.021), ((0.02, 0.02, 0.02), 0.0, 0.6))
 material('tire', 21, 0, (0.02, 0.02, 0.021), ((0.012, 0.012, 0.012), 0.0, 0.75))
 material('spoke', 7, 2, (0.85, 0.85, 0.87), ((0.85, 0.85, 0.87), 1.0, 0.15))
 material('wheelblur', 27, 0, (0.7, 0.7, 0.72), ((0.7, 0.7, 0.72), 1.0, 0.3), target='skip')
-material('reflector', 23, 0, (0.9, 0.9, 0.92), ((0.95, 0.95, 0.95), 1.0, 0.03))
+material('reflector', 23, 0, (0.9, 0.9, 0.92), ((0.95, 0.95, 0.95), 1.0, 0.28))
 material('lens_clear', 22, 0, (0.9, 0.9, 0.88), ((0.9, 0.9, 0.88), 0.0, 0.05, dict(glass=1)))
 material('lens_amber', 22, 2, (0.75, 0.33, 0.03), ((0.8, 0.3, 0.02), 0.0, 0.15))
 material('lens_red', 22, 1, (0.6, 0.02, 0.015), ((0.5, 0.01, 0.01), 0.0, 0.15))
@@ -131,12 +131,8 @@ def build_body():
     window(f_backlight, lambda f: paint(f) and f.normal.y > 0.25 and cen(f).y > 0.95 and -1.85 < cen(f).x < -1.0,
            [(0.010, 'chrome', 0.004), (0.010, 'rubber', 0.002)])
     # --- headlamp cowls: chrome rim, Perspex cover (slightly domed)
-    window(f_aperture, lambda f: paint(f) and cen(f).x > 1.5 and abs(cen(f).z) > 0.5, [(0.011, 'chrome', 0.005)], glass_mat='glass_lamp', sink=0.0)
-    for v in glass.bm.verts:
-        if v.co.x > 1.5:
-            dep = float(S.top_raw(v.co.x, np.array([abs(v.co.z)]))[0]) - float(S.cowl_clip(v.co.x, np.array([abs(v.co.z)]))[0])
-            k = min(max(dep / 0.07, 0.0), 1.0)
-            v.co += Vector((0.67, 0.74, 0.0)) * 0.016 * (1 - (1 - k) ** 2)
+    # --- headlamp apertures: just the opening here; the Perspex cover, chrome rim and tunnel are built in db5_parts
+    window(lambda p: f_aperture(p) + 0.004, lambda f: paint(f) and cen(f).x > 1.5 and abs(cen(f).z) > 0.5, [], glass_mat=None)
     # --- grille mouth with a bright surround; wing vents
     window(f_grille, lambda f: paint(f) and cen(f).x > 1.8, [(0.012, 'chrome', 0.004)], glass_mat=None)
     window(f_vent, lambda f: paint(f) and side(f) and 0.3 < cen(f).x < 0.95, [(0.007, 'chrome', 0.003)], glass_mat=None)
@@ -179,6 +175,7 @@ def setup_scene():
         sc.cycles.use_denoising = False
     w, h = (opt('--res') or '960x540').split('x')
     sc.render.resolution_x, sc.render.resolution_y = int(w), int(h)
+    sc.render.film_transparent = '--transparent' in ARGS
     sc.view_settings.view_transform = 'Filmic'
     sc.view_settings.look = 'Medium High Contrast'
     sc.view_settings.exposure = float(opt('--exposure', -3.0))
@@ -195,6 +192,7 @@ def setup_scene():
     nt.links.new(sky.outputs[0], nt.nodes['Background'].inputs[0])
     bpy.ops.mesh.primitive_plane_add(size=120)
     g = bpy.context.object
+    g.is_shadow_catcher = '--transparent' in ARGS
     m = bpy.data.materials.new('ground')
     m.use_nodes = True
     m.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.32, 0.32, 0.33, 1)
@@ -256,6 +254,7 @@ VIEWS = {
     'seats': ((0.05, 1.20, -1.35), (-0.45, 0.55, 0.15), 24),         # through the passenger door, like the gadget-cabin photo
     'rearseat': ((-0.25, 1.05, 0.0), (-1.4, 0.60, 0.0), 18),
     'wheel': ((1.9, 0.5, 2.3), (1.2, 0.34, 0.7), 60),
+    'icon': ((5.6, 1.7, 4.2), (-0.25, 0.55, 0.0), 50),
     'nose': ((3.3, 0.85, 1.35), (1.75, 0.60, 0.25), 60),
     'nose2': ((2.75, 1.25, 1.05), (1.72, 0.72, 0.42), 70),
     'lamp': ((2.7, 0.95, 1.5), (1.78, 0.68, 0.66), 85),

@@ -26,12 +26,24 @@ fn vert(in: VIn) -> VSOut {
   let V = normalize(F.camPos.xyz - in.pos.xyz);
   let ph = 0.55 + 0.45 * pow(sat(dot(-V, F.sunDir.xyz) * 0.5 + 0.5), 3.0) * 2.2;
   let amb = max(F.sh[0].rgb + F.sh[1].rgb * 0.5, vec3f(0.0));
+#ifdef DB5
+  // gadget particles that glow by themselves (tracers): misc.z = 1 → the colour is what they emit, whatever the light on them
+  o.col = vec4f(in.col.rgb * mix(F.sunCol.rgb * (0.15 + 0.85 * sh) * ph / PI + amb * 1.2, vec3f(1.0), in.misc.z), in.col.a);
+  o.ext = vec4f(in.misc.y, in.misc.z, 0.0, 0.0);
+#else
   o.col = vec4f(in.col.rgb * (F.sunCol.rgb * (0.15 + 0.85 * sh) * ph / PI + amb * 1.2), in.col.a);
   o.ext = vec4f(in.misc.y, 0.0, 0.0, 0.0);
+#endif
   return o;
 }
 fn shade(in: V2F, ff: bool) -> vec4f {
   let r = length(in.uv);
+#ifdef DB5
+  if (in.ext.y > 0.5) {   // glowing dot (tracer): a soft additive blob, hidden by anything in front of it
+    let g = sat(1.0 - r); let zn = F.camFwd.w / in.pos.z;
+    return vec4f(in.col.rgb * (g * g * in.col.a * smoothstep(0.4, 2.5, zn)), 0.0);
+  }
+#endif
   // dois níveis de ruído deslocados pela semente: bordas rasgadas e miolo com relevo
   let sd = vec2f(in.ext.x * 7.3, in.ext.x * 3.1);
   let n = textureSampleLevel(tNoise, sLin, in.uv * 0.19 + sd, 1.0);

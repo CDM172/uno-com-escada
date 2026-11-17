@@ -382,8 +382,20 @@ def preview_material(name):
         b.inputs['Coat Weight'].default_value = ex['coat']
         b.inputs['Coat Roughness'].default_value = 0.05
     if ex.get('glass'):
-        b.inputs['Transmission Weight'].default_value = 1.0
-        b.inputs['IOR'].default_value = 1.45
+        # thin sheet glass for the previews: see-through without refraction, with a Fresnel reflection on top
+        nt = m.node_tree
+        out = nt.nodes['Material Output']
+        tr = nt.nodes.new('ShaderNodeBsdfTransparent')
+        tr.inputs['Color'].default_value = (*rgb, 1)
+        gl = nt.nodes.new('ShaderNodeBsdfGlossy')
+        gl.inputs['Roughness'].default_value = 0.0
+        fr = nt.nodes.new('ShaderNodeFresnel')
+        fr.inputs['IOR'].default_value = 1.5
+        mx = nt.nodes.new('ShaderNodeMixShader')
+        nt.links.new(fr.outputs[0], mx.inputs[0])
+        nt.links.new(tr.outputs[0], mx.inputs[1])
+        nt.links.new(gl.outputs[0], mx.inputs[2])
+        nt.links.new(mx.outputs[0], out.inputs['Surface'])
     if ex.get('emit'):
         b.inputs['Emission Color'].default_value = (*rgb, 1)
         b.inputs['Emission Strength'].default_value = ex['emit']

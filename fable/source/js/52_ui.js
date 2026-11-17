@@ -2,12 +2,22 @@
 // poses, teclas de ferramenta e leitura do controle. Nas ferramentas de trabalho/ (captura, poses, teste, medição) nada
 // disto é ligado: sem menu, sem painel, sem som.
 const ST = { INICIO: 0, JOGO: 1, PAUSA: 2, BENCH: 3, FITA: 4, RESULT: 5, POSE: 6 };
-const UI = { st: ST.INICIO, back: ST.JOGO, el: null, tag: null, res: null, b0: null, b1: null, bench: null, benchN: 0, padPrev: 0, padN: 0, pose: -1, stats: false, warm: false };
+const UI = { st: ST.INICIO, back: ST.JOGO, el: null, tag: null, res: null, b0: null, b1: null, cars: null, bench: null, benchN: 0, padPrev: 0, padN: 0, pose: -1, stats: false, warm: false };
+// the best lap is kept per car (the DB5 and the Uno are not in the same league)
+const BEST_KEY = GAD.on ? 'db5-melhor' : 'uno-melhor';
 const $ = id => document.getElementById(id);
 function uiInit() {
-  UI.el = $('ui'); UI.tag = $('tag'); UI.res = $('res'); UI.b0 = $('b0'); UI.b1 = $('b1');
+  UI.el = $('ui'); UI.tag = $('tag'); UI.res = $('res'); UI.b0 = $('b0'); UI.b1 = $('b1'); UI.cars = $('cars');
   hudInit(); uiWarmup();
-  try { const b = +localStorage.getItem('uno-melhor'); if (b > 20 && b < 600) LAP[2] = b; } catch (e) { /* sem armazenamento local: a melhor volta vale só nesta sessão */ }
+  try { const b = +localStorage.getItem(BEST_KEY); if (b > 20 && b < 600) LAP[2] = b; } catch (e) { /* sem armazenamento local: a melhor volta vale só nesta sessão */ }
+  // Start screen: the car that is loaded goes in the subtitle and is marked in the chooser; picking the other one reloads
+  // the page with ?car=... (the other parameters of the address are kept). The gadget keys are listed with the DB5.
+  $('sub').textContent = (GAD.on ? 'Aston Martin DB5 · 1964' : 'Fiat Uno Mille EP · 1996 · with a ladder') + ' · Serra da Mata circuit';
+  for (const b of document.querySelectorAll('#cars .car')) {
+    const c = b.dataset.car, sel = c === CARSEL; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+    b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('car', c); location.search = q.toString(); };
+  }
+  if (GAD.on) { $('gcol').style.display = ''; $('pk').textContent = '1 to ' + POSES.length; }
   UI.b0.onclick = () => { if (UI.st === ST.INICIO) { sndStart(); uiSet(ST.JOGO); } else uiResume(); };
   UI.b1.onclick = () => benchStart();
   addEventListener('keydown', uiKey);
@@ -20,10 +30,10 @@ function uiInit() {
 function uiSet(st) {
   const menu = st === ST.INICIO || st === ST.PAUSA || st === ST.RESULT;
   UI.st = st; UI.el.style.display = menu ? 'flex' : 'none'; UI.el.className = st === ST.INICIO ? 'ini' : '';
-  UI.b0.textContent = st === ST.INICIO ? 'Começar' : st === ST.RESULT ? 'Voltar a dirigir' : 'Continuar';
-  UI.b1.style.display = st === ST.INICIO ? 'none' : ''; UI.b1.textContent = st === ST.RESULT ? 'Repetir benchmark' : 'Benchmark';
-  UI.res.style.display = st === ST.RESULT ? 'block' : 'none';
-  UI.tag.textContent = st === ST.BENCH ? 'Benchmark: volta roteirizada de 60 s · Esc cancela' : st === ST.FITA ? 'Volta roteirizada · R assume o volante · Esc menu' : st === ST.POSE ? 'Pose ' + (UI.pose + 1) + ' · ' + POSES[UI.pose].nome + ' · 1 a 6 trocam · Esc volta a dirigir' : '';
+  UI.b0.textContent = st === ST.INICIO ? 'Start' : st === ST.RESULT ? 'Back to driving' : 'Resume';
+  UI.b1.style.display = st === ST.INICIO ? 'none' : ''; UI.b1.textContent = st === ST.RESULT ? 'Run the benchmark again' : 'Benchmark';
+  UI.res.style.display = st === ST.RESULT ? 'block' : 'none'; UI.cars.style.display = st === ST.INICIO ? 'flex' : 'none';
+  UI.tag.textContent = st === ST.BENCH ? 'Benchmark: 60 s demo lap · Esc cancels' : st === ST.FITA ? 'Demo lap · R takes the wheel · Esc menu' : st === ST.POSE ? 'Pose ' + (UI.pose + 1) + ' · ' + (POSES[UI.pose].label || POSES[UI.pose].nome) + ' · 1 to ' + POSES.length + ' switch · Esc back to driving' : '';
   UI.tag.style.display = UI.tag.textContent ? 'block' : 'none';
   hudShow(st === ST.JOGO || st === ST.FITA || (st === ST.PAUSA && UI.back !== ST.BENCH));
   sndRun(st === ST.JOGO || st === ST.FITA || st === ST.BENCH);
@@ -36,7 +46,7 @@ function uiResume() {
 }
 // volta ao volante: carro no grid, câmeras e simulação soltas
 function uiDrive() { GS.frozen = false; GS.freeCam = false; GS.replayOn = false; gameRestart(); uiSet(ST.JOGO); }
-function uiReplay() { if (!GS.replay) return; GS.frozen = false; GS.freeCam = false; GS.replayOn = true; gameRestart(); uiSet(ST.FITA); }
+function uiReplay() { if (!GS.replayLen) return; GS.frozen = false; GS.freeCam = false; GS.replayOn = true; gameRestart(); uiSet(ST.FITA); }
 function uiPose(i) { if (UI.st === ST.BENCH) benchStop(); UI.pose = i; poseApply(i); GS.replayOn = false; uiSet(ST.POSE); }
 function uiKey(e) {
   if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -48,12 +58,12 @@ function uiKey(e) {
   else if (c === 'KeyB') benchStart();
   else if (c === 'KeyF') uiReplay();
   else if (c === 'KeyR' && st === ST.FITA) uiDrive();
-  else if (c.length === 6 && c.startsWith('Digit') && c[5] >= '1' && c[5] <= '6') uiPose(+c[5] - 1);
+  else if (c.length === 6 && c.startsWith('Digit') && c[5] >= '1' && +c[5] <= POSES.length) uiPose(+c[5] - 1);
 }
 // ---- benchmark: a volta roteirizada de 60 s em tempo real, sem painel, medindo tempo de quadro e (se houver) tempo de GPU
 function benchStart() {
-  if (!GS.replay || UI.st === ST.INICIO) return;
-  GS.frozen = false; GS.freeCam = false; GS.replayOn = true; gameRestart(); UI.bench = null; UI.benchN++; UI.res.innerHTML = '<h2>Benchmark · calculando…</h2>';
+  if (!GS.replayLen || UI.st === ST.INICIO) return;
+  GS.frozen = false; GS.freeCam = false; GS.replayOn = true; gameRestart(); UI.bench = null; UI.benchN++; UI.res.innerHTML = '<h2>Benchmark · calculating…</h2>';
   perfAttach(true, 1); perfStart(); uiSet(ST.BENCH);
 }
 function benchStop() { PERF.rec = false; perfAttach(UI.stats, 12); GS.replayOn = false; }
@@ -62,12 +72,12 @@ function benchEnd() {
   setTimeout(() => {   // espera as últimas leituras de tempo de GPU chegarem
     if (id !== UI.benchN || UI.st !== ST.RESULT) return;
     const r = perfReport(), stat = a => { a = a.slice(5).filter(x => x > 0).sort((p, q) => p - q); const n = a.length; return n ? { n, media: a.reduce((p, q) => p + q, 0) / n, p99: a[Math.min(n - 1, Math.round(0.99 * (n - 1)))], max: a[n - 1], acima: a.filter(x => Math.round(x * 10) > 167).length } : null; };   // acima: quadros que passaram de 16,7 ms (na resolução de 0,1 ms do relógio)
-    const q = stat(r.raf), g = PERF.qs ? stat(r.gpu) : null, f = x => x.toFixed(2).replace('.', ',');
+    const q = stat(r.raf), g = PERF.qs ? stat(r.gpu) : null, f = x => x.toFixed(2);
     benchStop(); gameRestart();
     UI.bench = { quadros: r.n, quadro_ms: q, gpu_ms: g, fps: q ? 1000 / q.media : 0, acima_16_7: q ? q.acima : 0, gpu_acima_16_7: g ? g.acima : null, tick: 3600, resolucao: G.W + '×' + G.H };
-    const row = (n, s) => '<tr><th>' + n + '</th>' + (s ? '<td>' + f(s.media) + '</td><td>' + f(s.p99) + '</td><td>' + f(s.max) + '</td>' : '<td colspan=3>indisponível neste navegador</td>') + '</tr>';
-    UI.res.innerHTML = '<h2>Benchmark · volta roteirizada de 60 s · ' + G.W + '×' + G.H + '</h2><table><tr><th></th><th>média (ms)</th><th>percentil 99 (ms)</th><th>máximo (ms)</th></tr>' + row('Tempo de quadro', q) + row('Tempo de GPU', g) + '</table>' +
-      '<p>' + (q ? q.acima + ' de ' + q.n + ' quadros passaram de 16,7 ms de intervalo' + (g ? ' · ' + g.acima + ' passaram de 16,7 ms de GPU' : '') + ' · ' + f(1000 / q.media) + ' quadros por segundo' : '') + '</p>';
+    const row = (n, s) => '<tr><th>' + n + '</th>' + (s ? '<td>' + f(s.media) + '</td><td>' + f(s.p99) + '</td><td>' + f(s.max) + '</td>' : '<td colspan=3>not available in this browser</td>') + '</tr>';
+    UI.res.innerHTML = '<h2>Benchmark · 60 s demo lap · ' + G.W + '×' + G.H + '</h2><table><tr><th></th><th>average (ms)</th><th>99th percentile (ms)</th><th>maximum (ms)</th></tr>' + row('Frame time', q) + row('GPU time', g) + '</table>' +
+      '<p>' + (q ? q.acima + ' of ' + q.n + ' frames took longer than 16.7 ms' + (g ? ' · ' + g.acima + ' took more than 16.7 ms of GPU time' : '') + ' · ' + f(1000 / q.media) + ' frames per second' : '') + '</p>';
   }, 400);
 }
 // ---- controle (Gamepad API, layout padrão). Só é consultado enquanto houver um controle ligado.
@@ -91,6 +101,8 @@ function padApply() {
   PADV[2] = x;
   if (rt > 0.06) k |= K_W; if (lt > 0.06) k |= K_S;
   if (m & 1) k |= K_SPACE; if (m & 8) k |= K_C; if (m & 4) k |= K_R; if (m & 32) k |= K_V;
+  // DB5 gadgets: B guns, LB smoke screen, Back rams, L3 horn, R3 ejector seat, d-pad up shield, down oil, left plates, right slashers
+  if (GAD.on && (m & 0xFD12)) k |= ((m & 2) ? K_GGUN : 0) | ((m & 16) ? K_GSMOKE : 0) | ((m & 256) ? K_GRAM : 0) | ((m & 1024) ? K_GHORN : 0) | ((m & 2048) ? K_GEJECT : 0) | ((m & 4096) ? K_GSHIELD : 0) | ((m & 8192) ? K_GOIL : 0) | ((m & 16384) ? K_GPLATE : 0) | ((m & 32768) ? K_GSLASH : 0);
   GS.padKeys = k;
   const edge = m & ~UI.padPrev; UI.padPrev = m;
   if (edge & 516) padMenu(edge);
@@ -126,9 +138,9 @@ function uiAfter() {
   const st = UI.st;
   if (st === ST.BENCH) { if (GS.tick60 >= 3600) benchEnd(); }
   else {
-    if (st === ST.FITA && GS.tick60 >= GS.replay.length) { GS.replayOn = false; uiSet(ST.JOGO); }
+    if (st === ST.FITA && GS.tick60 >= GS.replayLen) { GS.replayOn = false; uiSet(ST.JOGO); }
     if (HUD.vis) hudFrame();
-    if (GS.lapNew) { GS.lapNew = false; try { localStorage.setItem('uno-melhor', LAP[2].toFixed(3)); } catch (e) { /* idem */ } }
+    if (GS.lapNew) { GS.lapNew = false; try { localStorage.setItem(BEST_KEY, LAP[2].toFixed(3)); } catch (e) { /* idem */ } }
   }
   if (HUD.stats) hudStatsFrame();
   sndFrame();
