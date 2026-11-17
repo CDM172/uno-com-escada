@@ -116,7 +116,7 @@ def f_vent(p):
 
 
 # --- tail lamp recesses (rear view): wide rectangles either side of the boot lid
-TAIL_Z0, TAIL_Z1, TAIL_Y0, TAIL_Y1 = 0.425, 0.733, 0.575, 0.674
+TAIL_Z0, TAIL_Z1, TAIL_Y0, TAIL_Y1 = 0.425, 0.715, 0.575, 0.674
 
 
 def f_tail(p):

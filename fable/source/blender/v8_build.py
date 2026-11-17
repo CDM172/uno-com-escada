@@ -70,7 +70,7 @@ material('mesh', 2, 1, (0.03, 0.03, 0.032), ((0.03, 0.03, 0.032), 0.6, 0.45))
 
 
 def build_body():
-    nu, nv = (120, 80) if FAST else (230, 110)
+    nu, nv = (120, 96) if FAST else (240, 150)
     P, xs = S.body_grid(nu, nv)
     body = Part('body', mirror=True).mat('paint')
     glass = Part('glass', mirror=True, target='glass').mat('glass')
@@ -264,6 +264,8 @@ VIEWS = {
     'icon': ((5.9, 1.7, 4.4), (-0.15, 0.55, 0.0), 50),
     'nose': ((3.8, 0.85, 1.45), (1.95, 0.60, 0.25), 60),
     'tail': ((-4.2, 0.95, 1.5), (-2.25, 0.62, 0.2), 60),
+    'haunch': ((-3.6, 1.35, 2.4), (-1.9, 0.85, 0.6), 50),
+    'wing': ((2.6, 1.45, 2.3), (1.0, 0.85, 0.5), 50),
 }
 
 

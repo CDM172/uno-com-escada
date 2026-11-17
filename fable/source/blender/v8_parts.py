@@ -189,7 +189,7 @@ def build_exterior(fast=False):
     ext.box((c.x, c.y, c.z + 0.002), (0.046, 0.013, 0.006), bevel=0.002)
 
     # ---- tail lamps: four segments in each recess (indicator, tail/stop, tail, reversing), chrome dividers
-    segs = ((0.655, 0.733, 'lens_amber'), (0.575, 0.655, 'lens_red'), (0.500, 0.575, 'lens_red'), (0.425, 0.500, 'lens_white'))
+    segs = ((0.645, 0.715, 'lens_amber'), (0.570, 0.645, 'lens_red'), (0.497, 0.570, 'lens_red'), (0.425, 0.497, 'lens_white'))
     for z0, z1, m in segs:
         ext.mat(m)
         _, fs = ext.grid(lambda u, v: (rx(z0 + (z1 - z0) * u, F.TAIL_Y0 + 0.004 + (F.TAIL_Y1 - F.TAIL_Y0 - 0.008) * v) + 0.006,

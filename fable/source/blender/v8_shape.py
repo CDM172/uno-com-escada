@@ -99,8 +99,8 @@ Y_CREST = Curve([(-2.40, 0.788), (-2.37, 0.790), (-2.33, 0.792), (-2.25, 0.805),
 Z_CREST = Curve([(-2.40, 0.765), (-2.30, 0.780), (-2.0, 0.815), (-1.6, 0.850), (-0.9, 0.862), (0.4, 0.866), (1.2, 0.862),
                  (1.8, 0.850), (2.0, 0.835), (2.22, 0.80)], sigma=0.05)
 # inboard of the crest: + falls to a valley (bonnet sides, boot), - rises (the shelf up to the side glass)
-DIP = Curve([(-2.40, 0.015), (-1.6, 0.012), (-1.2, 0.0), (-0.9, -0.016), (0.42, -0.016), (0.55, 0.012), (0.9, 0.012), (1.6, 0.005),
-             (2.22, 0.0)], sigma=0.04)
+DIP = Curve([(-2.40, 0.012), (-1.6, 0.010), (-1.2, 0.0), (-0.9, -0.014), (0.30, -0.014), (0.70, 0.010), (0.9, 0.011), (1.6, 0.005),
+             (2.22, 0.0)], sigma=0.08)
 W_DIP = Curve([(-2.4, 0.10), (2.2, 0.10)], sigma=0.0)
 # bonnet: centre-line height without the bulge, and half width of its crown
 Y_BONNET = Curve([(0.40, 0.880), (0.60, 0.877), (1.00, 0.868), (1.40, 0.853), (1.79, 0.832), (1.90, 0.824), (2.00, 0.806),
@@ -247,7 +247,7 @@ def lower(x, n1=70, n2=110):
     ch = np.linalg.norm(m - p0)
     d0 = np.array([0.45, 0.89])
     flank = _bezier(p0, p0 + d0 * ch * 0.42, m - np.array([0, 1]) * ch * 0.46, m, n1)
-    ky, kz = 0.78, 0.62
+    ky, kz = 0.66, 0.56
     sh = _bezier(m, m + np.array([0, ky * (yc - ym)]), c + np.array([kz * (zm - zc), 0]), c, n2)
     return flank, sh, zc
 
@@ -257,12 +257,14 @@ def _smooth(p, r):
     n = len(p)
     d = np.linalg.norm(np.diff(p, axis=0), axis=1)
     step = max(d.mean(), 1e-6)
-    pad = int(np.ceil(r.max() / step)) + 2
+    pad = min(int(np.ceil(r.max() / step)) + 2, n - 2)
+    if pad < 2:
+        return p
     head = p[1:pad + 1][::-1] * np.array([-1.0, 1.0])
     tail = p[-pad - 1:-1][::-1] * np.array([-1.0, 1.0])
     q = np.vstack([head, p, tail])
     c = np.vstack([np.zeros((1, 2)), np.cumsum(q, axis=0)])
-    w = np.maximum(1, np.round(r / step).astype(int))
+    w = np.clip(np.round(r / step).astype(int), 1, pad - 1)
     i = np.arange(n) + pad
     return (c[i + w + 1] - c[i - w]) / (2 * w + 1)[:, None]
 
@@ -324,11 +326,16 @@ def section(x, n=None, dense=900, fillet=True, cowl=True):
         edge = np.convolve((np.abs(np.gradient(cs)) > 1e-4).astype(float), np.ones(31), mode='same') > 0
         r = np.full(dense, 0.012)
         r = np.where(np.abs(su * sp[-1] - sp[39]) < 0.05, 0.03, r)
+        # the V8's shoulder: a soft radius where the flank Bezier meets the top surface at the crest
+        zc_, yc_ = float(min(Z_CREST(x), Z_MAX(x) - 0.035)), float(h_low(x, np.array([min(Z_CREST(x), Z_MAX(x) - 0.035)]))[0])
+        ic = int(np.argmin(np.hypot(pts[:, 0] - zc_, pts[:, 1] - yc_)))
+        r = np.where(np.abs(su * sp[-1] - sp[ic]) < 0.10, np.maximum(r, 0.045), r)
         for _ in range(2):
             p = _smooth(p, r * 0.7)
         p[0, 0] = 0.0
         p[-1, 0] = 0.0
-    return _resample(p, n, adaptive=True) if n else p
+    # even spacing along the section: the V8's tight shoulder made curvature-weighted spacing jump between stations
+    return _resample(p, n, adaptive=False) if n else p
 
 
 def stations(nu):
