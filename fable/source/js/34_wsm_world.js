@@ -361,6 +361,22 @@ function townBuilding(mb, b) {
     }
   }
   mb.weight(0);
+  // the Grand Pier's pavilion: four corner towers with pointed caps
+  if (kind === 8) {
+    for (const [cu, cv] of [[u0 + 2.5, v0 + 2.5], [u1 - 2.5, v0 + 2.5], [u0 + 2.5, v1 - 2.5], [u1 - 2.5, v1 - 2.5]]) {
+      const x = toXg(cu, cv, cr, sr), z = toZg(cu, cv, cr, sr), ty = eaveY + 3.2;
+      mb.push(m4basis(m4(), cr, 0, sr, 0, 1, 0, -sr, 0, cr, x, 0, z));
+      mb.mat(15).color(0.74, 0.74, 0.72, 1); mb.box(0, (base + ty) / 2, 0, 5, ty - base, 5);
+      mb.mat(13, 90).color(0.16, 0.24, 0.3, 1);
+      const apex = mb.v(0, ty + 4.5, 0, 0, 1, 0, 0, 0);
+      for (let q = 0; q < 4; q++) {
+        const a0 = q * PI / 2 + PI / 4, a1 = a0 + PI / 2, r = 3.4, nxq = Math.cos(a0 + PI / 4), nzq = Math.sin(a0 + PI / 4);
+        const p0 = mb.v(Math.cos(a0) * r, ty, Math.sin(a0) * r, nxq, 0.6, nzq, 0, 0), p1 = mb.v(Math.cos(a1) * r, ty, Math.sin(a1) * r, nxq, 0.6, nzq, 1, 0);
+        townTri(mb, p0, p1, apex, nxq * (1 - 2 * 0), 0.6, nzq);
+      }
+      mb.pop();
+    }
+  }
   // ---- roof
   const tris = [];
   if (roof === 3) return;
