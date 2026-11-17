@@ -112,7 +112,7 @@ function vehicleReset(s, d, heading) {
   const V = VEH; trackPos(s, d, _vp);
   V.x = _vp[0]; V.z = _vp[2]; V.yaw = Math.atan2(_vp[4], _vp[3]) + (heading || 0);
   V.vx = V.vy = V.r = 0; V.steer = 0; V.rpm = VP.rpmIdle; V.gear = 1; V.ax = V.ay = 0; V.roll = V.rollV = V.pitch = V.pitchV = V.heave = V.heaveV = 0;
-  V.hint = -1; V.whint.fill(-1); V.omega.fill(0); V.slip.fill(0);
+  V.hint = -1; V.whint.fill(-1); V.omega.fill(0); V.slip.fill(0); assistReset();
   _gq[0] = V.x; _gq[1] = V.z; groundQ(-1); V.y = _gq[8]; V.gPitch = 0; V.gRoll = 0; V.lastS = V.s;
   for (let k = 0; k < 6; k++) vehicleGround(1);
   vehicleSavePrev();
@@ -139,7 +139,9 @@ function vehicleStep(keys) {
   // (as teclas também passam por VIN: assim thr, brk e sIn são sempre números de ponto flutuante lidos de um vetor tipado, e o
   // compilador intermediário do V8 não precisa pôr em caixa a mistura de inteiro com fração — os valores são os mesmos 0 e 1)
   if (!(keys & K_PAD)) { VIN[0] = (keys & K_W) ? 1 : 0; VIN[1] = (keys & K_S) ? 1 : 0; }
-  const thr = VIN[0], brk = VIN[1], hand = (keys & K_SPACE) ? 1 : 0;
+  const ez = HAND.on;   // Easy handling, a person driving (40_assist.js); false: the arithmetic below is exactly what it always was
+  if (ez) assistPedals();
+  const thr = ez ? ASQ[0] : VIN[0], brk = ez ? ASQ[1] : VIN[1], hand = (keys & K_SPACE) ? 1 : 0;
   const speed = Math.sqrt(V.vx * V.vx + V.vy * V.vy);
   // --- direção digital suavizada, com batente dependente da velocidade
   if (!(keys & K_PADS)) VIN[2] = ((keys & K_D) ? 1 : 0) - ((keys & K_A) ? 1 : 0);
@@ -147,11 +149,13 @@ function vehicleStep(keys) {
   const sMax = Math.min(P.steerMax, Math.max(0.05, Math.atan(P.L * P.steerLat / Math.max(speed * speed, 1)) * 1.25));
   // teclado: direção digital suavizada; analógico do controle: o volante segue a alavanca quase direto
   let sTgt = sIn * sMax, sRate = ((keys & K_PADS) ? 2.4 + 5 * sMax : sIn !== 0 && Math.sign(sTgt - V.steer) === sIn ? 1.15 + 1.2 * sMax : 2.6 * Math.max(0.25, sMax)) * dt;
-  if (P.catchK > 0 && V.vx > 4) {
+  if (ez) { ASQ[2] = speed; assistSteer(keys); sTgt = ASQ[2]; sRate = ASQ[3]; }   // (Easy: the lock the tyres can take, reached smoothly)
+  const catchK = ez ? ASSIST.catchK : P.catchK, catchAt = ez ? ASSIST.catchAt : P.catchAt;   // (Easy: every car catches a slide)
+  if (catchK > 0 && V.vx > 4) {
     // DB5: when the tail steps out, the front wheels turn into the slide by themselves, as a steering wheel does when the
     // driver lets it run through the hands (the speed-dependent lock above would leave no opposite lock to catch it with)
-    const br = Math.atan2(V.vy - V.r * P.b, V.vx), ex = br > P.catchAt ? br - P.catchAt : br < -P.catchAt ? br + P.catchAt : 0;
-    if (ex !== 0) { sTgt += ex * P.catchK; if (sTgt > P.steerMax) sTgt = P.steerMax; else if (sTgt < -P.steerMax) sTgt = -P.steerMax; if (sRate < 3 * dt) sRate = 3 * dt; }
+    const br = Math.atan2(V.vy - V.r * P.b, V.vx), ex = br > catchAt ? br - catchAt : br < -catchAt ? br + catchAt : 0;
+    if (ex !== 0) { sTgt += ex * catchK; if (sTgt > P.steerMax) sTgt = P.steerMax; else if (sTgt < -P.steerMax) sTgt = -P.steerMax; if (sRate < 3 * dt) sRate = 3 * dt; }
   }
   V.steer += Math.min(sRate, Math.max(-sRate, sTgt - V.steer));
   // --- marcha, motor, ré
@@ -183,6 +187,7 @@ function vehicleStep(keys) {
   const cosg = Math.cos(V.gPitch);
   V.fz[0] = Math.max(60, (W * P.b / P.L * cosg - dFx) * 0.5 + dFy * P.rollF); V.fz[1] = Math.max(60, (W * P.b / P.L * cosg - dFx) * 0.5 - dFy * P.rollF);
   V.fz[2] = Math.max(60, (W * P.a / P.L * cosg + dFx) * 0.5 + dFy * P.rollR); V.fz[3] = Math.max(60, (W * P.a / P.L * cosg + dFx) * 0.5 - dFy * P.rollR);
+  if (ez && Tdrive > 0) { ASQ[0] = Tdrive; assistTraction(); Tdrive = ASQ[0]; }   // (Easy: traction control)
   // --- forças dos pneus
   let Fx = 0, Fy = 0, Mz = 0; const cs = Math.cos(V.steer), sn = Math.sin(V.steer);
   const lw0 = Math.min(1, Math.max(0, (speed - 0.4) / 1.8));
@@ -190,6 +195,7 @@ function vehicleStep(keys) {
   for (let i = 0; i < 4; i++) {
     const front = i < 2, driven = front !== rwd, zone = V.wzone[i];
     let mu = P.mu * ZMU[zone]; if (GAD.gripOn) mu *= gadGrip(i);   // (oil slick laid by the DB5, spiked tyres and skis of the V8: see 41_gadgets.js)
+    if (ez) mu *= ASSIST.muK;
     const cap = mu * V.fz[i];
     // velocidade do ponto de contato no referencial do corpo
     const vxw = V.vx - V.r * WLZ[i], vyw = V.vy + V.r * WLX[i];
@@ -207,6 +213,7 @@ function vehicleStep(keys) {
     if (locked) { latCap = cap * 0.34; }
     else if (Math.abs(fxd) > cap * 0.985) {
       if (driven && Math.abs(Tdrive) * 0.5 / P.R > bdem && throttle) { fx = Math.sign(fxd) * cap * 0.9; spinning = true; latCap = cap * P.spinLat; }   // patina
+      else if (ez) { fx = Math.sign(fxd) * cap * 0.9; latCap = cap * 0.42; }   // (Easy: ABS that keeps the wheels turning, so the car still steers)
       else { fx = Math.sign(fxd) * cap * 0.97; latCap = cap * 0.243; }                                                             // ABS
     } else latCap = Math.sqrt(cap * cap - fx * fx);
     // lateral: Pacejka simplificado; em baixa velocidade mistura com amortecimento viscoso (estável parado)
@@ -227,6 +234,7 @@ function vehicleStep(keys) {
     const fbx = front ? fx * cs - fy * sn : fx, fby = front ? fx * sn + fy * cs : fy;
     Fx += fbx; Fy += fby; Mz += WLX[i] * fby - WLZ[i] * fbx;
   }
+  if (ez) { ASQ[0] = Mz; ASQ[1] = Fx; ASQ[2] = Fy; assistStability(hand); Mz = ASQ[0]; Fx = ASQ[1]; Fy = ASQ[2]; }   // (Easy: stability control, spin recovery)
   // arrasto, gravidade nas rampas
   Fx -= 0.5 * 1.2 * P.cdA * V.vx * Math.abs(V.vx);
   if (GAD.forceOn) Fx += GAD.thrust - GAD.dragA * V.vx * Math.abs(V.vx);   // V8: rocket booster, drag of the skis

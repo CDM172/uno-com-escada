@@ -1,5 +1,6 @@
 // Weston-super-Mare: roads, pavements, buildings, piers and the circuit's dressing (34_wsm_world.js). Material by id:
-//  1 road (uv = along, across; a = class, b = markings: 1 centre line, 2 lane lines, 4 double yellow lines; c = half width dm;
+//  1 road (uv = along, across; a = class, b = markings: 1 centre line, 2 lane lines, 4 double yellow lines, 8 white edge
+//    lines, 16 woodland lane (leaf litter, mossy edges), 32 steps (on 4: footway); c = half width dm;
 //    colour r = markings on, away from junctions)   2 pavement slabs   3 kerb stone / skirt   4 footway   5 gravel track
 //  6 pier deck (planks)   7 circuit kerb (red and white)   8 start line (chequers)
 //  10 wall (uv = along the wall, height above the base; a = style, b = storey height dm + 64 x wall material
@@ -54,7 +55,19 @@ fn roadSurf(in: V2F, N: vec3f) -> Surface {
     let e = hw - abs(d);
     y = max(aaL(e - 0.32, 0.04, aa), aaL(e - 0.47, 0.04, aa));
   }
-  m *= on * chip; y *= chip;
+  if ((fl & 8u) != 0u) { m = max(m, aaL(hw - abs(d) - 0.28, 0.05, aa)); }                    // solid white edge lines
+  m *= select(on, 1.0, (fl & 8u) != 0u) * chip; y *= chip;
+  if ((fl & 16u) != 0u) {
+    // a lane through the woods: old patched tarmac, crumbling and mossy at the edges, fallen leaves gathered on both sides
+    let xz = in.wpos.xz; let e = hw - abs(d);
+    let ln = textureSample(tNoise, sLin, xz * 0.9 + 0.3); let lf = textureSample(tNoise, sLin, xz * 3.7 + 0.71);
+    let edgeW = 1.0 - smoothstep(0.0, 0.55 + 0.4 * ln.r, e);
+    s.albedo = mix(s.albedo, vec3f(0.06, 0.07, 0.035) * (0.7 + 0.6 * ln.g), edgeW * 0.75);              // moss and earth
+    let leaves = smoothstep(0.6, 0.72, lf.b) * (0.35 + 0.65 * (1.0 - smoothstep(0.5, 2.0, e)));
+    let lc = mix(vec3f(0.22, 0.12, 0.04), vec3f(0.3, 0.2, 0.06), lf.r) * (0.7 + 0.5 * lf.g);
+    s.albedo = mix(s.albedo, lc, leaves * 0.85); s.rough = mix(s.rough, 0.92, max(leaves, edgeW));
+    s.albedo *= 0.88 + 0.12 * ln.b;                                                                  // damp under the canopy
+  }
   s.albedo = mix(s.albedo, vec3f(0.62, 0.62, 0.6), m);
   s.albedo = mix(s.albedo, vec3f(0.6, 0.42, 0.04), y);
   s.rough = mix(s.rough, 0.55, max(m, y));
@@ -306,7 +319,14 @@ fn surf(in: V2F, ff: bool) -> Surface {
   if (id == 1u) { return roadSurf(in, N); }
   if (id == 2u) { return paveSurf(in, N, 0.6); }
   if (id == 3u) { return kerbStone(in, N); }
-  if (id == 4u) { var s = paveSurf(in, N, 0.45); s.albedo *= vec3f(1.08, 1.04, 0.98); return s; }
+  if (id == 4u) {
+    var s = paveSurf(in, N, 0.45); s.albedo *= vec3f(1.08, 1.04, 0.98);
+    if ((((in.mat >> 16u) & 255u) & 32u) != 0u) {     // stone steps (Monk's Steps): worn limestone treads, shadowed risers
+      let t = fract(in.uv.x / 0.42); let n = textureSample(tNoise, sLin, in.wpos.xz * 1.3).r;
+      s.albedo = vec3f(0.36, 0.35, 0.31) * (0.75 + 0.5 * n) * (1.0 - 0.6 * (1.0 - smoothstep(0.0, 0.14, t))); s.rough = 0.9;
+    }
+    return s;
+  }
   if (id == 5u) { return gravel(in, N); }
   if (id == 6u) { return deckSurf(in, N); }
   if (id == 7u) { return circuitKerb(in, N); }

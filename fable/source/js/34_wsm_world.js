@@ -89,6 +89,13 @@ function townTerrainBuild(rs) {
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (roadCell[j * rgw + i]) return true;
     return false;
   };
+  // 64 m cells within 40 m of the Toll Road
+  const tollCell = new Set(), RD = T.rd, ri = T.rinfo;
+  for (let r = 0; r < RD.n; r++) if (ri[r * 4 + 2] & 128) for (let k = RD.off[r]; k < RD.off[r + 1]; k++) {
+    const x = RD.p[k * 2], z = RD.p[k * 2 + 1];
+    for (let dz = -40; dz <= 40; dz += 20) for (let dx = -40; dx <= 40; dx += 20) tollCell.add(Math.floor((x + dx) / 64) + ',' + Math.floor((z + dz) / 64));
+  }
+  const nearToll = (x, z, size) => { for (let zz = z; zz < z + size; zz += 64) for (let xx = x; xx < x + size; xx += 64) if (tollCell.has(Math.floor(xx / 64) + ',' + Math.floor(zz / 64))) return true; return false; };
   const boxD = (x, z, size) => { const dx = Math.max(T.x0 - (x + size), x - T.x1, 0), dz = Math.max(T.z0 - (z + size), z - T.z1, 0); return Math.hypot(dx, dz); };
   const cache = new Map();
   const split = (x, z, size) => {
@@ -96,7 +103,7 @@ function townTerrainBuild(rs) {
     const key = x + ',' + z + ',' + size; let v = cache.get(key);
     if (v === undefined) {
       const d = boxD(x, z, size);
-      if (d <= 0) v = size > 256 || (size > 128 && hasRoads(x, z, size));
+      if (d <= 0) v = size > 256 || (size > 128 && hasRoads(x, z, size)) || (size > 64 && nearToll(x, z, size));
       else v = d < size * 1.0;
       cache.set(key, v);
     }
@@ -211,11 +218,14 @@ function townRoad(mb, r, G) {
   if (cls === 9) mat = 2; else if (cls === 10) mat = 4; else if (cls === 11) mat = 5;
   if (cls <= 8) {
     const oneway = (fl & 2) !== 0;
-    if (cls <= 6 && !oneway && wd >= 5.5 && lanes !== 1) fla |= 1;
+    if (cls <= 6 && !oneway && wd >= 5.5 && lanes !== 1 && !(fl & 4)) fla |= 1;   // (lane_markings=no: none)
     if (oneway && lanes === 2) fla |= 2;
     const dc = Math.hypot((P.x[0] - 250) / 1.0, (P.z[0] - 250) / 1.3);
-    if (cls >= 2 && cls <= 6 && wd >= 5 && dc < 1100) fla |= 4;
+    if (cls >= 2 && cls <= 6 && wd >= 5 && dc < 1100 && !(fl & 4)) fla |= 4;
+    if (fl & 64) fla |= 8;              // white edge lines (the Toll Road)
+    if (fl & 128) fla |= 16;            // a lane through the woods: leaf litter, worn edges
   }
+  if (cls === 10 && (fl & 16)) fla |= 32;  // steps
   const lift = cls <= 9 ? liftR : 0.05;
   const base = mb.nv;
   for (let i = 0; i < n; i++) {
@@ -230,7 +240,7 @@ function townRoad(mb, r, G) {
   }
   // pavements: kerb face, slabs, back edge, on both sides, where the raster says the pavement is there (not inside
   // another road at a junction, not on the beach, not inside a building)
-  const pw = ROAD_PAVE[cls]; if (!pw) return;
+  const pw = ROAD_PAVE[cls]; if (!pw || (fl & 32)) return;   // (sidewalk=no: none)
   for (let side = -1; side <= 1; side += 2) {
     for (let i = 0; i < n; i++) {
       const dm = side * (hw + pw * 0.5), x = P.x[i] + P.nx[i] * dm, z = P.z[i] + P.nz[i] * dm;
@@ -595,22 +605,85 @@ function townPiersBuild(mb, rs) {
 }
 
 // ---------------------------------------------------------------- church towers and spires (where the DSM rises well above the roof)
+// stone walls round a convex outline P (x, z pairs) from y0 to y1: u runs along each face, v up from v0 (the wall shader's
+// courses and openings: style 4 puts a lancet in the lowest storey, 9 none); cap: a flat top
+function townStoneWalls(mb, P, y0, y1, style, v0, cap) {
+  const n = P.length / 2; let cx = 0, cz = 0; for (let k = 0; k < n; k++) { cx += P[k * 2] / n; cz += P[k * 2 + 1] / n; }
+  for (let k = 0; k < n; k++) {
+    const k1 = (k + 1) % n, ax = P[k * 2], az = P[k * 2 + 1], bx = P[k1 * 2], bz = P[k1 * 2 + 1], L = Math.hypot(bx - ax, bz - az);
+    let nx = (ax + bx) / 2 - cx, nz = (az + bz) / 2 - cz; const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+    mb.mat(10, style, (2 << 6) | 45, Math.min(255, Math.round(L))).weight((v0 + y1 - y0) / 64);
+    const a = mb.v(ax, y0, az, nx, 0, nz, 0, v0), b = mb.v(bx, y0, bz, nx, 0, nz, L, v0), c = mb.v(bx, y1, bz, nx, 0, nz, L, v0 + y1 - y0), d = mb.v(ax, y1, az, nx, 0, nz, 0, v0 + y1 - y0);
+    townQuad(mb, a, b, c, d, nx, 0, nz);
+  }
+  mb.weight(0);
+  if (cap) {
+    mb.mat(15); const c0 = mb.v(cx, y1, cz, 0, 1, 0, 0, 0);
+    for (let k = 0; k < n; k++) { const k1 = (k + 1) % n; townTri(mb, c0, mb.v(P[k * 2], y1, P[k * 2 + 1], 0, 1, 0, 0, 0), mb.v(P[k1 * 2], y1, P[k1 * 2 + 1], 0, 1, 0, 0, 0), 0, 1, 0); }
+  }
+}
+// an oriented box of stone: centre (cx, cz), half sizes hu along (ca, sa) and hv across
+function townStoneBox(mb, cx, cz, hu, hv, ca, sa, y0, y1, style, v0, cap) {
+  const P = [];
+  for (const [u, w] of [[-hu, -hv], [hu, -hv], [hu, hv], [-hu, hv]]) P.push(cx + u * ca - w * sa, cz + u * sa + w * ca);
+  townStoneWalls(mb, P, y0, y1, style, v0, cap);
+}
+// Church towers from the LIDAR: Somerset towers in grey limestone, in two stages with a string course between them,
+// diagonal buttresses at the corners of the lower stage, a lancet (west window, belfry openings) in each stage, a
+// battlemented parapet with corner pinnacles and a stair turret; a broach spire on the tall ones.
 function townSpiresBuild(mb, rs) {
   const S = TOWN.spires; if (!S || S.length < 4 || !S[2]) return;
   const i0 = mb.ni;
   for (let i = 0; i < S.length; i += 4) {
     const x = S[i] * 0.01, z = S[i + 1] * 0.01, g = hfAt(x, z), top = g + S[i + 2] * 0.1, hgt = top - g; if (hgt < 10) continue;
-    const spire = hgt > 26, tt = spire ? Math.max(g + 10, top - Math.min(22, hgt * 0.45)) : top, w = 5.2;
-    mb.mat(10, 4, (2 << 6) | 45, 5).color(0.34, 0.33, 0.31, 0.3).weight(Math.min(1, (tt - g) / 64));
-    mb.box(x, (g - 0.5 + tt) / 2, z, w, tt - g + 0.5, w);
-    mb.weight(0);
-    if (spire) {   // a slate-grey stone spire with a weathervane rod
-      mb.mat(15).color(0.3, 0.3, 0.3, 1); mb.cyl(x, tt, z, w * 0.62, top, 0.05, 8, true, false);
-      mb.mat(13, 60).color(0.25, 0.22, 0.1, 1); mb.cyl(x, top, z, 0.04, top + 1.6, 0.04, 4, false, false);
-    } else {       // a parapet and four pinnacles
-      mb.mat(15).color(0.38, 0.37, 0.34, 1);
-      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) mb.cyl(x + dx * (w / 2 - 0.3), tt, z + dz * (w / 2 - 0.3), 0.32, tt + 2.2, 0.04, 6, true, false);
+    const w = (S[i + 3] & 0xffff) * 0.1 || 5.2, ang = (S[i + 3] >>> 16) * PI / 180, ca = Math.cos(ang), sa = Math.sin(ang), hw = w / 2;
+    const spire = hgt > 26, tt = spire ? Math.max(g + 10, top - Math.min(22, hgt * 0.45)) : top - 1.7;   // (the LIDAR's top: a pinnacle or the spire's tip)
+    const h1 = g + (tt - g) * 0.55, pb = tt - 1.05, rnd = mkRng(i + 7);
+    mb.color(0.36, 0.35, 0.32, rnd());
+    const W = (u, v) => [x + u * ca - v * sa, z + u * sa + v * ca];
+    // plinth, lower stage, string course, belfry stage
+    townStoneBox(mb, x, z, hw + 0.12, hw + 0.12, ca, sa, g - 0.6, g + 0.7, 9, 0, true);
+    townStoneBox(mb, x, z, hw, hw, ca, sa, g + 0.7, h1, 4, 0.7, false);
+    mb.color(0.4, 0.39, 0.35, 1); townStoneBox(mb, x, z, hw + 0.1, hw + 0.1, ca, sa, h1, h1 + 0.24, 9, 0, true);
+    mb.color(0.35, 0.34, 0.31, rnd()); townStoneBox(mb, x, z, hw - 0.15, hw - 0.15, ca, sa, h1 + 0.24, pb, 4, 0, true);
+    // diagonal buttresses at the four corners of the lower stage (stepping in once)
+    for (const [du, dv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const [bx, bz] = W(du * (hw + 0.35), dv * (hw + 0.35)), da = ang + Math.atan2(dv, du), c2 = Math.cos(da), s2 = Math.sin(da), hb = h1 - g;
+      mb.color(0.35, 0.34, 0.31, rnd());
+      townStoneBox(mb, bx, bz, 0.62, 0.36, c2, s2, g - 0.5, g + hb * 0.5, 9, 0, true);
+      townStoneBox(mb, bx - c2 * 0.2, bz - s2 * 0.2, 0.42, 0.33, c2, s2, g + hb * 0.5, g + hb * 0.92, 9, hb * 0.5, true);
     }
+    if (spire) {   // a slate-grey stone spire with a weathervane rod
+      mb.color(0.38, 0.37, 0.34, 1); townStoneBox(mb, x, z, hw - 0.05, hw - 0.05, ca, sa, pb, tt, 9, 0, true);
+      mb.push(m4mul(m4(), m4translate(m4(), x, 0, z), m4rotY(m4(), -ang + PI / 4)));
+      mb.mat(15).color(0.3, 0.3, 0.3, 1); mb.cyl(0, tt, 0, (hw - 0.2) * Math.SQRT2, top, 0.05, 4, true, false);
+      mb.pop();
+      mb.mat(13, 60).color(0.25, 0.22, 0.1, 1); mb.cyl(x, top, z, 0.04, top + 1.6, 0.04, 4, false, false);
+      continue;
+    }
+    // battlemented parapet, corbelled out a little: a solid band and merlons
+    mb.color(0.38, 0.37, 0.34, 1); townStoneBox(mb, x, z, hw - 0.05, hw - 0.05, ca, sa, pb, pb + 0.55, 9, 0, true);
+    const nm = Math.max(2, Math.round((w - 1.2) / 1.3));
+    for (const [du, dv, ou, ov] of [[1, 0, 0, 1], [-1, 0, 0, 1], [0, 1, 1, 0], [0, -1, 1, 0]]) for (let m = 0; m < nm; m++) {
+      const t = (m + 0.5) / nm * (w - 1.3) - (w - 1.3) / 2, [mx, mz] = W(du * (hw - 0.2) + ou * t, dv * (hw - 0.2) + ov * t);
+      townStoneBox(mb, mx, mz, 0.3, 0.3, ca, sa, pb + 0.55, tt, 9, 0, true);
+    }
+    // pinnacles at the corners (the stair turret's corner carries its own), on square shafts
+    for (const [du, dv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const [px, pz] = W(du * (hw - 0.3), dv * (hw - 0.3)), tur = du > 0 && dv < 0;
+      if (tur) continue;
+      townStoneBox(mb, px, pz, 0.3, 0.3, ca, sa, pb, tt + 0.7, 9, 0, true);
+      mb.push(m4mul(m4(), m4translate(m4(), px, 0, pz), m4rotY(m4(), -ang + PI / 4)));
+      mb.mat(15).color(0.37, 0.36, 0.33, 1); mb.cyl(0, tt + 0.7, 0, 0.42, Math.max(tt + 1.9, top), 0.03, 4, true, false);
+      mb.pop();
+    }
+    // the stair turret: an octagon clasping one corner, up past the parapet, with a little spirelet
+    const [qx, qz] = W(hw - 0.1, -(hw - 0.1)), O = [];
+    for (let k = 0; k < 8; k++) { const t = ang + (k + 0.5) * PI / 4; O.push(qx + Math.cos(t) * 1.0, qz + Math.sin(t) * 1.0); }
+    mb.color(0.35, 0.34, 0.31, rnd()); townStoneWalls(mb, O, g + 0.7, tt + 0.9, 9, 0.7, false);
+    mb.push(m4mul(m4(), m4translate(m4(), qx, 0, qz), m4rotY(m4(), -ang - PI / 8)));
+    mb.mat(15).color(0.37, 0.36, 0.33, 1); mb.cyl(0, tt + 0.9, 0, 1.06, Math.max(tt + 3.2, top + 0.6), 0.04, 8, true, false);
+    mb.pop();
   }
   if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 600); }
 }
@@ -641,15 +714,77 @@ function townSeaWallBuild(mb, rs) {
   if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 400); }
 }
 
+// ---------------------------------------------------------------- the Toll Road: retaining walls, crash barriers, marker posts, 25 mph
+function townTollBuild(mb, rs) {
+  const T = TOWN, i0 = mb.ni, W = T.tollWalls || [], B = T.tollRails || [];
+  // old stone retaining walls where the road is cut into the hill
+  for (let i = 0; i < W.length; i += 6) {
+    const ax = W[i], az = W[i + 1], bx = W[i + 2], bz = W[i + 3], foot = W[i + 4], top = W[i + 5], L = Math.hypot(bx - ax, bz - az); if (L < 0.2) continue;
+    const tx = (bx - ax) / L, tz = (bz - az) / L, mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    let nx = -tz, nz = tx; if (hfAt(mx + nx * 3, mz + nz * 3) > hfAt(mx - nx * 3, mz - nz * 3)) { nx = -nx; nz = -nz; }   // n: towards the road
+    const u0 = ax * tx + az * tz;
+    mb.mat(10, 9, (2 << 6) | 30, 255).color(0.27, 0.27, 0.24, 0.6).weight(0);
+    const a = mb.v(ax, foot, az, nx, 0, nz, u0, 0), b = mb.v(bx, foot, bz, nx, 0, nz, u0 + L, 0), c = mb.v(bx, top, bz, nx, 0, nz, u0 + L, top - foot), d = mb.v(ax, top, az, nx, 0, nz, u0, top - foot);
+    townQuad(mb, a, b, c, d, nx, 0, nz);
+    mb.mat(15).color(0.3, 0.31, 0.26, 1);
+    const e = mb.v(ax, top, az, 0, 1, 0, 0, 0), f = mb.v(bx, top, bz, 0, 1, 0, 0, 0), g = mb.v(bx - nx * 0.5, top, bz - nz * 0.5, 0, 1, 0, 0, 0), hh = mb.v(ax - nx * 0.5, top, az - nz * 0.5, 0, 1, 0, 0, 0);
+    townQuad(mb, e, f, g, hh, 0, 1, 0);
+  }
+  // galvanised W-beam crash barriers on posts where the ground drops away towards Sand Bay
+  for (let i = 0; i < B.length; i += 5) {
+    const ax = B[i], az = B[i + 1], bx = B[i + 2], bz = B[i + 3], y = B[i + 4], L = Math.hypot(bx - ax, bz - az); if (L < 0.2) continue;
+    const tx = (bx - ax) / L, tz = (bz - az) / L, ang = Math.atan2(tz, tx);
+    mb.mat(13, 100).color(0.5, 0.52, 0.53, 1);
+    mb.push(m4mul(m4(), m4translate(m4(), (ax + bx) / 2, 0, (az + bz) / 2), m4rotY(m4(), -ang))); mb.box(0, y + 0.55, 0, L + 0.05, 0.32, 0.08); mb.pop();
+    mb.mat(13, 150).color(0.32, 0.33, 0.33, 1); mb.box(ax, y + 0.35, az, 0.1, 0.8, 0.1);
+  }
+  // black-and-white marker posts every 40 m on both sides, and the 25 mph limit signs at both ends
+  const R = T.rd, ri = T.rinfo;
+  for (let r = 0; r < R.n; r++) {
+    if (!(ri[r * 4 + 2] & 128)) continue;
+    const hw = ri[r * 4 + 1] * 0.05, k0 = R.off[r], k1 = R.off[r + 1]; let acc = 0;
+    for (let k = k0; k < k1 - 1; k++) {
+      const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.1) continue;
+      const nx = -(bz - az) / L, nz = (bx - ax) / L;
+      for (let s = 40 - acc; s < L; s += 40) {
+        for (const sd of [-1, 1]) {
+          const x = ax + (bx - ax) * s / L + nx * sd * (hw + 0.7), z = az + (bz - az) * s / L + nz * sd * (hw + 0.7), y = hfAt(x, z);
+          if (townBuildingQ(x, z)) continue;
+          mb.mat(15).color(0.75, 0.75, 0.72, 1); mb.box(x, y + 0.5, z, 0.11, 1.0, 0.11);
+          mb.mat(13, 120).color(0.03, 0.03, 0.03, 1); mb.box(x, y + 0.86, z, 0.115, 0.18, 0.115);
+        }
+      }
+      acc = (acc + L) % 40;
+    }
+    for (const [k, kn] of [[k0, k0 + 1], [k1 - 1, k1 - 2]]) {     // 25 mph roundels, facing the traffic coming in
+      const x0 = R.p[k * 2], z0 = R.p[k * 2 + 1], dx = R.p[kn * 2] - x0, dz = R.p[kn * 2 + 1] - z0, L = Math.hypot(dx, dz) || 1, tx = dx / L, tz = dz / L;
+      for (const sd of [-1, 1]) {
+        const x = x0 + tx * 6 - tz * sd * (hw + 0.9), z = z0 + tz * 6 + tx * sd * (hw + 0.9), y = hfAt(x, z);
+        mb.mat(13, 100).color(0.5, 0.5, 0.5, 1); mb.cyl(x, y, z, 0.04, y + 2.4, 0.04, 6, false, true);
+        mb.mat(14).color(1, 1, 1, 1);
+        const r2 = 0.38, cy = y + 2.0, fx = -tx, fz = -tz, rx = -fz, rz = fx;   // face towards the cars entering (looking along +t)
+        const ua = (128 - 85.5) / 2048, ub = (128 + 85.5) / 2048;   // (-r is the driver's right: the right-hand edge of the roundel)
+        const a = mb.v(x - rx * r2 + fx * 0.03, cy - r2, z - rz * r2 + fz * 0.03, fx, 0, fz, ub, 1.0), b = mb.v(x + rx * r2 + fx * 0.03, cy - r2, z + rz * r2 + fz * 0.03, fx, 0, fz, ua, 1.0);
+        const c = mb.v(x + rx * r2 + fx * 0.03, cy + r2, z + rz * r2 + fz * 0.03, fx, 0, fz, ua, 0.75), d = mb.v(x - rx * r2 + fx * 0.03, cy + r2, z - rz * r2 + fz * 0.03, fx, 0, fz, ub, 0.75);
+        townQuad(mb, a, b, c, d, fx, 0, fz);
+      }
+    }
+  }
+  if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 300); }
+}
+
 // ---------------------------------------------------------------- the circuit: start line, kerbs, gantry
 function townAtlas() {
-  const cv = document.createElement('canvas'); cv.width = 2048; cv.height = 512; const g = cv.getContext('2d');
+  const cv = document.createElement('canvas'); cv.width = 2048; cv.height = 683; const g = cv.getContext('2d');
   g.fillStyle = '#0d2747'; g.fillRect(0, 0, 2048, 256); g.fillStyle = '#e6b422'; g.fillRect(0, 0, 2048, 14); g.fillRect(0, 242, 2048, 14);
   const t1 = 'WESTON-SUPER-MARE', h1 = 120; strokeText(g, t1, (2048 - textW(t1, h1)) / 2, 66, h1, '#f4f1e6', 1.8, 0.08);
   g.fillStyle = '#f2efe6'; g.fillRect(0, 256, 2048, 256); g.fillStyle = '#b3160f'; g.fillRect(0, 256, 2048, 12); g.fillRect(0, 500, 2048, 12);
   const t2 = 'SEAFRONT GRAND PRIX', h2 = 104; strokeText(g, t2, (2048 - textW(t2, h2)) / 2, 330, h2, '#16181c', 1.8, 0.08);
-  const tex = mkTex(2048, 512, 'rgba8unorm-srgb', TU.RT | TU.TB | TU.CD, { mipLevelCount: 12 });
-  G.dev.queue.copyExternalImageToTexture({ source: cv }, { texture: tex }, [2048, 512]);
+  // a 25 mph limit roundel (the Toll Road's unusual limit) in the bottom strip, u 0..1/8, v 3/4..1
+  g.fillStyle = '#ffffff'; g.fillRect(0, 512, 256, 171); g.beginPath(); g.arc(128, 597, 80, 0, TAU); g.fillStyle = '#c8102e'; g.fill();
+  g.beginPath(); g.arc(128, 597, 62, 0, TAU); g.fillStyle = '#ffffff'; g.fill(); strokeText(g, '25', 128 - textW('25', 70) / 2, 562, 70, '#111111', 1.9, 0);
+  const tex = mkTex(2048, 683, 'rgba8unorm-srgb', TU.RT | TU.TB | TU.CD, { mipLevelCount: 12 });
+  G.dev.queue.copyExternalImageToTexture({ source: cv }, { texture: tex }, [2048, 683]);
   genMips(tex, 'rgba8unorm-srgb');
   return tex;
 }
@@ -686,8 +821,8 @@ function townCircuitBuild(mb, rs) {
   mb.mat(14).color(1, 1, 1, 1);
   const bw = pL + pR - 0.6, by0 = yb - 1.45, by1 = yb + 0.4;
   for (const f of [-1, 1]) {
-    const sx = o[0] + tx * 0.08 * f, sz = o[2] + tz * 0.08 * f, d0 = -pL + 0.3, d1 = d0 + bw, v0 = f < 0 ? 0 : 0.5;
-    const a = mb.v(sx + nx * d0, by0, sz + nz * d0, tx * f, 0, tz * f, f < 0 ? 0 : 1, v0 + 0.5), b = mb.v(sx + nx * d1, by0, sz + nz * d1, tx * f, 0, tz * f, f < 0 ? 1 : 0, v0 + 0.5);
+    const sx = o[0] + tx * 0.08 * f, sz = o[2] + tz * 0.08 * f, d0 = -pL + 0.3, d1 = d0 + bw, v0 = f < 0 ? 0 : 256 / 683, vh = 256 / 683;
+    const a = mb.v(sx + nx * d0, by0, sz + nz * d0, tx * f, 0, tz * f, f < 0 ? 0 : 1, v0 + vh), b = mb.v(sx + nx * d1, by0, sz + nz * d1, tx * f, 0, tz * f, f < 0 ? 1 : 0, v0 + vh);
     const c = mb.v(sx + nx * d1, by1, sz + nz * d1, tx * f, 0, tz * f, f < 0 ? 1 : 0, v0), d = mb.v(sx + nx * d0, by1, sz + nz * d0, tx * f, 0, tz * f, f < 0 ? 0 : 1, v0);
     townQuad(mb, a, b, c, d, tx * f, 0, tz * f);
   }
@@ -756,12 +891,44 @@ function townTvCams() {
 function townVegPlace(push) {
   const T = TOWN, rnd = mkRng(5153), Z = T.zone, zw = T.zw, zh = T.zh;
   const zoneAt = (x, z) => { if (x < T.x0 || z < T.z0) return TZ.OUT; const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i >= zw || j >= zh ? TZ.OUT : Z[j * zw + i]; };
-  const hard = new Uint8Array(17); for (const c of [TZ.BLD, TZ.ROAD, TZ.WATER, TZ.OUT, TZ.KERB, TZ.PAVE, TZ.SAND, TZ.MUD, TZ.WALL]) hard[c] = 1;
+  const hard = new Uint8Array(18); for (const c of [TZ.BLD, TZ.ROAD, TZ.WATER, TZ.OUT, TZ.KERB, TZ.PAVE, TZ.SAND, TZ.MUD, TZ.WALL]) hard[c] = 1;
   const clear = (x, z, r) => !hard[zoneAt(x, z)] && !hard[zoneAt(x + r, z)] && !hard[zoneAt(x - r, z)] && !hard[zoneAt(x, z + r)] && !hard[zoneAt(x, z - r)];
   const tree = (x, z, s, arch) => push(x, hfAt(x, z) - 0.25, z, s, rnd() * TAU, rnd(), arch);
+  // LIDAR tree crowns (peaks of DSM - DTM): every tree where it really stands, at its height. A crown over a road or a
+  // roof belongs to a trunk beside it (the Toll Road's tunnel of trees): look round for free ground within 5 m.
+  if (T.ltrees) {
+    const L = T.ltrees, dims = VEG.dims, onTop = new Uint8Array(18); for (const c of [TZ.ROAD, TZ.KERB, TZ.BLD, TZ.WALL]) onTop[c] = 1;
+    for (let i = 0; i < L.length; i += 3) {
+      let x = L[i], z = L[i + 1]; const h = L[i + 2]; let c = zoneAt(x, z);
+      if (c === TZ.WATER || c === TZ.OUT || c === TZ.SAND || c === TZ.MUD) continue;
+      if (onTop[c]) {
+        let found = false;
+        for (let rr = 1.5; rr <= 5 && !found; rr += 1) for (let a = 0; a < 8 && !found; a++) { const xx = x + Math.cos(a * PI / 4 + i) * rr, zz = z + Math.sin(a * PI / 4 + i) * rr, cc = zoneAt(xx, zz); if (!onTop[cc] && cc !== TZ.WATER && cc !== TZ.OUT) { x = xx; z = zz; found = true; } }
+        if (!found) continue;
+      }
+      const hr = hash2(i, 77);
+      const arch = h > 15 ? (hr < 0.5 ? 0 : 2) : h > 9 ? (hr < 0.65 ? 1 : 0) : h > 5.5 ? (hr < 0.6 ? 4 : 1) : 5;
+      tree(x, z, clamp(h / (dims[arch * 4 + 1] || 12), 0.35, 1.7), arch);
+    }
+    // the Toll Road's verges: ivy, bramble and holly scrub up to the edge lines, ferns in the shade (the photographs)
+    const RD = T.rd, ri = T.rinfo;
+    for (let r = 0; r < RD.n; r++) {
+      if (!(ri[r * 4 + 2] & 128)) continue;
+      const hw = ri[r * 4 + 1] * 0.05;
+      for (let k = RD.off[r]; k < RD.off[r + 1] - 1; k++) {
+        const ax = RD.p[k * 2], az = RD.p[k * 2 + 1], bx = RD.p[k * 2 + 2], bz = RD.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.1) continue;
+        const nx = -(bz - az) / L, nz = (bx - ax) / L;
+        for (let s = rnd() * 1.4; s < L; s += 1.4) for (let sd = -1; sd <= 1; sd += 2) {
+          const o = hw + 1.0 + rnd() * rnd() * 5, x = ax + (bx - ax) * s / L + nx * sd * o, z = az + (bz - az) * s / L + nz * sd * o, c = zoneAt(x, z), r1 = rnd(), r2 = rnd();
+          if (c === TZ.ROAD || c === TZ.WALL || c === TZ.BLD || c === TZ.WATER || c === TZ.OUT || c === TZ.KERB || r1 > 0.8) continue;
+          push(x, hfAt(x, z) - 0.1, z, lerp(0.55, 1.1, r2), rnd() * TAU, rnd(), r1 < 0.4 ? 5 : r1 < 0.65 ? 6 : 7);
+        }
+      }
+    }
+  }
   // OSM trees: street trees and the rows along the Boulevard and the parks (they stand on pavements: only buildings and
-  // carriageways keep them away)
-  for (let i = 0; i < T.trees.length; i += 2) {
+  // carriageways keep them away). Without the LIDAR crowns only.
+  if (!T.ltrees) for (let i = 0; i < T.trees.length; i += 2) {
     const x = T.trees[i], z = T.trees[i + 1], c = zoneAt(x, z); if (c === TZ.BLD || c === TZ.ROAD || c === TZ.WATER || c === TZ.OUT) continue;
     const r = rnd(); tree(x, z, lerp(0.62, 0.92, rnd()), r < 0.55 ? 1 : r < 0.8 ? 0 : 4);
   }
@@ -771,6 +938,7 @@ function townVegPlace(push) {
     const x = x0 + rnd() * g, z = z0 + rnd() * g, r1 = rnd(), r2 = rnd(), r3 = rnd(), c = zoneAt(x, z);
     let p = 0;
     if (c === TZ.WOOD) p = 0.8; else if (c === TZ.GARDEN) p = 0.075; else if (c === TZ.GRASS) p = 0.035; else if (c === TZ.FIELD) p = 0.012; else if (c === TZ.NONE) p = 0.04; else if (c === TZ.TRACK || c === TZ.PATH) p = 0.02;
+    if (T.ltrees) p = 0;                // (the LIDAR has them all)
     if (r1 > p || !clear(x, z, c === TZ.WOOD ? 1.2 : 2.6)) continue;
     let arch;
     if (c === TZ.WOOD) arch = r2 < 0.34 ? 0 : r2 < 0.7 ? 1 : r2 < 0.85 ? 2 : 4;
@@ -781,9 +949,16 @@ function townVegPlace(push) {
   const gb = 3.6;
   for (let z0 = T.z0 + 14; z0 < T.z1 - 14; z0 += gb) for (let x0 = T.x0 + 14; x0 < T.x1 - 14; x0 += gb) {
     const x = x0 + rnd() * gb, z = z0 + rnd() * gb, r1 = rnd(), r2 = rnd(), c = zoneAt(x, z);
-    const p = c === TZ.WOOD ? 0.16 : c === TZ.GARDEN ? 0.05 : c === TZ.GRASS ? 0.02 : c === TZ.NONE ? 0.06 : c === TZ.FIELD ? 0.01 : 0;
+    const p = c === TZ.WOOD ? 0.16 : c === TZ.GARDEN ? 0.05 : c === TZ.GRASS ? 0.02 : c === TZ.NONE ? 0.06 : c === TZ.FIELD ? 0.01 : c === TZ.DUNE ? 0.03 : 0;
     if (r1 > p || !clear(x, z, 1.4)) continue;
     push(x, hfAt(x, z) - 0.12, z, lerp(0.45, 1.05, r2), rnd() * TAU, rnd(), 5);
+  }
+  // marram grass on Sand Bay's dunes (tussocks: the near-only clump archetype)
+  const gm = 1.7;
+  for (let z0 = T.z0 + 14; z0 < T.z1 - 14; z0 += gm) for (let x0 = T.x0 + 14; x0 < T.x1 - 14; x0 += gm) {
+    const x = x0 + rnd() * gm, z = z0 + rnd() * gm, r1 = rnd(), r2 = rnd();
+    if (zoneAt(x, z) !== TZ.DUNE || r1 > 0.55) continue;
+    push(x, hfAt(x, z) - 0.05, z, lerp(0.7, 1.25, r2), rnd() * TAU, rnd(), 8);
   }
   // cabbage palms on the seafront lawns near the pier
   const o = new Float64Array(5);
@@ -820,6 +995,7 @@ function townWorldBuild() {
     if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 420); }
   }
   townSeaWallBuild(mb, rs);
+  townTollBuild(mb, rs);
   townSpiresBuild(mb, rs);
   townCircuitBuild(mb, rs);
   TOWNW.stats.town = mb.ni / 3; TOWNW.stats.ranges = rs.r.length;

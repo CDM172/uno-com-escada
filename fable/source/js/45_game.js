@@ -107,7 +107,7 @@ function gameInit() {
 // três câmeras, ré, freio de mão, fora da pista, reposição — para o V8 otimizar o laço com informação de tipos completa.
 // Sem isso, a primeira troca de câmera ou a primeira ré desotimizaria funções do laço e geraria lixo temporário.
 function gameWarmup() {
-  const fx = GS.fxOn, rp = GS.replayOn; GS.replayOn = false; GS.ai = false; RT[2] = 1 / 120;
+  const fx = GS.fxOn, rp = GS.replayOn; GS.replayOn = false; GS.ai = false; RT[2] = 1 / 120; HAND.warm = true;   // (the warm-up drives as it always did: no assists)
   vehicleReset(TRK.L + TRK.startS, TRK.startD, 0);
   for (let i = 0; i < 9000; i++) {
     const ph = (i / 300) | 0, t = i / 120; let k = aiKeys(t);
@@ -131,7 +131,7 @@ function gameWarmup() {
       cs.focusOn = false; setCamera(x, y, z, x + ux, y + uy, z + uz, 0.9); cascadeSetup(k % 3);
     }
   }
-  GS.held = 0; GS.padKeys = 0; LAP[2] = 0; GS.fxOn = fx; GS.replayOn = rp; GS.ai = Q.has('auto'); RT[0] = 0; RT[2] = 1 / 60;
+  GS.held = 0; GS.padKeys = 0; LAP[2] = 0; GS.fxOn = fx; GS.replayOn = rp; GS.ai = Q.has('auto'); RT[0] = 0; RT[2] = 1 / 60; HAND.warm = false;
   if (GAD.on) GAD.snd.fill(0);   // the counters the sound code follows start from zero
 }
 // gadget keys for step i of the warm-up: each gadget is switched on and off several times, alone and together with others
@@ -171,10 +171,10 @@ function gameRestart() {
 // um passo de física; a cada 2 passos (1/60 s) lê as teclas (gravadas, piloto automático ou teclado)
 function gameStep() {
   if ((GS.sub & 1) === 0) {
-    const t = GS.tick60 / 60; let k;
+    const t = GS.tick60 / 60; let k; HAND.on = false;   // (driver assists: only for a person at the wheel, see 40_assist.js)
     if (GS.replayOn && GS.tick60 < GS.replayLen) k = GS.replay !== null ? GS.replay[GS.tick60] : t < 0.5 ? 0 : aiKeys(t);
     else if (GS.ai) k = t < 0.5 ? 0 : aiKeys(t);
-    else { k = GS.held; if (GS.padKeys) k = padMerge(k); }
+    else { k = GS.held; if (GS.padKeys) k = padMerge(k); HAND.on = HAND.easy && !HAND.warm; }
     GS.prevKeys = GS.keys; GS.keys = k; GS.tick60++;
     const edge = k & ~GS.prevKeys;
     if ((k ^ GS.prevKeys) & K_V) { GS.cut = true; GS.chaseInit = false; }   // olhar para trás é um corte de câmera

@@ -21,11 +21,11 @@ const TOWN = {
   kerb: null,                            // circuit kerbs: per sample, side (-1 left, 1 right, 0 none) and inner distance
 };
 // surface codes of the 1 m raster; TZZ = game zone (ZONE), TZH = height above the terrain for the physics (kerb stones)
-const TZ = { NONE: 0, ROAD: 1, PAVE: 2, HARD: 3, GRASS: 4, SAND: 5, MUD: 6, WOOD: 7, WATER: 8, KERB: 9, PATH: 10, TRACK: 11, GARDEN: 12, FIELD: 13, BLD: 14, OUT: 15, WALL: 16 };
-const TZZ = new Uint8Array([2, 0, 6, 6, 2, 3, 4, 4, 4, 1, 6, 3, 2, 2, 6, 4, 6]);
-const TZH = new Float64Array([0, 0, 0.12, 0, 0, 0, 0, 0, 0, 0.02, 0, 0, 0, 0, 0, 0, 0]);
+const TZ = { NONE: 0, ROAD: 1, PAVE: 2, HARD: 3, GRASS: 4, SAND: 5, MUD: 6, WOOD: 7, WATER: 8, KERB: 9, PATH: 10, TRACK: 11, GARDEN: 12, FIELD: 13, BLD: 14, OUT: 15, WALL: 16, DUNE: 17 };
+const TZZ = new Uint8Array([2, 0, 6, 6, 2, 3, 4, 4, 4, 1, 6, 3, 2, 2, 6, 4, 6, 3]);
+const TZH = new Float64Array([0, 0, 0.12, 0, 0, 0, 0, 0, 0, 0.02, 0, 0, 0, 0, 0, 0, 0, 0]);
 // land cover classes of the bake (tools/osm/bake_wsm.py, LC) → surface code
-const TOWN_LC = [TZ.NONE, TZ.GARDEN, TZ.GRASS, TZ.FIELD, TZ.WOOD, TZ.WOOD, TZ.SAND, TZ.MUD, TZ.WATER, TZ.HARD, TZ.NONE, TZ.GRASS, TZ.GRASS, TZ.GRASS];
+const TOWN_LC = [TZ.NONE, TZ.GARDEN, TZ.GRASS, TZ.FIELD, TZ.WOOD, TZ.WOOD, TZ.SAND, TZ.MUD, TZ.WATER, TZ.HARD, TZ.NONE, TZ.GRASS, TZ.GRASS, TZ.GRASS, TZ.DUNE];
 const ROAD_PAVE = [0, 3.0, 2.8, 2.6, 2.6, 2.2, 2.0, 1.6, 0, 0, 0, 0, 0];   // pavement width by road class (m)
 
 // base64 → zlib → bytes
@@ -67,6 +67,11 @@ async function townLoad() {
   T.trees = new Float32Array(A.t0.length); for (let i = 0; i < A.t0.length; i++) T.trees[i] = A.t0[i] * q;
   T.cedge = A.cedge; T.croom = A.croom; T.towers = A.towers || null; T.spires = A.spires || null;
   T.pav = M.pavilion && A.pavroof ? Object.assign({ grid: A.pavroof }, M.pavilion) : null;   // the pavilion's roof heights (DSM)
+  T.rh = A.rh || null;                   // road heights at the vertices (LIDAR DTM, dm; -32768: none)
+  if (A.ltn) {                           // LIDAR tree crowns: x, z, height
+    const P = townPolys(A.ltn, A.lt0, A.ltd, q), n = P.off[P.n], L = T.ltrees = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { L[i * 3] = P.p[i * 2]; L[i * 3 + 1] = P.p[i * 2 + 1]; L[i * 3 + 2] = A.lth[i] * 0.25; }
+  }
   // building bounding boxes
   const B = T.bd, bb = T.bbox = new Float32Array(B.n * 4);
   for (let i = 0; i < B.n; i++) {
@@ -173,6 +178,28 @@ function townHeightsBuild() {
     const x = T.x0 + i * res, z = T.z0 + j * res, e = Math.min(x - T.x0, T.x1 - x, z - T.z0, T.z1 - z);
     if (e < 150) { const s = smooth(0, 150, e); D[j * w + i] = townFarH(x, z) * (1 - s) + D[j * w + i] * s; }
   }
+  // roads on their own surface: the corridor takes the heights measured along the road, the ground beside it blends
+  // back to the slope within a few metres (a cut on the uphill side, a bank on the downhill side)
+  if (T.rh) {
+    const R = T.rd, ri = T.rinfo, RH = T.rh, wb = new Float32Array(w * h), ht = new Float32Array(w * h);
+    for (let r = 0; r < R.n; r++) {
+      const cls = ri[r * 4]; if (cls > 9 || (ri[r * 4 + 2] & 1)) continue;
+      const hw = ri[r * 4 + 1] * 0.05 + 0.7, fall = cls <= 7 ? 3.5 : 2.5;
+      for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) {
+        const ha = RH[k], hb = RH[k + 1]; if (ha === -32768 || hb === -32768) continue;
+        const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez + 1e-9, rad = hw + fall;
+        const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - rad - T.x0) / res)), i1 = Math.min(w - 1, Math.ceil((Math.max(ax, bx) + rad - T.x0) / res));
+        const j0 = Math.max(0, Math.floor((Math.min(az, bz) - rad - T.z0) / res)), j1 = Math.min(h - 1, Math.ceil((Math.max(az, bz) + rad - T.z0) / res));
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+          const px = T.x0 + i * res, pz = T.z0 + j * res; let t = ((px - ax) * ex + (pz - az) * ez) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const d = Math.hypot(px - ax - ex * t, pz - az - ez * t); if (d >= rad) continue;
+          let wgt = d <= hw ? 1 : 1 - (d - hw) / fall; wgt = wgt * wgt * (3 - 2 * wgt);
+          const o = j * w + i; if (wgt > wb[o]) { wb[o] = wgt; ht[o] = (ha + (hb - ha) * t) * 0.1; }
+        }
+      }
+    }
+    for (let o = 0; o < w * h; o++) if (wb[o] > 0) D[o] += (ht[o] - D[o]) * wb[o];
+  }
   // bridges: straight decks between the heights at their ends (the terrain model has no bridges)
   const R = T.rd, ri = T.rinfo;
   for (let r = 0; r < R.n; r++) {
@@ -256,25 +283,30 @@ function townRasterBuild() {
   // buildings
   const B = T.bd; for (let b = 0; b < B.n; b++) if (T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11) townFill(B, b, b + 1, TZ.BLD, null);
   // the sea wall (roads crossing it, the slipways, open it again below)
-  townSeaWalls(); { const W = T.walls, ov = new Uint8Array(17).fill(1); ov[TZ.WATER] = 0; ov[TZ.OUT] = 0; for (let i = 0; i < W.length; i += 6) townCapsule(W[i], W[i + 1], W[i + 2], W[i + 3], 0.7, TZ.WALL, ov); }
+  townSeaWalls(); { const W = T.walls, ov = new Uint8Array(18).fill(1); ov[TZ.WATER] = 0; ov[TZ.OUT] = 0; for (let i = 0; i < W.length; i += 6) townCapsule(W[i], W[i + 1], W[i + 2], W[i + 3], 0.7, TZ.WALL, ov); }
   // roads: pavements, then carriageways over them (junctions), paths and tracks only over soft ground
-  const R = T.rd, ri = T.rinfo, soft = new Uint8Array(17), all = new Uint8Array(17).fill(1), pv = new Uint8Array(17);
-  for (const c of [TZ.NONE, TZ.GRASS, TZ.GARDEN, TZ.FIELD, TZ.WOOD, TZ.MUD, TZ.SAND, TZ.HARD]) soft[c] = 1;
+  const R = T.rd, ri = T.rinfo, soft = new Uint8Array(18), all = new Uint8Array(18).fill(1), pv = new Uint8Array(18);
+  for (const c of [TZ.NONE, TZ.GRASS, TZ.GARDEN, TZ.FIELD, TZ.WOOD, TZ.MUD, TZ.SAND, TZ.HARD, TZ.DUNE]) soft[c] = 1;
   for (const c of [TZ.NONE, TZ.GRASS, TZ.GARDEN, TZ.FIELD, TZ.WOOD, TZ.HARD, TZ.PATH, TZ.TRACK]) pv[c] = 1;
   all[TZ.WATER] = 0; all[TZ.OUT] = 0;
   for (let pass = 0; pass < 3; pass++) for (let q = 0; q < R.n; q++) {
     const cls = ri[q * 4], wd = ri[q * 4 + 1] * 0.1; if (cls === 12) continue;
     let rad, val, over;
-    if (pass === 0) { if (!ROAD_PAVE[cls]) continue; rad = wd / 2 + ROAD_PAVE[cls]; val = TZ.PAVE; over = pv; }
+    if (pass === 0) { if (!ROAD_PAVE[cls] || (ri[q * 4 + 2] & 32)) continue; rad = wd / 2 + ROAD_PAVE[cls]; val = TZ.PAVE; over = pv; }
     else if (pass === 1) { if (cls < 10) continue; rad = wd / 2; val = cls === 10 ? TZ.PATH : TZ.TRACK; over = soft; }
     else { if (cls > 9) continue; rad = wd / 2; val = cls === 9 ? TZ.HARD : TZ.ROAD; over = all; }
     for (let k = R.off[q]; k < R.off[q + 1] - 1; k++) townCapsule(R.p[k * 2], R.p[k * 2 + 1], R.p[k * 2 + 2], R.p[k * 2 + 3], rad, val, over);
   }
   // circuit kerbs
-  const N = TRK.N, kb = T.kerb, ov = new Uint8Array(17); ov[TZ.ROAD] = 1; ov[TZ.PAVE] = 1; ov[TZ.KERB] = 1;
+  const N = TRK.N, kb = T.kerb, ov = new Uint8Array(18); ov[TZ.ROAD] = 1; ov[TZ.PAVE] = 1; ov[TZ.KERB] = 1;
   for (let i = 0; i < N; i++) {
     const sd = kb[i * 2]; if (!sd) continue; const e = kb[i * 2 + 1], nx = -TRK.tz[i] * sd, nz = TRK.tx[i] * sd;
     townCapsule(TRK.x[i] + nx * (e - 0.45), TRK.z[i] + nz * (e - 0.45), TRK.x[(i + 1) % N] + nx * (e - 0.45), TRK.z[(i + 1) % N] + nz * (e - 0.45), 0.5, TZ.KERB, ov);
+  }
+  townTollFurniture(); {
+    const B = T.tollRails, W = T.tollWalls, ov = new Uint8Array(18).fill(1); ov[TZ.WATER] = 0; ov[TZ.OUT] = 0; ov[TZ.ROAD] = 0;
+    for (let i = 0; i < B.length; i += 5) townCapsule(B[i], B[i + 1], B[i + 2], B[i + 3], 0.35, TZ.WALL, ov);
+    for (let i = 0; i < W.length; i += 6) townCapsule(W[i], W[i + 1], W[i + 2], W[i + 3], 0.3, TZ.WALL, ov);
   }
   // out of bounds: a 12 m band at the edge of the region
   for (let j = 0; j < zh; j++) for (let i = 0; i < zw; i++) if (i < 12 || j < 12 || i >= zw - 12 || j >= zh - 12) Z[j * zw + i] = TZ.OUT;
@@ -303,6 +335,41 @@ function townSeaWalls() {
       }
     }
     r += nr;
+  }
+}
+// Along the Toll Road (flag 128), every 4 m on each side: the natural slope 4 m out against the road's own height.
+// tollWalls: [ax, az, bx, bz, foot, top] (stone, uphill); tollRails: [ax, az, bx, bz, y] (steel barrier, drop side).
+function townTollFurniture() {
+  const T = TOWN, R = T.rd, ri = T.rinfo; T.tollWalls = []; T.tollRails = [];
+  for (let r = 0; r < R.n; r++) {
+    if (!(ri[r * 4 + 2] & 128)) continue;
+    const hw = ri[r * 4 + 1] * 0.05;
+    for (const sd of [-1, 1]) {
+      // 4 m steps along this side: x0, z0, x1, z1, the normal, the road's height and the natural ground 4 m beyond the edge
+      const S = [];
+      for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) {
+        const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.5) continue;
+        const m = Math.ceil(L / 4), nx = -(bz - az) / L * sd, nz = (bx - ax) / L * sd;
+        for (let q = 0; q < m; q++) {
+          const x0 = ax + (bx - ax) * q / m, z0 = az + (bz - az) * q / m, x1 = ax + (bx - ax) * (q + 1) / m, z1 = az + (bz - az) * (q + 1) / m, mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+          S.push(x0, z0, x1, z1, nx, nz, hfAt(mx, mz), townH(mx + nx * (hw + 4), mz + nz * (hw + 4)));
+        }
+      }
+      const n = S.length / 8, cut = j => S[j * 8 + 7] - S[j * 8 + 6];
+      // runs: started where test() holds, grown while keep() holds, kept when at least 3 steps (12 m) long
+      const runs = (test, keep, emit) => {
+        for (let i = 0; i < n;) {
+          if (!test(i)) { i++; continue; }
+          let a = i, b = i; while (a > 0 && keep(a - 1)) a--; while (b < n - 1 && keep(b + 1)) b++;
+          if (b - a >= 2) for (let j = a; j <= b; j++) emit(j);
+          i = b + 1;
+        }
+      };
+      // the photographs show mostly steep banks of ivy and bramble on the uphill side, old stone revetments only where
+      // the road is cut deepest; steel barriers where the ground falls away towards Sand Bay
+      runs(j => cut(j) > 3.0, j => cut(j) > 2.3, j => { const o = hw + 0.6, k = j * 8, yr = S[k + 6]; T.tollWalls.push(S[k] + S[k + 4] * o, S[k + 1] + S[k + 5] * o, S[k + 2] + S[k + 4] * o, S[k + 3] + S[k + 5] * o, yr - 0.4, yr + Math.min(2.2, cut(j) - 0.6)); });
+      runs(j => -cut(j) > 3.0, j => -cut(j) > 2.0, j => { const o = hw + 0.45, k = j * 8; T.tollRails.push(S[k] + S[k + 4] * o, S[k + 1] + S[k + 5] * o, S[k + 2] + S[k + 4] * o, S[k + 3] + S[k + 5] * o, S[k + 6]); });
+    }
   }
 }
 // grid of building indices (16 m cells) for the collisions
