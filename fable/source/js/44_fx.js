@@ -1,20 +1,29 @@
 // Efeitos: marcas de pneu (decalque em anel de quads) e fumaça/poeira (partículas em CPU, instanciadas). Tudo pré-alocado.
-// (The DB5 adds its gadget effects to the same system: more particles for the smoke screen, particle kinds 3 to 5 and a
-// second decal ring for the oil it lays on the road. With the Uno none of that exists and everything is as it was.)
-const SK_N = 4096, PT_N = CARSEL === 'db5' ? 1800 : 900, OIL_N = CARSEL === 'db5' ? 1024 : 0;
+// (The Aston Martins add their gadget effects to the same system: more particles, particle kinds 3 and up, and for the DB5
+// a second decal ring for the oil it lays on the road. With the Uno none of that exists and everything is as it was.)
+const SK_N = 4096, PT_N = CARSEL === 'v8' ? 3000 : CARSEL === 'db5' ? 1800 : 900, OIL_N = CARSEL === 'db5' ? 1024 : 0;
 const FX = {
   sk: new Float32Array(SK_N * 6 * 5), skHead: 0, skLo: 1e9, skHi: -1, skBuf: null, skPipe: null,
   last: new Float32Array(4 * 8), active: new Uint8Array(4),
   p: new Float32Array(PT_N * 12), pAlive: 0, pNext: 0, inst: new Float32Array(PT_N * 12), pBuf: null, pFam: null, pBG: null, seed: new Uint32Array([7]),
   oil: new Float32Array(OIL_N * 6 * 5), oilHead: 0, oilLo: 1e9, oilHi: -1, oilBuf: null, oilPipe: null, oilLast: new Float32Array(8), oilOn: 0, oilPrev: -1,
 };
-// Particle kinds 3 and up (gadgets): colour (linear rgb), opacity, growth of the size over the life, 1 = glows by itself
-//   3 white smoke (smoke screen, rocket of the ejector seat, gun smoke) | 4 oil spray | 5 tracer
+// Particle kinds 3 and up (gadgets): colour (linear rgb), opacity, growth of the size over the life, look: 0 smoke lit by
+// the sun and the sky, 1 a dot that glows by itself, 2 fire (a ragged cloud that glows by itself, yellow turning red)
+//   3 white smoke (smoke screen, rocket of the ejector seat, gun smoke) | 4 oil spray | 5 tracer        (DB5)
+//   6 fireball | 7 black smoke of an explosion | 8 spark | 9 flame of a rocket motor | 10 grey smoke   (V8)
 const FXK = new Float32Array([
   0.8, 0.81, 0.83, 0.92, 5.2, 0,
   0.012, 0.01, 0.008, 0.8, 2.2, 0,
   14, 7.5, 1.6, 1, 0, 1,
+  9, 3.4, 0.8, 1, 2.2, 2,
+  0.045, 0.04, 0.036, 0.92, 4.2, 0,
+  18, 8.5, 2.2, 1, 0, 1,
+  10, 5, 1.5, 1, 1.4, 2,
+  0.5, 0.5, 0.52, 0.72, 3.6, 0,
 ]);
+// kinds 6 and up: gravity (m/s², down; negative = the particle rises by itself)
+const FXGV = new Float64Array([-2.5, 0, 9.8, 0, 0]);
 function fxInit() {
   FX.skBuf = mkBuf(FX.sk.byteLength, BU.V);
   const code = wgslPP('skid', SH_DEFS), mod = mkShader('skid', SH_DEFS), bgls = reflectBGLs(code); bgls[0] = R.bgl0;
@@ -37,6 +46,23 @@ function fxInit() {
   R.transparents.push({ draw(pass) { if (!FX.pFam.pipe || !FX.pAlive) return; if (!FX.pBG) FX.pBG = fwdBindGroup(FX.pFam); pass.setPipeline(FX.pFam.pipe); pass.setBindGroup(3, FX.pBG); pass.setVertexBuffer(0, FX.pBuf); pass.draw(6, FX.pAlive); } });
 }
 function fxReset() { FX.sk.fill(0); FX.skLo = 0; FX.skHi = SK_N * 30; FX.skHead = 0; FX.active.fill(0); FX.p.fill(0); FX.pAlive = 0; FX.pNext = 0; FX.seed[0] = 7; }
+// Explosion (V8 gadgets) at BOOMQ = [x, y, z, size (1 = a missile)]: a fireball, black smoke and sparks thrown about.
+const BOOMQ = new Float64Array(4);
+function fxBoom() {
+  const e = FXQ, b = BOOMQ, K = 1 / 65536, sz = b[3], ks = Math.sqrt(sz), nF = 10 + 6 * sz, nS = 6 + 4 * sz, nP = 14 + 8 * sz;
+  for (let k = 0; k < nF + nS + nP; k++) {
+    let dx = fxRnd() * K - 0.5, dy = fxRnd() * K - 0.5, dz = fxRnd() * K - 0.5; const l = Math.sqrt(dx * dx + dy * dy + dz * dz) + 1e-6; dx /= l; dy /= l; dz /= l;
+    if (dy < -0.2) dy = -dy * 0.5;   // nothing is thrown into the ground
+    const fire = k < nF, smoke = !fire && k < nF + nS, r = fxRnd() * K;
+    const sp = fire ? (2 + 5 * r) * ks : smoke ? (0.8 + 1.6 * r) * ks : (6 + 14 * r) * ks, off = fire ? 0.35 * sz * (fxRnd() * K) : 0.15 * sz;
+    e[0] = b[0] + dx * off; e[1] = b[1] + dy * off; e[2] = b[2] + dz * off;
+    e[3] = dx * sp; e[4] = dy * sp + (smoke ? 1.6 : fire ? 1.2 : 2.5); e[5] = dz * sp;
+    if (fire) { e[6] = 0.45 + 0.45 * (fxRnd() * K); e[7] = (0.35 + 0.35 * (fxRnd() * K)) * sz; e[8] = 6; }
+    else if (smoke) { e[6] = 2.6 + 2 * (fxRnd() * K); e[7] = (0.45 + 0.4 * (fxRnd() * K)) * sz; e[8] = 7; }
+    else { e[6] = 0.5 + 0.7 * (fxRnd() * K); e[7] = 0.035 + 0.02 * (fxRnd() * K); e[8] = 8; }
+    fxEmitQ();
+  }
+}
 // ---- gadget effects (DB5) ----
 // Spawns one particle from the register FXQ = [x, y, z, vx, vy, vz, life (s), size (m), kind]: no numbers go through arguments.
 const FXQ = new Float64Array(9);
@@ -139,15 +165,17 @@ function fxFrame() {
   for (let i = 0; i < PT_N; i++) {
     const q = i * 12, life = p[q + 7]; if (life <= 0) continue;
     const age = p[q + 6] + dt; if (age >= life) { p[q + 7] = 0; continue; }
-    p[q + 6] = age; const k = Math.exp(-dt * 1.6);
+    p[q + 6] = age; const k = Math.exp(-dt * 1.6), kind = p[q + 10];
     p[q + 3] = p[q + 3] * k + R.wind[0] * 0.6 * dt; p[q + 5] = p[q + 5] * k + R.wind[1] * 0.6 * dt; p[q + 4] = p[q + 4] * Math.exp(-dt * 0.9) + 0.25 * dt;
+    if (kind >= 6) p[q + 4] -= FXGV[kind - 6] * dt;   // (V8 kinds: sparks fall, fire rises)
     p[q] += p[q + 3] * dt; p[q + 1] += p[q + 4] * dt; p[q + 2] += p[q + 5] * dt;
-    const t = age / life, kind = p[q + 10], w = n * 12;
-    if (kind >= 3) {   // gadget particles (DB5): look taken from the table FXK
+    const t = age / life, w = n * 12;
+    if (kind >= 3) {   // gadget particles: look taken from the table FXK
       const T = FXK, kk = (kind - 3) * 6, em = T[kk + 5];
       o[w] = p[q]; o[w + 1] = p[q + 1] + p[q + 8] * 0.5; o[w + 2] = p[q + 2]; o[w + 3] = p[q + 8] * (1 + Math.sqrt(t) * T[kk + 4]);
       o[w + 4] = T[kk]; o[w + 5] = T[kk + 1]; o[w + 6] = T[kk + 2];
-      o[w + 7] = em > 0 ? 1 - t * t : Math.min(1, t * 30) * Math.pow(1 - t, 1.25) * T[kk + 3] / (1 + t * 0.9);
+      if (em > 1) { o[w + 5] = T[kk + 1] * (1 - 0.6 * t); o[w + 6] = T[kk + 2] * (1 - 0.85 * t); o[w + 7] = Math.min(1, t * 25) * Math.pow(1 - t, 1.3) * T[kk + 3]; }   // fire: yellow turning red
+      else o[w + 7] = em > 0 ? 1 - t * t : Math.min(1, t * 30) * Math.pow(1 - t, 1.25) * T[kk + 3] / (1 + t * 0.9);
       o[w + 8] = p[q + 9] + t * 0.8; o[w + 9] = p[q + 11]; o[w + 10] = em; n++; continue;
     }
     o[w] = p[q]; o[w + 1] = p[q + 1] + p[q + 8] * 0.5; o[w + 2] = p[q + 2]; o[w + 3] = p[q + 8] * (1 + Math.sqrt(t) * (kind === 0 ? 3.4 : 3.2));
@@ -158,4 +186,4 @@ function fxFrame() {
   FX.pAlive = n;
   if (n) G.dev.queue.writeBuffer(FX.pBuf, 0, o, 0, n * 12);
 }
-BUILD.push(async () => { if ((GAME.mode !== 'test' && GAME.mode !== 'car') || (GAME.mode === 'car' && GAD.on)) fxInit(); });   // (the DB5 viewer shows its gadgets: smoke, oil)
+BUILD.push(async () => { if ((GAME.mode !== 'test' && GAME.mode !== 'car') || (GAME.mode === 'car' && GAD.on)) fxInit(); });   // (the Aston Martins' viewer shows their gadgets: smoke, oil, fire)

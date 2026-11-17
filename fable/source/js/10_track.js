@@ -19,6 +19,7 @@ const KERB_W = 1.3, APRON = 2.6;
 const ZONE = { ASPHALT: 0, KERB: 1, GRASS: 2, GRAVEL: 3, ROUGH: 4, PIT: 5, CONCRETE: 6 };
 
 function trackBuild() {
+  if (TOWN.on) { townTrackBuild(); return; }   // Weston-super-Mare: the circuit comes from the map data (13_wsm_town.js)
   // Segmentos: ['S', comprimento] ou ['A', raio, ângulo° (+ direita)]. Lw e Ln resolvidos para fechar o laço.
   const def = [
     ['S', 210, -0.6], ['A', 55, 90, -2.6, 'T1'], ['S', 40, -2.2],
@@ -151,7 +152,11 @@ function trackBuild() {
     const grav = side < 0 ? TRK.gravL : TRK.gravR;
     for (let i = 0; i < N; i++) { grav[i] = Math.min(grav[i], Math.max(0, bar[i] - hw - 5.2)); if (grav[i] < 3) grav[i] = 0; }
   }
-  // grade espacial de amostras para busca do ponto mais próximo
+  trackGridBuild();
+}
+// grade espacial de amostras para busca do ponto mais próximo (also used by the Weston-super-Mare circuit)
+function trackGridBuild() {
+  const N = TRK.N, X = TRK.x, Z = TRK.z;
   let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
   for (let i = 0; i < N; i++) { x0 = Math.min(x0, X[i]); x1 = Math.max(x1, X[i]); z0 = Math.min(z0, Z[i]); z1 = Math.max(z1, Z[i]); }
   TRK.bx0 = x0; TRK.bx1 = x1; TRK.bz0 = z0; TRK.bz1 = z1; TRK.cx = (x0 + x1) / 2; TRK.cz = (z0 + z1) / 2;
@@ -230,6 +235,7 @@ function naturalH(x, z) {
 // altura do terreno com o corredor da pista embutido. Usada para preencher o campo de alturas e a malha do terreno.
 const _th = new Float64Array(4);
 function terrainH(x, z) {
+  if (TOWN.on) return townTerrainH(x, z);
   const nat = naturalH(x, z);
   const OUT = 78;
   if (trackFarDist(x, z) > OUT) return nat;
@@ -256,22 +262,23 @@ function terrainH(x, z) {
   return h;
 }
 // Campo de alturas regular (1 m) em volta do circuito, para física e para posicionar objetos.
-const HF = { x0: 0, z0: 0, w: 0, h: 0, d: null };
+const HF = { x0: 0, z0: 0, w: 0, h: 0, d: null, ir: 1, res: 1 };   // ir = 1 / spacing (1 m here; 2 m on the town map)
 function heightFieldBuild() {
+  if (TOWN.on) { townHeightsBuild(); return; }
   const pad = 150; HF.x0 = Math.floor(TRK.bx0 - pad); HF.z0 = Math.floor(TRK.bz0 - pad);
   HF.w = Math.ceil(TRK.bx1 + pad) - HF.x0 + 1; HF.h = Math.ceil(TRK.bz1 + pad) - HF.z0 + 1;
   HF.d = new Float32Array(HF.w * HF.h);
   for (let j = 0; j < HF.h; j++) for (let i = 0; i < HF.w; i++) HF.d[j * HF.w + i] = terrainH(HF.x0 + i, HF.z0 + j);
 }
 function hfAt(x, z) {
-  const fx = x - HF.x0, fz = z - HF.z0;
+  const fx = (x - HF.x0) * HF.ir, fz = (z - HF.z0) * HF.ir;
   if (fx < 0 || fz < 0 || fx >= HF.w - 1 || fz >= HF.h - 1) return terrainH(x, z);
   const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, k = j * HF.w + i, d = HF.d;
   return (d[k] * (1 - u) + d[k + 1] * u) * (1 - v) + (d[k + HF.w] * (1 - u) + d[k + HF.w + 1] * u) * v;
 }
 // altura do campo no registrador: entrada q[0]=x, q[1]=z; saída q[6]
 function hfAtQ(q) {
-  const fx = q[0] - HF.x0, fz = q[1] - HF.z0;
+  const fx = (q[0] - HF.x0) * HF.ir, fz = (q[1] - HF.z0) * HF.ir;
   if (fx < 0 || fz < 0 || fx >= HF.w - 1 || fz >= HF.h - 1) { q[6] = terrainH(q[0], q[1]); return; }
   const i = fx | 0, j = fz | 0, u = fx - i, v = fz - j, k = j * HF.w + i, d = HF.d;
   q[6] = (d[k] * (1 - u) + d[k + 1] * u) * (1 - v) + (d[k + HF.w] * (1 - u) + d[k + HF.w + 1] * u) * v;

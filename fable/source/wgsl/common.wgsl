@@ -9,5 +9,12 @@
 @group(0) @binding(6) var tZone: texture_2d<f32>;    // zonas (ver 11_worldmap.js)
 // mapas do mundo: F.wm = (x0, z0, tamanhoX, tamanhoZ) em metros
 fn wmIn(xz: vec2f) -> bool { let p = xz - F.wm.xy; return p.x >= 0.0 && p.y >= 0.0 && p.x <= F.wm.z && p.y <= F.wm.w; }
+#ifdef WSM
+// Weston-super-Mare: both maps on the same grid (2 m), any spacing: F.wm.zw is the size of the grid in metres
+fn wmUV(xz: vec2f, d: vec2f) -> vec2f { return ((xz - F.wm.xy) / F.wm.zw * (d - 1.0) + 0.5) / d; }
+fn wmHeight(xz: vec2f) -> f32 { return textureSampleLevel(tHeight, sClamp, wmUV(xz, vec2f(textureDimensions(tHeight))), 0.0).r; }
+fn wmZone(xz: vec2f) -> vec4f { if (!wmIn(xz)) { return vec4f(0.6, 0.0, 0.0, 0.5); } return textureSampleLevel(tZone, sClamp, wmUV(xz, vec2f(textureDimensions(tZone))), 0.0); }
+#else
 fn wmHeight(xz: vec2f) -> f32 { return textureSampleLevel(tHeight, sClamp, (xz - F.wm.xy + 0.5) / vec2f(textureDimensions(tHeight)), 0.0).r; }
 fn wmZone(xz: vec2f) -> vec4f { if (!wmIn(xz)) { return vec4f(1.0, 0.0, 1.0, 0.0); } return textureSampleLevel(tZone, sClamp, ((xz - F.wm.xy) * 2.0 + 0.5) / vec2f(textureDimensions(tZone)), 0.0); }
+#endif

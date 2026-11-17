@@ -3,7 +3,7 @@
 // material: id 0 = vidro de janela (cor do vértice = tinta), 1 = lente transparente canelada (farol)
 #include mesh_vert
 #include fwd_common
-#ifdef DB5
+#ifdef BCAR
 // DB5: material id 2 = the Perspex cowl over each headlamp: thin, colourless and plain (no flutes) — only a faint reflection
 // of the sky and the glint of the sun give it away.
 fn shadeCowl(in: V2F, N: vec3f, V: vec3f) -> vec4f {
@@ -24,7 +24,7 @@ fn shade(in: V2F, ff: bool) -> vec4f {
   var N = normalize(in.nrm); if (!ff) { N = -N; }
   let V = normalize(F.camPos.xyz - in.wpos);
   let id = matId(in.mat);
-#ifdef DB5
+#ifdef BCAR
   if (id == 2u) { return shadeCowl(in, N, V); }
 #endif
   var milk = 0.0;

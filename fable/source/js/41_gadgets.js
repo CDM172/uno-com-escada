@@ -1,17 +1,28 @@
-// Aston Martin DB5 gadgets: shared state (the DB5 only; with the Uno everything here stays at rest).
-// The sound code reads GAD.snd and nothing else:
+// Gadgets of the Aston Martins (the DB5 and the V8 Vantage; with the Uno everything here stays at rest): shared state.
+// The sound code reads GAD.snd and nothing else. What it means depends on the car (CARSEL):
+//   Aston Martin DB5 (CARSEL 'db5')
 //   GAD.snd[0]  bit flags, valid for the current tick: 1 machine guns firing, 2 smoke screen running, 4 oil spraying,
 //               8 a mechanism is moving (servo), 16 horn held
 //   GAD.snd[1]  ejector-seat counter: goes up by one every time the seat is fired
 //   GAD.snd[2]  end-stop counter: goes up by one every time a mechanism reaches the end of its travel (clunk)
-// (The two counters only ever go up while the game runs: they are zero when the game starts and a restart does not touch
+//   GAD.snd[3]  always 0
+//   Aston Martin V8 Vantage (CARSEL 'v8')
+//   GAD.snd[0]  bit flags, valid for the current tick: 1 lasers firing, 2 rocket booster burning, 8 a mechanism is moving
+//               (servo), 16 horn held (4 is not used)
+//   GAD.snd[1]  missile-launch counter: goes up by one every time a missile leaves its bay
+//   GAD.snd[2]  end-stop counter: goes up by one every time a mechanism reaches the end of its travel (clunk)
+//   GAD.snd[3]  explosion counter: goes up by one at every explosion (a missile hitting something or reaching the end of
+//               its range, the self-destruct)
+// (The counters only ever go up while the game runs: they are zero when the game starts and a restart does not touch
 //  them. GAD.snd[0] is rewritten by every physics step and cleared by a restart.)
 //
-// The rest of this file is the gadget logic: one call of gadStep(keys) per physics step (1/120 s) turns the gadget keys into
-// mechanism positions (GAD.v, read by the car model in 30_car_e_db5.js), effects (particles, oil on the road: 44_fx.js),
-// the flags above and a bit mask of what is active for the status line of the HUD (GAD.act). Nothing is allocated per step.
+// The rest of this file is the gadget logic of the DB5 (the V8's is in 41_gadgets_v8.js): one call of gadStep(keys) per
+// physics step (1/120 s) turns the gadget keys into mechanism positions (GAD.v, read by the car model: 30_car_e_db5.js,
+// 30_car_f_v8.js), effects (particles, oil on the road: 44_fx.js), the flags above and a bit mask of what is active for the
+// status line of the HUD (GAD.act). Nothing is allocated per step.
 
 // Gadget keys: more bits of the same key mask the driving keys use (K_W ... K_PADS take bits 0 to 9, see 40_vehicle.js).
+// The names are the DB5's; the V8 reads the same bits, which come from the same keys and pad buttons (see 41_gadgets_v8.js).
 const K_GPLATE = 1 << 10, K_GGUN = 1 << 11, K_GSHIELD = 1 << 12, K_GSLASH = 1 << 13, K_GRAM = 1 << 14, K_GSMOKE = 1 << 15,
   K_GOIL = 1 << 16, K_GEJECT = 1 << 17, K_GHORN = 1 << 18, K_GLAMP = 1 << 19, K_GADGETS = 0xFFC00;
 // GAD.v: positions of the mechanisms after the current physics step (GAD.pv: after the previous one, for interpolation)
@@ -44,13 +55,21 @@ const OIL_GRIP = 0.3, OIL_R = 0.75, OIL_STEP = 0.6, OILP_N = 192;
 const EJ = { seatUp: 11.5, seatBack: 1.2, seatDrag: 0.35, seatSpin: 2.6, seatFloor: 0.9, roofUp: 8.5, roofBack: 4.5, roofDrag: 1.3, roofSpin: 9.5, roofFloor: 1.5 };
 const GAD = {
   snd: new Int32Array(4),
-  on: CARSEL === 'db5',
-  v: new Float32Array(16), pv: new Float32Array(16), st: new Int32Array(16), act: 0,
+  on: CARSEL === 'db5' || CARSEL === 'v8', car: CARSEL,
+  v: new Float32Array(24), pv: new Float32Array(24), st: new Int32Array(24), act: 0, rate: GRATE,
   oil: new Float32Array(OILP_N * 2), oilN: 0, oilHead: 0, oilLast: new Float64Array(2),   // ring of oil patches [x, z]
   ej: new Float64Array(8),     // launch of the ejector seat: point under the seat [x, y, z], car velocity [x, z], backwards [x, z] (world)
+  // what the physics (40_vehicle.js) takes from the gadgets; neutral values with the Uno and the DB5 (see gadGrip):
+  gripOn: false,               // gadGrip(i) changes the grip of the tyres (DB5: oil on the road; V8: spiked tyres, skis)
+  latK: 1, rollKf: 1,          // V8 skis: share of the lateral load transfer and of the body roll that is left
+  forceOn: false, thrust: 0, dragA: 0,   // V8: rocket thrust (N, forwards) and the extra drag of the skis (½ρ·area)
+  hidden: 0,                   // V8: 1 while the car is blown up (self-destruct), until it is put back on the track
+  mis: new Float64Array(32),   // V8: the two missiles (41_gadgets_v8.js)
 };
 // Points of the car where effects are born (car frame, metres): x, y, z each
-const GPT = new Float32Array([
+// (filled from the model by the car's table at load; 16 points)
+const GPT = new Float32Array(48);
+GPT.set([
   2.13, 0.505, -0.6,      // 0, 1: muzzles of the left and right gun (barrels out)
   2.13, 0.505, 0.6,
   -2.5, 0.28, -0.43,      // 2, 3: left and right pair of exhaust pipes (smoke screen)
@@ -69,11 +88,18 @@ function gadPoint(i) {
 }
 function gadReset() {
   GAD.v.fill(0); GAD.pv.fill(0); GAD.st.fill(0); GAD.act = 0; GAD.snd[0] = 0; GAD.oilN = 0; GAD.oilHead = 0;
-  if (GAD.on && typeof fxOilReset === 'function') fxOilReset();
+  GAD.gripOn = false; GAD.latK = 1; GAD.rollKf = 1; GAD.forceOn = false; GAD.thrust = 0; GAD.dragA = 0; GAD.hidden = 0; GAD.mis.fill(0);
+  if (GAD.car === 'db5' && typeof fxOilReset === 'function') fxOilReset();
+  if (GAD.car === 'v8') v8Reset();
 }
-// moves v[i] towards 1 (out) or 0; returns 1 while it is moving and counts a clunk when it reaches the end stop
+// one physics step of the gadgets of the selected car
+function gadStep(keys) { if (GAD.car === 'v8') gadStepV8(keys); else gadStepDB5(keys); }
+// grip multiplier of tyre i (40_vehicle.js calls it only while GAD.gripOn)
+function gadGrip(i) { return GAD.car === 'v8' ? v8Grip(i) : gadOilGrip(i); }
+// moves v[i] towards 1 (out) or 0 at the car's rate for that mechanism (GAD.rate); returns 1 while it is moving and counts a
+// clunk when it reaches the end stop
 function gadSlide(i, out) {
-  const v = GAD.v, x = v[i], d = GRATE[i];
+  const v = GAD.v, x = v[i], d = GAD.rate[i];
   if (out) { if (x >= 1) return 0; if (x + d >= 1) { v[i] = 1; GAD.snd[2]++; return 0; } v[i] = x + d; return 1; }
   if (x <= 0) return 0; if (x - d <= 0) { v[i] = 0; GAD.snd[2]++; return 0; } v[i] = x - d; return 1;
 }
@@ -90,8 +116,8 @@ function gadEjectD(part) {
     EJQ[1] = (j[3] + j[5] * EJ.roofBack) * h; EJQ[2] = (EJ.roofUp + vt) * h - vt * t; EJQ[3] = (j[4] + j[6] * EJ.roofBack) * h;
   }
 }
-// one physics step of the gadgets; keys = key mask of this step (the gadget bits K_G*)
-function gadStep(keys) {
+// one physics step of the DB5's gadgets; keys = key mask of this step (the gadget bits K_G*)
+function gadStepDB5(keys) {
   const v = GAD.v, st = GAD.st, e = FXQ, V = VEH, K = 1 / 65536;
   GAD.pv.set(v);
   const edge = keys & ~st[GI_PREV]; st[GI_PREV] = keys;
@@ -190,7 +216,7 @@ function gadStep(keys) {
     if (n >= EJECT_STEPS) { st[GI_EJECT] = 0; v[GV_EJECT] = 0; GAD.snd[2]++; }   // seat and panel are back in place
   }
   if (keys & K_GHORN) { snd |= 16; act |= GA_HORN; }
-  GAD.snd[0] = snd | (moving ? 8 : 0); GAD.act = act;
+  GAD.snd[0] = snd | (moving ? 8 : 0); GAD.act = act; GAD.gripOn = GAD.oilN > 0;
 }
 // Grip multiplier of wheel i from the oil on the road (the physics only calls it while there is oil: GAD.oilN > 0)
 function gadOilGrip(i) {

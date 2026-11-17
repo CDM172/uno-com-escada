@@ -26,9 +26,14 @@ fn vert(in: VIn) -> VSOut {
   let V = normalize(F.camPos.xyz - in.pos.xyz);
   let ph = 0.55 + 0.45 * pow(sat(dot(-V, F.sunDir.xyz) * 0.5 + 0.5), 3.0) * 2.2;
   let amb = max(F.sh[0].rgb + F.sh[1].rgb * 0.5, vec3f(0.0));
-#ifdef DB5
+#ifdef BCAR
   // gadget particles that glow by themselves (tracers): misc.z = 1 → the colour is what they emit, whatever the light on them
+#ifdef V8
+  // (V8: misc.z = 2 is fire, which glows too)
+  o.col = vec4f(in.col.rgb * mix(F.sunCol.rgb * (0.15 + 0.85 * sh) * ph / PI + amb * 1.2, vec3f(1.0), min(in.misc.z, 1.0)), in.col.a);
+#else
   o.col = vec4f(in.col.rgb * mix(F.sunCol.rgb * (0.15 + 0.85 * sh) * ph / PI + amb * 1.2, vec3f(1.0), in.misc.z), in.col.a);
+#endif
   o.ext = vec4f(in.misc.y, in.misc.z, 0.0, 0.0);
 #else
   o.col = vec4f(in.col.rgb * (F.sunCol.rgb * (0.15 + 0.85 * sh) * ph / PI + amb * 1.2), in.col.a);
@@ -38,7 +43,17 @@ fn vert(in: VIn) -> VSOut {
 }
 fn shade(in: V2F, ff: bool) -> vec4f {
   let r = length(in.uv);
-#ifdef DB5
+#ifdef BCAR
+#ifdef V8
+  if (in.ext.y > 1.5) {   // fire (explosions, rocket motors): a ragged ball that glows by itself; the CPU turns it from yellow to red
+    let sf = vec2f(in.ext.x * 7.3, in.ext.x * 3.1);
+    let nf = textureSampleLevel(tNoise, sLin, in.uv * 0.23 + sf, 0.0); let nf2 = textureSampleLevel(tNoise, sLin, in.uv * 0.61 - sf * 1.7, 0.0);
+    let dens = smoothstep(1.0, 0.2, r) * sat(0.9 - r * 0.8 + (nf.r - 0.5) * 2.0 + (nf2.g - 0.5) * 1.2);
+    let zs = F.camFwd.w / max(textureLoad(gD, vec2i(in.pos.xy), 0), 1e-6); let zf = F.camFwd.w / in.pos.z;
+    let a = smoothstep(0.15, 0.7, dens) * in.col.a * smoothstep(0.0, 0.6, zs - zf) * smoothstep(0.3, 1.5, zf);
+    return vec4f(in.col.rgb * a * (0.6 + 0.8 * nf2.r), a * 0.35);
+  }
+#endif
   if (in.ext.y > 0.5) {   // glowing dot (tracer): a soft additive blob, hidden by anything in front of it
     let g = sat(1.0 - r); let zn = F.camFwd.w / in.pos.z;
     return vec4f(in.col.rgb * (g * g * in.col.a * smoothstep(0.4, 2.5, zn)), 0.0);

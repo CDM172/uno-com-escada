@@ -57,14 +57,14 @@ const CAR = {
   },
 };
 BUILD.push(async () => {
-  if (CAR.load) await CAR.load();   // (the DB5, which takes over this contract when selected, decodes its mesh first: 30_car_e_db5.js)
+  if (CAR.load) await CAR.load();   // (an Aston Martin, which takes over this contract when selected, decodes its mesh first: 30_car_g_bcar.js)
   CAR.build();
   if (GAME.mode === 'car') {
     buildTestGround();
     GAME.init = () => { setCamera(3.3, 1.25, -3.6, 0.1, 0.62, 0, 0.5); R.cube.pos.set([0, 0.9, 0]); };
-    if (GAD.on) {   // DB5 in the viewer: a longer car, and its gadget keys work
-      GAME.init = () => { setCamera(4.4, 1.5, -3.7, 0.15, 0.6, 0, 0.5); R.cube.pos.set([0, 0.9, 0]); };
-      GAME.tick = db5ViewTick; addEventListener('keydown', onKeyDown); addEventListener('keyup', onKeyUp); addEventListener('blur', onBlur);
+    if (GAD.on) {   // an Aston Martin in the viewer: a longer car, and its gadget keys work
+      const v = BC.viewCam; GAME.init = () => { setCamera(v[0], v[1], v[2], v[3], v[4], v[5], v[6]); R.cube.pos.set([0, 0.9, 0]); };
+      GAME.tick = bcarViewTick; addEventListener('keydown', onKeyDown); addEventListener('keyup', onKeyUp); addEventListener('blur', onBlur);
     }
     window.__car = CAR;
   }

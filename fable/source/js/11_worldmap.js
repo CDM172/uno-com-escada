@@ -3,6 +3,7 @@
 //       B = grama alta/rústica 0..1 (0 = aparada junto à pista) | A = piso de concreto/boxes (distância assinada ±8 m; >0.5 = dentro)
 const WM = { height: null, zone: null, x0: 0, z0: 0, sx: 1, sz: 1, zw: 0, zh: 0, zdata: null };
 function worldMapBuild() {
+  if (TOWN.on) { townMapBuild(); return; }
   const dev = G.dev;
   WM.x0 = HF.x0; WM.z0 = HF.z0; WM.sx = HF.w - 1; WM.sz = HF.h - 1;
   WM.height = mkTex(HF.w, HF.h, 'r32float', TU.TB | TU.CD);
@@ -29,4 +30,28 @@ function worldMapBuild() {
   }
   WM.zone = mkTex(zw, zh, 'rgba8unorm', TU.TB | TU.CD);
   dev.queue.writeTexture({ texture: WM.zone }, z, { bytesPerRow: zw * 4 }, [zw, zh]);
+}
+// Weston-super-Mare: height (r32float) and land cover (rgba8) on the 2 m grid of the town's height field.
+// land cover: R = grass, G = sand, B = mud (and the sea bed), A = wild ground (0.5 rough grass and fields, 1 wood);
+// whatever is left of 1 - R - G - B is hard ground (paving, yards). Roads and pavements are meshes on top of it.
+function townMapBuild() {
+  const dev = G.dev, w = HF.w, h = HF.h, T = TOWN, Z = T.zone, zw = T.zw, zh = T.zh;
+  WM.x0 = HF.x0; WM.z0 = HF.z0; WM.sx = (w - 1) * HF.res; WM.sz = (h - 1) * HF.res;
+  WM.height = mkTex(w, h, 'r32float', TU.TB | TU.CD);
+  dev.queue.writeTexture({ texture: WM.height }, HF.d, { bytesPerRow: w * 4 }, [w, h]);
+  //            NONE ROAD PAVE HARD GRASS SAND MUD WOOD WATER KERB PATH TRACK GARDEN FIELD BLD OUT
+  const cR = [150, 0, 0, 0, 255, 0, 0, 40, 0, 0, 0, 30, 215, 245, 0, 0], cG = [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 40, 0, 0, 0, 0];
+  const cB = [0, 0, 0, 0, 0, 0, 255, 0, 255, 0, 0, 0, 0, 0, 0, 255], cA = [128, 0, 0, 0, 0, 0, 40, 255, 0, 0, 0, 60, 30, 128, 0, 0];
+  const z = WM.zdata = new Uint8Array(w * h * 4);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    let r = 0, g = 0, b = 0, a = 0;
+    for (let q = 0; q < 4; q++) {
+      const zi = Math.min(zw - 1, Math.max(0, i * 2 - 1 + (q & 1))), zj = Math.min(zh - 1, Math.max(0, j * 2 - 1 + (q >> 1))), c = Z[zj * zw + zi];
+      r += cR[c]; g += cG[c]; b += cB[c]; a += cA[c];
+    }
+    const o = (j * w + i) * 4; z[o] = r >> 2; z[o + 1] = g >> 2; z[o + 2] = b >> 2; z[o + 3] = a >> 2;
+  }
+  WM.zw = w; WM.zh = h;
+  WM.zone = mkTex(w, h, 'rgba8unorm', TU.TB | TU.CD);
+  dev.queue.writeTexture({ texture: WM.zone }, z, { bytesPerRow: w * 4 }, [w, h]);
 }

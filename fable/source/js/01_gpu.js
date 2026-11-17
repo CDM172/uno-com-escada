@@ -1,8 +1,9 @@
 // Dispositivo WebGPU, utilitários de recurso e pré-processador de WGSL.
 const Q = new URLSearchParams(location.search);
-// Which car is driven: ?car=db5 (Aston Martin DB5, the default) or ?car=uno (the original Fiat Uno with the ladder).
-// The choice is remembered between sessions.
-const CARSEL = (() => { let c = Q.get('car'); try { if (c) localStorage.setItem('car', c); else c = localStorage.getItem('car'); } catch (e) { } return c === 'uno' ? 'uno' : 'db5'; })();
+// Which car is driven: ?car=db5 (Aston Martin DB5, the default), ?car=v8 (Aston Martin V8 Vantage) or ?car=uno (the
+// original Fiat Uno with the ladder). The choice is remembered between sessions. (A let: a build without the V8's mesh
+// falls back to the DB5, see 30_car_f_v8.js.)
+let CARSEL = (() => { let c = Q.get('car'); try { if (c) localStorage.setItem('car', c); else c = localStorage.getItem('car'); } catch (e) { } return c === 'uno' ? 'uno' : c === 'v8' ? 'v8' : 'db5'; })();
 // Graphics: 'full' renders at the window's size times the screen scaling (up to 2x); 'fast' renders at most 1280x720
 // with no high-DPI scaling, for laptops and older graphics cards. ?gfx=fast or ?gfx=full chooses (the menu does the
 // same) and the choice is remembered. With no choice saved ('auto') the game starts in full and, if the warm-up shows

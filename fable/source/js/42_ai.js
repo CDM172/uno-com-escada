@@ -4,10 +4,35 @@ const AI = { line: null, vt: null, kline: null, enabled: false, script: null, pw
 // What the autopilot plans for with each car: cornering and braking acceleration (m/s²) and top speed (m/s). The DB5 on its
 // cross-ply tyres corners and stops far less hard than the Uno.
 // (DB5 only — aTot: braking and cornering share one grip budget in the speed profile; margin, slide, brakeLat: see aiFeather)
-const AIP = CARSEL === 'db5' ? { aLat: 7.2, aBrk: 5.6, vMax: 62, over: 0.6, look0: 4.5, lookV: 0.3, aTot: 7.2, margin: 1.25, slide: 1.5, brakeLat: 0.3 } : { aLat: 11.4, aBrk: 7.6, vMax: 62, over: 1.2, look0: 4.5, lookV: 0.3, aTot: 0 };
-// Script of the DB5's scripted lap (benchmark, demo lap, lap poses), by time: [from (s), to (s), keys pressed, keys released].
-// The autopilot drives; the script changes cameras as the Uno's recorded lap does and shows each gadget where it is seen best.
-const AI_DEMO = CARSEL !== 'db5' ? null : [
+// (V8 Vantage: radial tyres, more grip than the DB5's, and 400 bhp to feather on the way out of corners)
+const AIP = CARSEL === 'v8' ? { aLat: 8.2, aBrk: 7.0, vMax: 70, over: 0.6, look0: 4.5, lookV: 0.3, aTot: 8.2, margin: 1.2, slide: 1.5, brakeLat: 0.3 }
+  : CARSEL === 'db5' ? { aLat: 7.2, aBrk: 5.6, vMax: 62, over: 0.6, look0: 4.5, lookV: 0.3, aTot: 7.2, margin: 1.25, slide: 1.5, brakeLat: 0.3 } : { aLat: 11.4, aBrk: 7.6, vMax: 62, over: 1.2, look0: 4.5, lookV: 0.3, aTot: 0 };
+// Script of the Aston Martins' scripted lap (benchmark, demo lap, lap poses), by time: [from (s), to (s), keys pressed, keys
+// released]. The autopilot drives; the script changes cameras as the Uno's recorded lap does and shows each gadget where it
+// is seen best. (The V8 reads the gadget bits its own way: 41_gadgets_v8.js.)
+const AI_DEMO_V8 = [
+  [0.5, 0.6, K_GLAMP, 0],                                        // headlamps on
+  [1.0, 1.1, K_GSMOKE, 0],                                       // rocket booster down the main straight (chase camera)
+  [5.5, 5.6, K_GSHIELD, 0], [6.5, 6.6, K_GSHIELD, 0],            // the two missiles, towards the first corner
+  [7.5, 10.0, K_GGUN, 0],                                        // hubcap lasers through the first corner
+  [12.0, 12.05, K_C, 0],                                         // bonnet camera
+  [17.0, 17.1, K_GSHIELD, 0],                                    // a missile (reloaded) into the esses
+  [19.5, 19.55, K_C, 0],                                         // trackside TV cameras
+  [20.0, 20.1, K_GSLASH | K_GRAM, 0],                            // spiked tyres and outrigger skis out for the hairpin ...
+  [24.0, 24.1, K_GSHIELD, 0],                                    // (a missile into the hairpin's barrier)
+  [28.5, 28.6, K_GSLASH | K_GRAM, 0],                            // ... and back in
+  [30.5, 30.55, K_C, 0],                                         // cockpit
+  [31.0, 33.2, K_GGUN, 0],                                       // lasers, with the head-up display
+  [34.7, 34.8, K_GSHIELD, 0], [35.5, 35.6, K_GSHIELD, 0],        // missiles down the back straight (reloaded at 34.4 s)
+  [41.0, 41.05, K_C, 0],                                         // chase camera
+  [42.0, 42.1, K_GLAMP, 0],                                      // headlamps off
+  [44.0, 45.0, K_GHORN, 0],                                      // horn
+  [47.0, 47.05, K_C, 0],                                         // bonnet camera
+  [50.0, 50.1, K_GSMOKE, 0], [50.0, 53.0, K_V, 0],               // booster (recharged) down the long straight, looking back at it
+  [53.0, 53.05, K_C, 0],                                         // TV cameras
+  [55.5, 57.6, K_GEJECT, 0],                                     // self-destruct, and back on the track
+];
+const AI_DEMO = CARSEL === 'v8' ? AI_DEMO_V8 : CARSEL !== 'db5' ? null : [
   [1.0, 1.1, K_GPLATE, 0], [2.6, 2.7, K_GPLATE, 0],              // chase camera: the number plates revolve (France, Switzerland)
   [4.5, 4.6, K_GSHIELD, 0], [6.5, 6.6, K_GRAM | K_GSLASH, 0],    // bullet shield up; bumper rams and tyre slashers out
   [10.0, 10.1, K_GSHIELD | K_GRAM | K_GSLASH, 0],                // ... and all back in
@@ -82,6 +107,10 @@ function aiKeys(t) {
   if (err > db) keys |= K_D; else if (err < -db) keys |= K_A;
   // velocidade alvo um pouco à frente (antecipa o freio)
   let vT = 1e9; for (let q = 0; q < 6; q++) vT = Math.min(vT, AI.vt[(i0 + q * 2) % N]);
+  if (GAD.thrust > 0) {   // V8 booster burning: it brakes less hard against the thrust, so it looks further ahead for the next corner
+    const aE = Math.max(1.5, AIP.aBrk - GAD.thrust / VP.m);
+    for (let q = 1; q < 160; q++) { const v = AI.vt[(i0 + q) % N], w = Math.sqrt(v * v + 2 * aE * q * ds); if (w < vT) vT = w; }
+  }
   const sc = AI.script;
   if (speed < vT - 0.3) keys |= K_W; else if (speed > vT + AIP.over) keys |= K_S;
   else if (speed < vT + 0.3 && (V.steps & 1)) keys |= K_W;

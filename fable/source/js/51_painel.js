@@ -7,10 +7,17 @@ const HUD = {
   cg: null, ct: null, cs: null, g: null, t: null, s: null, face: null, hub: null, bgT: null, bgS: null, A: null, B: null, C: null,
   L: new Int32Array(40), K: new Int32Array(12), acc: new Float64Array(4), stats: false, vis: false,
   V: new Int32Array(6),   // o que o painel mostra: km/h × 10, rpm, marcha, volta atual, última e melhor (centésimos de segundo; -1 = sem tempo)
-  // Scale of the speedometer: the Uno's reads to 200 km/h, the DB5's to 260 (and its rev counter has the red line at 6,000).
-  // kmh10 = full scale in tenths of km/h, kS = degrees of needle per tenth of km/h.
-  kmh10: GAD.on ? 2600 : 2000, kS: GAD.on ? 250 / 2600 : 250 / 2000,
-  gd: null, gdS: null, gadK: -1,   // gadget status line of the DB5: element, its labels, what is shown
+  // Scale of the speedometer: the Uno's reads to 200 km/h, the DB5's to 260, the V8's to 300 (the rev counters have the red
+  // line at 6,250, 6,000 and 6,500). kmh10 = full scale in tenths of km/h, kS = degrees of needle per tenth of km/h.
+  kmh10: CARSEL === 'v8' ? 3000 : GAD.on ? 2600 : 2000, kS: CARSEL === 'v8' ? 250 / 3000 : GAD.on ? 250 / 2600 : 250 / 2000,
+  gd: null, gdS: null, gadK: -1,   // gadget status line of the Aston Martins: element, its labels, what is shown
+};
+// Labels of the gadget status line, one per bit of GAD.act (41_gadgets.js, 41_gadgets_v8.js), and the bits that hide
+// another one while they are on (firing replaces "guns out" / "lasers")
+const HUD_GAD = CARSEL === 'v8' ? {
+  labels: ['Lasers', 'Lasers firing', 'Missile away', 'Reloading missiles', 'Spiked tyres', 'Outrigger skis', 'Rocket booster', 'Booster recharging', 'Self-destruct', 'Headlamps', 'Horn'], fire: 2, out: 1,
+} : {
+  labels: ['Plate 4711-EA-62', 'Plate LU 6789', 'Guns out', 'Firing', 'Bullet shield', 'Tyre slashers', 'Rams', 'Smoke screen', 'Oil', 'Ejector seat', 'Headlamps', 'Horn'], fire: 8, out: 4,
 };
 const HCH = '0123456789:.,-R';
 // atlas de algarismos: cada caractere centrado numa célula; os algarismos têm todos a mesma largura (números não "dançam")
@@ -25,7 +32,9 @@ function hudAtlas(px) {
 function hudInit() {
   const H = HUD; H.cg = document.getElementById('hg'); H.ct = document.getElementById('ht'); H.cs = document.getElementById('hs');
   H.g = H.cg.getContext('2d'); H.t = H.ct.getContext('2d'); H.s = H.cs.getContext('2d');
-  H.gd = document.getElementById('gd'); H.gdS = H.gd ? H.gd.querySelectorAll('span') : [];
+  H.gd = document.getElementById('gd');
+  if (H.gd && GAD.on) for (const t of HUD_GAD.labels) { const e = document.createElement('span'); e.textContent = t; H.gd.appendChild(e); }
+  H.gdS = H.gd ? H.gd.querySelectorAll('span') : [];
   hudLayout(); addEventListener('resize', hudLayout);
 }
 // tira com rótulos fixos e vãos para os números; devolve o canvas de fundo e grava em L[o + i] o x de cada número
@@ -59,7 +68,8 @@ function hudLayout() {
     }
     f.fillStyle = 'rgba(255,255,255,.6)'; f.font = '600 ' + Math.round(r * 0.115) + 'px "Helvetica Neue",Helvetica,Arial,sans-serif'; f.fillText(unit, cx, cy + r * 0.84);
   };
-  if (GAD.on) { dial(cx1, 260, 20, 10, 0, 'km/h', 2); dial(cx2, 7, 1, 0.5, 6, 'rpm × 1000'); }
+  if (CARSEL === 'v8') { dial(cx1, 300, 20, 10, 0, 'km/h', 2); dial(cx2, 7, 1, 0.5, 6.5, 'rpm × 1000'); }
+  else if (GAD.on) { dial(cx1, 260, 20, 10, 0, 'km/h', 2); dial(cx2, 7, 1, 0.5, 6, 'rpm × 1000'); }
   else { dial(cx1, 200, 20, 10, 0, 'km/h'); dial(cx2, 7, 1, 0.5, 6.25, 'rpm × 1000'); }
   const hb = H.hub = document.createElement('canvas'), hr = Math.round(r * 0.085); hb.width = hb.height = hr * 2; const hg = hb.getContext('2d'); hg.beginPath(); hg.arc(hr, hr, hr, 0, TAU); hg.fillStyle = '#16181b'; hg.fill(); hg.lineWidth = hr * 0.25; hg.strokeStyle = '#ff5a36'; hg.stroke();
   L[6] = hr; L[7] = Math.round(cy + r * 0.3);                                   // raio do cubo; y dos números grandes
@@ -89,10 +99,10 @@ function hudDec(g, A, v10, x, y) {
 }
 // chamado a cada quadro do jogo: lê o estado (hudRead) e redesenha só o que mudou (hudDraw)
 function hudFrame() { hudRead(); hudDraw(); if (GAD.on) hudGad(); }
-// Gadget status line (DB5): one fixed label per gadget, shown while that gadget is active. The page is only touched when
-// the set of active gadgets changes; otherwise this is one integer comparison per frame.
+// Gadget status line (Aston Martins): one fixed label per gadget, shown while that gadget is active. The page is only touched
+// when the set of active gadgets changes; otherwise this is one integer comparison per frame.
 function hudGad() {
-  let a = HUD.vis ? GAD.act : 0; if (a & GA_FIRE) a &= ~GA_GUNS;
+  let a = HUD.vis ? GAD.act : 0; if (a & HUD_GAD.fire) a &= ~HUD_GAD.out;
   if (a === HUD.gadK || !HUD.gd) return;
   HUD.gadK = a; const sp = HUD.gdS; HUD.gd.style.display = a ? 'block' : 'none';
   for (let i = 0; i < sp.length; i++) sp[i].className = (a >> i) & 1 ? 'on' : '';

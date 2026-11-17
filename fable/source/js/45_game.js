@@ -14,16 +14,16 @@ const LAP = new Float64Array(4);
 // Controle (Gamepad API): PADV[0] gatilho direito, [1] gatilho esquerdo, [2] analógico esquerdo já com zona morta e curva. Preenchido por padPoll.
 const PADV = new Float64Array(3);
 const KEYMAP = { KeyW: K_W, ArrowUp: K_W, KeyS: K_S, ArrowDown: K_S, KeyA: K_A, ArrowLeft: K_A, KeyD: K_D, ArrowRight: K_D, Space: K_SPACE, KeyC: K_C, KeyR: K_R, KeyV: K_V };
-// DB5 only: the gadget keys (see 41_gadgets.js) and a fourth camera, in the cockpit (GS.cam = 3)
+// Aston Martins only: the gadget keys (see 41_gadgets.js) and a fourth camera, in the cockpit (GS.cam = 3)
 if (GAD.on) Object.assign(KEYMAP, { KeyP: K_GPLATE, KeyG: K_GGUN, KeyK: K_GSHIELD, KeyT: K_GSLASH, KeyU: K_GRAM, KeyJ: K_GSMOKE, KeyO: K_GOIL, KeyE: K_GEJECT, KeyQ: K_GHORN, KeyL: K_GLAMP });
 const NCAM = GAD.on ? 4 : 3;
-// Cameras fixed to the body of the DB5, in the car frame [eye x, y, z, target x, y, z]: bonnet (above the scuttle, looking
-// down the long bonnet), bonnet looking back (behind the tail, the car out of the picture), cockpit (the driver's eyes, on
-// the right: steering wheel, dials and bonnet in view) and cockpit looking back over the left shoulder through the rear
-// window. The eye points come with the model (DB5C, from DB5_META.car); the rest is relative to them.
+// Cameras fixed to the body of an Aston Martin, in the car frame [eye x, y, z, target x, y, z]: bonnet (above the scuttle,
+// looking down the long bonnet), bonnet looking back (behind the tail, the car out of the picture), cockpit (the driver's
+// eyes, on the right: steering wheel, dials and bonnet in view) and cockpit looking back over the left shoulder through
+// the rear window. The eye points come with the model (BCG, from DB5_META.car / V8_META.car); the rest is relative to them.
 const CAMP = new Float32Array(24);
 if (GAD.on) {
-  const e = DB5C.eye, b = DB5C.bonnetCam, tail = -(DB5C.rear + DB5C.bumper);
+  const e = BCG.eye, b = BCG.bonnetCam, tail = -(BCG.rear + BCG.bumper);
   CAMP.set([
     b[0], b[1], b[2], b[0] + 6.4, b[1] - 0.5, b[2],
     tail - 0.1, 1.0, 0, tail - 7, 0.62, 0,
@@ -140,6 +140,7 @@ function gadWarmKeys(i) {
   if (ph % 3 === 1) k |= K_GGUN; if (ph % 5 === 2) k |= K_GOIL; if (ph % 7 === 3) k |= K_GHORN;
   const q = i % 150;
   if (q === 0) k |= (ph & 1 ? K_GPLATE : 0) | (ph % 4 === 0 ? K_GSHIELD : 0) | (ph % 4 === 1 ? K_GSLASH : 0) | (ph % 4 === 2 ? K_GRAM : 0) | (ph % 6 === 3 ? K_GSMOKE : 0) | (ph % 9 === 4 ? K_GEJECT : 0) | (ph % 4 === 3 ? K_GLAMP : 0);
+  if (CARSEL === 'v8' && ((i / 300) | 0) % 13 === 7) k |= K_GEJECT;   // V8: E held long enough to set the self-destruct off
   return k;
 }
 // Aquece a GPU antes do jogo começar: renderiza quadros de vários pontos do circuito nas três câmeras (com fumaça e marcas),
@@ -245,14 +246,14 @@ function gamePose() {
   }
   C.inp[0] = GS.steer; C.inp[1] = GS.steer * P.steerRatio; C.place(B, GS.spin, GS.susp);
   const bp = objParams(C.slotBody), k = GS.keys; bp[0] = ((k & K_S) && V.gear !== 0) || ((k & K_W) && V.gear === 0) ? 1 : 0; bp[1] = V.gear === 0 ? 1 : 0; bp[2] = 1;
-  if (GAD.on) bp[2] = GAD.pv[GV_LIGHT] + (GAD.v[GV_LIGHT] - GAD.pv[GV_LIGHT]) * al;   // DB5: the headlamps have a switch
+  if (GAD.on) bp[2] = GAD.pv[GV_LIGHT] + (GAD.v[GV_LIGHT] - GAD.pv[GV_LIGHT]) * al;   // Aston Martins: the headlamps have a switch
   for (let i = 0; i < 4; i++) { const w = V.omega[i]; objParams(C.slotWheel[i])[0] = w < 0 ? -w : w; }
   FR.data.set(B, FO.carMat); m4inv(T, B); FR.data.set(T, FO.carInv);
   // rodas: a matriz anterior passa a ser a roda atual levada pelo deslocamento rígido da carroceria (anterior × atual⁻¹).
   // Assim o desfoque de movimento não espalha o pneu pelo asfalto por causa do giro; a rotação é mostrada pelo material.
   if (C.slotWheel[0] !== C.slotBody) {
     const D2 = GS.tmp2; m4mul(D2, objPrev(C.slotBody), T); for (let i = 0; i < 4; i++) m4mul(objPrev(C.slotWheel[i]), D2, objModel(C.slotWheel[i]));
-    if (GAD.on) for (let i = 0; i < 2; i++) m4mul(objPrev(C.slotSlash[i]), D2, objModel(C.slotSlash[i]));   // the tyre slashers turn with the rear wheels
+    if (GAD.on) { const wp = C.wheelParts; for (let i = 0; i < wp.length; i++) m4mul(objPrev(wp[i]), D2, objModel(wp[i])); }   // parts that turn with the wheels (DB5 slashers, V8 lasers and studs)
   }
   const f = FR.data, o = FO.car; f[o] = bp[0]; f[o + 1] = GS.speed; f[o + 2] = GS.steer; f[o + 3] = 0;
   f[FO.car2] = (GS.tick60 < 30 && GS.speed < 0.5) ? 1 : 0;   // luzes de largada: acesas só enquanto o carro espera no grid
@@ -278,10 +279,10 @@ function gameCamera() {
     let rl = -V.ay * 0.004; rl = rl < -0.05 ? -0.05 : rl > 0.05 ? 0.05 : rl;
     q[0] = ex; q[1] = ey; q[2] = ez; q[3] = GS.cx + c * 1.6 * lb; q[4] = GS.cy + 0.95 + V.gPitch * 1.6; q[5] = GS.cz + s * 1.6 * lb; q[6] = 0.93 + (GS.speed < 50 ? GS.speed : 50) * 0.0042; q[7] = rl;
   } else if (GS.cam === 1 && GAD.on) {
-    // DB5, bonnet camera
+    // Aston Martin, bonnet camera
     camBody(lb < 0 ? 1 : 0); q[6] = 1.0; q[7] = -(V.gRoll + V.roll) * 0.8 * lb;
   } else if (GS.cam === 3 && GAD.on) {
-    // DB5, cockpit: the driver's eyes
+    // Aston Martin, cockpit: the driver's eyes
     camBody(lb < 0 ? 3 : 2); q[6] = 1.05; q[7] = -(V.gRoll + V.roll) * 0.8 * lb;
   } else if (GS.cam === 1) {
     // capô: presa à carroceria

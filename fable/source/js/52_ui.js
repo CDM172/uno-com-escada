@@ -3,18 +3,19 @@
 // disto é ligado: sem menu, sem painel, sem som.
 const ST = { INICIO: 0, JOGO: 1, PAUSA: 2, BENCH: 3, FITA: 4, RESULT: 5, POSE: 6 };
 const UI = { st: ST.INICIO, back: ST.JOGO, el: null, tag: null, res: null, b0: null, b1: null, cars: null, gfx: null, bench: null, benchN: 0, padPrev: 0, padN: 0, pose: -1, stats: false, warm: false };
-// the best lap is kept per car (the DB5 and the Uno are not in the same league)
-const BEST_KEY = GAD.on ? 'db5-melhor' : 'uno-melhor';
+// the best lap is kept per car (the Aston Martins and the Uno are not in the same league)
+const BEST_KEY = CARSEL + '-melhor';
 const $ = id => document.getElementById(id);
 function uiInit() {
   UI.el = $('ui'); UI.tag = $('tag'); UI.res = $('res'); UI.b0 = $('b0'); UI.b1 = $('b1'); UI.cars = $('cars'); UI.gfx = $('gfx');
   hudInit(); uiWarmup();
   try { const b = +localStorage.getItem(BEST_KEY); if (b > 20 && b < 600) LAP[2] = b; } catch (e) { /* sem armazenamento local: a melhor volta vale só nesta sessão */ }
   // Start screen: the car that is loaded goes in the subtitle and is marked in the chooser; picking the other one reloads
-  // the page with ?car=... (the other parameters of the address are kept). The gadget keys are listed with the DB5.
-  $('sub').textContent = (GAD.on ? 'Aston Martin DB5 · 1964' : 'Fiat Uno Mille EP · 1996 · with a ladder') + ' · Serra da Mata circuit';
+  // the page with ?car=... (the other parameters of the address are kept). The gadget keys are listed with the Aston Martins.
+  $('sub').textContent = (BC ? BC.name : 'Fiat Uno Mille EP · 1996 · with a ladder') + ' · Serra da Mata circuit';
   for (const b of document.querySelectorAll('#cars .car')) {
     const c = b.dataset.car, sel = c === CARSEL; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+    if (c === 'v8' && !BC_V8.meta) b.style.display = 'none';   // (a build without the V8's mesh)
     b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('car', c); location.search = q.toString(); };
   }
   // Graphics chooser (start screen and pause menu): picking the other mode reloads the page with ?gfx=..., which is saved.
@@ -23,7 +24,7 @@ function uiInit() {
     const g = b.dataset.gfx, sel = g === gfxNow; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
     b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('gfx', g); location.search = q.toString(); };
   }
-  if (GAD.on) { $('gcol').style.display = ''; $('pk').textContent = '1 to ' + POSES.length; }
+  if (GAD.on) { $(CARSEL === 'v8' ? 'gcolv8' : 'gcol').style.display = ''; $('pk').textContent = '1 to ' + POSES.length; }
   UI.b0.onclick = () => { if (UI.st === ST.INICIO) { sndStart(); uiSet(ST.JOGO); } else uiResume(); };
   UI.b1.onclick = () => benchStart();
   addEventListener('keydown', uiKey);
@@ -108,7 +109,8 @@ function padApply() {
   PADV[2] = x;
   if (rt > 0.06) k |= K_W; if (lt > 0.06) k |= K_S;
   if (m & 1) k |= K_SPACE; if (m & 8) k |= K_C; if (m & 4) k |= K_R; if (m & 32) k |= K_V;
-  // DB5 gadgets: B guns, LB smoke screen, Back rams, L3 horn, R3 ejector seat, d-pad up shield, down oil, left plates, right slashers
+  // Aston Martin gadgets: B guns, LB smoke screen, Back rams, L3 horn, R3 ejector seat, d-pad up shield, down oil, left plates,
+  // right slashers (DB5); the same buttons work the V8's lasers, booster, skis, horn, self-destruct, missiles and spikes
   if (GAD.on && (m & 0xFD12)) k |= ((m & 2) ? K_GGUN : 0) | ((m & 16) ? K_GSMOKE : 0) | ((m & 256) ? K_GRAM : 0) | ((m & 1024) ? K_GHORN : 0) | ((m & 2048) ? K_GEJECT : 0) | ((m & 4096) ? K_GSHIELD : 0) | ((m & 8192) ? K_GOIL : 0) | ((m & 16384) ? K_GPLATE : 0) | ((m & 32768) ? K_GSLASH : 0);
   GS.padKeys = k;
   const edge = m & ~UI.padPrev; UI.padPrev = m;

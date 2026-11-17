@@ -27,8 +27,8 @@ fn carAO(wp: vec3f, n: vec3f) -> f32 {
   let lp = (F.carInv * vec4f(wp, 1.0)).xyz;
   let ln = (F.carInv * vec4f(n, 0.0)).xyz;
   if (ln.y < 0.3 || lp.y > 0.2 || lp.y < -0.6 || abs(lp.x) > 4.5 || abs(lp.z) > 3.5) { return 1.0; }
-#ifdef DB5
-  let q = vec2f(abs(lp.x - CAR_AO_CX) - CAR_AO_HL, abs(lp.z) - CAR_AO_HW);   // (footprint of the DB5, from its model: 30_car_e_db5.js)
+#ifdef BCAR
+  let q = vec2f(abs(lp.x - CAR_AO_CX) - CAR_AO_HL, abs(lp.z) - CAR_AO_HW);   // (footprint of the Aston Martin, from its model: 30_car_g_bcar.js)
 #else
   let q = vec2f(abs(lp.x - 0.07) - 1.72, abs(lp.z) - 0.72);
 #endif
@@ -36,7 +36,7 @@ fn carAO(wp: vec3f, n: vec3f) -> f32 {
   let h = max(0.26 - lp.y, 0.03);                                     // altura do assoalho sobre o ponto (com piso: sem divisão por ~0)
   let occ = sat(1.0 - (dOut + 0.03) / (h * 3.0 + 0.3));
   // pneus: mancha curta e forte em volta de cada área de contato
-#ifdef DB5
+#ifdef BCAR
   let dw = length(vec2f((abs(lp.x) - CAR_AO_AX) * 0.8, abs(lp.z) - CAR_AO_TZ));
 #else
   let dw = length(vec2f((abs(lp.x) - 1.181) * 0.8, abs(lp.z) - 0.66));

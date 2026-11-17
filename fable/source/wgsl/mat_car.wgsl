@@ -5,9 +5,10 @@
 // O.p0 da carroceria: x = luz de freio, y = luz de ré, z = faróis. O.p0.x das rodas = |velocidade angular|.
 #include mesh_vert
 @group(3) @binding(0) var tAtlas: texture_2d<f32>;
-#ifdef DB5
-// The Aston Martin DB5 uses this family with the DB5 define: ids 20 to 28 are its own materials and ids 6, 7 and 12 have DB5
-// variants; ids 2, 3 and 13 are shared as they are. Without the define the source that reaches the GPU is the Uno's, to the letter.
+#ifdef BCAR
+// The Aston Martins (the cars modelled in Blender) use this family with the BCAR define and their own (DB5, V8): ids 20 to 28
+// are their materials and ids 6, 7 and 12 have variants for them; ids 2, 3 and 13 are shared as they are. The paint colour
+// is PAINT_ALB / PAINT_MET (30_car_e_db5.js, 30_car_f_v8.js). Without BCAR the source that reaches the GPU is the Uno's, to the letter.
 //   20 paint (a=1 unpainted edges) | 21 tyre | 22 lamp lenses (a: 0 headlamp, 1 stop/tail, 2 indicator, 3 reflector,
 //   4 reversing lamp) | 23 headlamp bowl | 24 leather (a=0 pleated) | 25 cloth and figure | 26 dashboard (a=1 wood)
 //   27 blur disc of the wire wheels | 28 muzzle flash
@@ -155,7 +156,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
       let dimple = 1.0 - smoothstep(0.006, 0.008, length(vec2f(da, r - 0.058)));
       s.albedo *= 1.0 - 0.5 * c - 0.6 * dimple; s.ao = 1.0 - 0.5 * dimple;
     }
-#ifdef DB5
+#ifdef BCAR
     case 6u: {   // steel: a = 0 armour plate (rolled, dull), a = 1 gun-metal (blued, smoother)
       let n = textureSample(tNoise, sLin, lp.zy * 5.0 + lp.xx * 3.0).r;
       s.metal = 0.85; s.rough = select(0.5 + 0.12 * n, 0.36, pa > 0.5); s.albedo = in.col.rgb * select(0.85 + 0.3 * n, 1.0, pa > 0.5);
@@ -228,7 +229,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
       let w = sin((lp.z + lp.y) * 1800.0) * sin(lp.x * 1800.0);
       s.albedo = in.col.rgb * (0.9 + 0.12 * w); s.rough = 0.8;
     }
-#ifdef DB5
+#ifdef BCAR
     case 12u: {  // decals of the DB5 atlas: a = 0 number plates, 1 badges (cut out), 2 instruments, 3 radar screen, 4 switch panel
       let t = textureSample(tAtlas, sLin, in.uv);
       if (pa < 0.5) { s.albedo = t.rgb * 0.8; s.rough = 0.42; s.coat = 0.3; }
@@ -287,7 +288,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
       s.albedo = in.col.rgb * mix(0.1, 1.0, smoothstep(0.25, 0.5, k)); s.rough = 0.92; s.metal = 0.3; s.ao = mix(0.2, 0.7, smoothstep(0.25, 0.5, k));
     }
     case 17u: { s.rough = select(0.42, 0.3, pa > 0.5); s.coat = select(0.3, 0.35, pa > 0.5); }   // capacete (pintura) / viseira escura lisa, sem espelhar zebras
-#ifdef DB5
+#ifdef BCAR
     // ================= Aston Martin DB5 =================
     case 20u: {   // paint: Silver Birch, metallic under a clear coat. uv.x = signed distance (m) to the nearest panel gap
       if (pa > 0.5) { s.albedo = vec3f(0.012); s.rough = 0.9; s.ao = 0.5; }   // edges and inner lips of the panels: bare, dark, matt
@@ -295,7 +296,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
         // metal flake: the same mip-mapped noise, projected along the three axes of the car, as the Uno's paint
         let nO = normalize((vec4f(s.normal, 0.0) * O.model).xyz); let wt = abs(nO) / (abs(nO.x) + abs(nO.y) + abs(nO.z));
         let fl = textureSample(tNoise, sLin, lp.zy * 23.0).a * wt.x + textureSample(tNoise, sLin, lp.xz * 23.0).a * wt.y + textureSample(tNoise, sLin, lp.xy * 23.0).a * wt.z - 0.5;
-        s.albedo = vec3f(0.33, 0.335, 0.33) * (1.0 + 0.1 * fl); s.metal = 0.8; s.rough = 0.27 + 0.05 * fl; s.coat = 1.0;
+        s.albedo = PAINT_ALB * (1.0 + 0.1 * fl); s.metal = PAINT_MET; s.rough = 0.27 + 0.05 * fl; s.coat = 1.0;
         // shut line: dark core about 4 mm wide with a soft shadow round it; thinner than a pixel, it fades by coverage
         let d = abs(in.uv.x);
         let w = max(fwidth(d), 1e-5); let hw = 0.002;
@@ -310,6 +311,15 @@ fn surf(in: V2F, ff: bool) -> Surface {
       let blur = sat(O.p0.x / 25.0);
       let base = in.col.rgb * vec3f(0.96, 1.0, 1.05) * 0.5;
       if (rn > 0.962) {
+#ifdef V8
+        // tread of the V8's 255/60 VR15 radials: two circumferential grooves and angled sipes across the ribs, slots in the shoulders
+        let u = ang / 6.2831853 * 76.0; let fade = sat(1.0 - fwidth(u) * 1.3) * (1.0 - blur); let zz = lp.z / 0.12;
+        let sipe = (1.0 - smoothstep(0.05, 0.11, abs(fract(u + abs(zz) * 0.7) - 0.5))) * (1.0 - smoothstep(0.82, 0.92, abs(zz)));
+        let groove = 1.0 - smoothstep(0.02, 0.045, abs(abs(zz) - 0.38));
+        let slot = (1.0 - smoothstep(0.12, 0.22, abs(fract(u * 0.5) - 0.5))) * smoothstep(0.8, 0.9, abs(zz));
+        let cut = max(max(sipe * 0.75, groove), slot) * fade;
+        s.albedo = base * (1.0 - 0.6 * cut); s.ao = 0.45 - 0.25 * cut; s.rough = 0.93; s.metal = 0.0;
+#else
         // tread: a zig-zag sipe down the middle of each rib (the straight grooves between the ribs are geometry) and
         // slanted slots in the shoulders — the pattern of a 1960s touring tyre
         let u = ang / 6.2831853 * 88.0; let tri = abs(fract(u) - 0.5) * 2.0; let fade = sat(1.0 - fwidth(u) * 1.3) * (1.0 - blur);
@@ -318,6 +328,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
         let slot = (1.0 - smoothstep(0.1, 0.2, abs(fract(u * 0.5 + lp.z * 9.0) - 0.5))) * smoothstep(0.046, 0.05, abs(lp.z));
         let cut = max(sipe, slot) * fade;
         s.albedo = base * (1.0 - 0.55 * cut); s.ao = 0.45 - 0.2 * cut; s.rough = 0.95; s.metal = 0.0;
+#endif
       } else {
         // sidewall: plain, with two raised rings and faint moulded lettering
         let ring = (1.0 - smoothstep(0.003, 0.007, abs(rn - 0.905))) + (1.0 - smoothstep(0.003, 0.007, abs(rn - 0.655)));
