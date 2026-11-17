@@ -87,6 +87,7 @@ function engineTorque(rpm) { // curva de torque (N·m): um Mille bem mais dispos
 // wi = índice da roda (dica de busca em VEH.whint) ou -1 para o CG.
 const _gq = new Float64Array(12);
 function groundQ(wi) {
+  if (TOWN.on) return townGroundQ(wi);   // Weston-super-Mare: the town's surface map (13_wsm_town.js)
   const q = _gq, V = VEH;
   trackLocateQ(wi >= 0 ? V.whint[wi] : V.hint, q);
   if (q[3] > 90 || q[3] < -90) trackLocateQ(-1, q);
@@ -258,6 +259,7 @@ function vehicleStep(keys) {
 }
 // colisão com as barreiras laterais: testa os 4 cantos, empurra de volta e reflete a velocidade
 function vehicleCollide() {
+  if (TOWN.on) { townCollide(); return; }   // Weston-super-Mare: buildings, the sea and the edge of the map
   const V = VEH, P = VP, c = Math.cos(V.yaw), s = Math.sin(V.yaw);
   for (let k = 0; k < 4; k++) {
     const lx = k < 2 ? P.front : -P.rear, lz = (k & 1) ? P.halfW : -P.halfW;

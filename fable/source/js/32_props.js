@@ -844,4 +844,4 @@ function propsBuild() {
     });
   }
 }
-if (WORLD.active) queueMicrotask(() => BUILD.push(async () => { propsBuild(); }));
+if (WORLD.active && !TOWN.on) queueMicrotask(() => BUILD.push(async () => { propsBuild(); }));   // (a circuit's dressing: not on the town map)

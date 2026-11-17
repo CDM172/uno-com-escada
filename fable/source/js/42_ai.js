@@ -65,7 +65,7 @@ function aiBuild() {
     for (let it = 0; it < iters; it++) {
       for (let j = 0; j < M; j++) { const i = id[j]; qx[j] = TRK.x[i] - TRK.tz[i] * oo[j]; qz[j] = TRK.z[i] + TRK.tx[i] * oo[j]; }
       for (let j = 0; j < M; j++) { const a = (j - 1 + M) % M, b = (j + 1) % M; dx[j] = qx[a] - 2 * qx[j] + qx[b]; dz[j] = qz[a] - 2 * qz[j] + qz[b]; }
-      for (let j = 0; j < M; j++) { const a = (j - 1 + M) % M, b = (j + 1) % M, i = id[j]; const gx = dx[a] - 2 * dx[j] + dx[b], gz = dz[a] - 2 * dz[j] + dz[b]; oo[j] = clamp(oo[j] - 0.05 * (gx * -TRK.tz[i] + gz * TRK.tx[i]), -lim, lim); }
+      for (let j = 0; j < M; j++) { const a = (j - 1 + M) % M, b = (j + 1) % M, i = id[j]; const gx = dx[a] - 2 * dx[j] + dx[b], gz = dz[a] - 2 * dz[j] + dz[b]; oo[j] = clamp(oo[j] - 0.05 * (gx * -TRK.tz[i] + gz * TRK.tx[i]), TRK.aiL ? -TRK.aiL[i] : -lim, TRK.aiR ? TRK.aiR[i] : lim); }   // (town map: room per side, TRK.aiL/aiR)
     }
     for (let i = 0; i < N; i++) { const u = i * M / N, j = Math.floor(u) % M, f = u - Math.floor(u); o[i] = oo[j] + (oo[(j + 1) % M] - oo[j]) * f; }
   }

@@ -73,12 +73,12 @@ function gameInit() {
   addEventListener('keydown', onKeyDown); addEventListener('keyup', onKeyUp); addEventListener('blur', onBlur);
   // The recorded keys of the scripted lap only suit the Uno. With the DB5 the same "scripted lap" (benchmark, demo lap, lap
   // poses) is driven by the autopilot for the same 60 s: GS.replay stays null and GS.replayLen is the length in 1/60 s ticks.
-  if (typeof REPLAY_B64 !== 'undefined' && !GAD.on) {
+  if (typeof REPLAY_B64 !== 'undefined' && !GAD.on && !TOWN.on) {   // (recorded on the Serra da Mata: on the town map the autopilot drives it)
     const bin = atob(REPLAY_B64); let n = 0; for (let i = 1; i < bin.length; i += 2) n += bin.charCodeAt(i);
     GS.replay = new Uint8Array(n); let o = 0; for (let i = 0; i < bin.length; i += 2) { const k = bin.charCodeAt(i), c = bin.charCodeAt(i + 1); for (let q = 0; q < c; q++) GS.replay[o++] = k; }
     GS.replayLen = n;
   }
-  if (GAD.on) GS.replayLen = 3600;
+  if (GAD.on || TOWN.on) GS.replayLen = 3600;
   GS.replayOn = Q.has('replay') && GS.replayLen > 0; GS.ai = Q.has('auto');
   // câmeras de TV: as torres do cenário (WORLD.tvCams), ou posições calculadas do lado de fora das curvas
   if (typeof WORLD !== 'undefined' && WORLD.tvCams && WORLD.tvCams.length) {

@@ -4,7 +4,7 @@
 const ST = { INICIO: 0, JOGO: 1, PAUSA: 2, BENCH: 3, FITA: 4, RESULT: 5, POSE: 6 };
 const UI = { st: ST.INICIO, back: ST.JOGO, el: null, tag: null, res: null, b0: null, b1: null, cars: null, gfx: null, bench: null, benchN: 0, padPrev: 0, padN: 0, pose: -1, stats: false, warm: false };
 // the best lap is kept per car (the Aston Martins and the Uno are not in the same league)
-const BEST_KEY = CARSEL + '-melhor';
+const BEST_KEY = CARSEL + (MAPSEL === 'wsm' ? '-wsm' : '') + '-melhor';   // (and per map)
 const $ = id => document.getElementById(id);
 function uiInit() {
   UI.el = $('ui'); UI.tag = $('tag'); UI.res = $('res'); UI.b0 = $('b0'); UI.b1 = $('b1'); UI.cars = $('cars'); UI.gfx = $('gfx');
@@ -12,7 +12,14 @@ function uiInit() {
   try { const b = +localStorage.getItem(BEST_KEY); if (b > 20 && b < 600) LAP[2] = b; } catch (e) { /* sem armazenamento local: a melhor volta vale só nesta sessão */ }
   // Start screen: the car that is loaded goes in the subtitle and is marked in the chooser; picking the other one reloads
   // the page with ?car=... (the other parameters of the address are kept). The gadget keys are listed with the Aston Martins.
-  $('sub').textContent = (BC ? BC.name : 'Fiat Uno Mille EP · 1996 · with a ladder') + ' · Serra da Mata circuit';
+  $('sub').textContent = (BC ? BC.name : 'Fiat Uno Mille EP · 1996 · with a ladder') + (TOWN.on ? ' · Weston-super-Mare' : ' · Serra da Mata circuit');
+  // Map chooser: the same, with ?map=... (Weston-super-Mare is built from OpenStreetMap: its credits go under the buttons)
+  UI.maps = $('maps');
+  for (const b of document.querySelectorAll('#maps .car')) {
+    const m = b.dataset.map, sel = m === MAPSEL; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+    b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('map', m); location.search = q.toString(); };
+  }
+  if (TOWN.on) { const c = $('credit'); c.textContent = WSM_META.credits.join(' · '); c.style.display = 'block'; document.title = document.title.replace('Serra da Mata circuit', 'Weston-super-Mare'); }
   for (const b of document.querySelectorAll('#cars .car')) {
     const c = b.dataset.car, sel = c === CARSEL; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
     if (c === 'v8' && !BC_V8.meta) b.style.display = 'none';   // (a build without the V8's mesh)
@@ -40,6 +47,7 @@ function uiSet(st) {
   UI.b0.textContent = st === ST.INICIO ? 'Start' : st === ST.RESULT ? 'Back to driving' : 'Resume';
   UI.b1.style.display = st === ST.INICIO ? 'none' : ''; UI.b1.textContent = st === ST.RESULT ? 'Run the benchmark again' : 'Benchmark';
   UI.res.style.display = st === ST.RESULT ? 'block' : 'none'; UI.cars.style.display = st === ST.INICIO ? 'flex' : 'none';
+  if (UI.maps) UI.maps.style.display = UI.cars.style.display;
   if (UI.gfx) UI.gfx.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
   UI.tag.textContent = st === ST.BENCH ? 'Benchmark: 60 s demo lap · Esc cancels' : st === ST.FITA ? 'Demo lap · R takes the wheel · Esc menu' : st === ST.POSE ? 'Pose ' + (UI.pose + 1) + ' · ' + (POSES[UI.pose].label || POSES[UI.pose].nome) + ' · 1 to ' + POSES.length + ' switch · Esc back to driving' : '';
   UI.tag.style.display = UI.tag.textContent ? 'block' : 'none';

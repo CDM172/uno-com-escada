@@ -4,6 +4,9 @@ const Q = new URLSearchParams(location.search);
 // original Fiat Uno with the ladder). The choice is remembered between sessions. (A let: a build without the V8's mesh
 // falls back to the DB5, see 30_car_f_v8.js.)
 let CARSEL = (() => { let c = Q.get('car'); try { if (c) localStorage.setItem('car', c); else c = localStorage.getItem('car'); } catch (e) { } return c === 'uno' ? 'uno' : c === 'v8' ? 'v8' : 'db5'; })();
+// Which map: ?map=serra (the Serra da Mata circuit, the default) or ?map=wsm (Weston-super-Mare, built from OpenStreetMap:
+// see 12_wsm_data.js). Remembered between sessions like the car.
+const MAPSEL = (() => { let m = Q.get('map'); try { if (m) localStorage.setItem('map', m); else m = localStorage.getItem('map'); } catch (e) { } return m === 'wsm' ? 'wsm' : 'serra'; })();
 // Graphics: 'full' renders at the window's size times the screen scaling (up to 2x); 'fast' renders at most 1280x720
 // with no high-DPI scaling, for laptops and older graphics cards. ?gfx=fast or ?gfx=full chooses (the menu does the
 // same) and the choice is remembered. With no choice saved ('auto') the game starts in full and, if the warm-up shows

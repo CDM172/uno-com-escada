@@ -221,4 +221,4 @@ function worldBuild() {
   }
 }
 window.__world = WORLD; window.__trackPos = trackPos;   // auxiliares de depuração para os scripts de captura
-if (WORLD.active) queueMicrotask(() => BUILD.push(async () => { worldBuild(); }));
+if (WORLD.active && !TOWN.on) queueMicrotask(() => BUILD.push(async () => { worldBuild(); }));   // (Weston-super-Mare: 34_wsm_world.js)

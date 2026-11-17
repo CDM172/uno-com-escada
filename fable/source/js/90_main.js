@@ -41,6 +41,7 @@ async function main() {
   try {
     await gpuInit();
     setMsg('building the circuit…'); await new Promise(r => setTimeout(r));
+    if (TOWN.on) { setMsg('building Weston-super-Mare…'); await townLoad(); }   // ?map=wsm: decode the map data first
     trackBuild(); heightFieldBuild(); worldMapBuild(); aiBuild();   // aiBuild define TRK.line (trajetória) antes dos construtores de cena
     rendererInit();
     setMsg('building the sky…'); await skyInit();

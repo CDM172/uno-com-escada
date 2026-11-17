@@ -8,7 +8,8 @@ const VEG = {
 const VEG_INST = { arrayStride: 32, stepMode: 'instance', attributes: [{ shaderLocation: 5, offset: 0, format: 'float32x4' }, { shaderLocation: 6, offset: 16, format: 'float32x4' }] };
 
 function vegPlace() {
-  const rnd = mkRng(4711), V = VEG, half = V.NC * V.CELL / 2; V.x0 = TRK.cx - half; V.z0 = TRK.cz - half;
+  const rnd = mkRng(4711), V = VEG; if (TOWN.on) { V.NC = 84; V.NS = 21; }   // (the town map is bigger: 5.4 km of cells)
+  const half = V.NC * V.CELL / 2; V.x0 = (TOWN.on ? (TOWN.x0 + TOWN.x1) / 2 : TRK.cx) - half; V.z0 = (TOWN.on ? (TOWN.z0 + TOWN.z1) / 2 : TRK.cz) - half;
   let cap = 1 << 17, data = new Float32Array(cap * 8), keys = new Uint32Array(cap), n = 0;
   const push = (x, y, z, s, rot, seed, arch) => {
     const cx = Math.floor((x - V.x0) / V.CELL), cz = Math.floor((z - V.z0) / V.CELL); if (cx < 0 || cz < 0 || cx >= V.NC || cz >= V.NC) return;
@@ -17,6 +18,8 @@ function vegPlace() {
     const s16 = (Math.floor((z - V.z0) / 16) & 3) * 4 + (Math.floor((x - V.x0) / 16) & 3);   // subcélula de 16 m dentro da célula (folhas individuais)
     keys[n++] = ((((cz >> 2) * V.NS + (cx >> 2)) * 16 + (cz & 3) * 4 + (cx & 3)) * VEG_NA + arch) * 16 + s16;
   };
+  serra: {   // (the town map places its trees from OpenStreetMap: townVegPlace in 34_wsm_world.js)
+  if (TOWN.on) { townVegPlace(push); V.nTrees = n; break serra; }
   // câmeras de TV (lente longa): nada de copa perto da torre nem nas linhas de visada entre a câmera e o trecho de pista
   // que ela cobre (de 160 m antes a 60 m depois da torre) — senão uma arvoreta a 25 m tapa o carro inteiro.
   const tv = [];
@@ -91,6 +94,7 @@ function vegPlace() {
     if (r1 < pB) push(x, y, z, lerp(0.6, 1.35, r2), r3 * TAU, rnd(), 6);
     else if (r1 < pB + pF) push(x, y, z, lerp(0.7, 1.3, r2), r3 * TAU, rnd(), 7);
     else if (r1 < pB + pF + pC) push(x, y, z, lerp(0.6, 1.15, r2), r3 * TAU, rnd(), 8);
+  }
   }
   // ordena por supercélula → célula → arquétipo
   const srt = new Float64Array(n), idx = new Uint32Array(n);   // ordenação nativa: chave * 2^20 + índice
@@ -272,5 +276,5 @@ queueMicrotask(() => BUILD.push(async () => {
   V.bgImp = dev.createBindGroup({ layout: V.famImp.bgl3, entries: [{ binding: 0, resource: V.viewA }, { binding: 1, resource: V.viewN }, { binding: 2, resource: V.sImp }, { binding: 3, resource: { buffer: V.dimBuf } }] });
   vegPlace();
   R.drawables.push(vegDrawable); R.veg = V;
-  if (typeof grassBuild === 'function') grassBuild();
+  if (typeof grassBuild === 'function' && !TOWN.on) grassBuild();   // (no grass blades on the town map)
 }));

@@ -277,9 +277,9 @@ function cascadeFocus(i) {
   FR.data.set(cs.vp[i], FO.shadowVP + i * 16);
 }
 function staticShadowSetup() {
-  const cs = R.casc, rad = 1250;
+  const cs = R.casc, rad = TRK.shadowR || 1250, c = TRK.shadowC;   // (the town map covers a wider area: 13_wsm_town.js)
   lightView(cs.view);
-  m4point(_cs, 0, cs.view, TRK.cx, 20, TRK.cz);
+  m4point(_cs, 0, cs.view, c ? c[0] : TRK.cx, 20, c ? c[1] : TRK.cz);
   orthoInto(cs.tmp, _cs[0] - rad, _cs[0] + rad, _cs[1] - rad * 0.62, _cs[1] + rad * 0.62, -_cs[2] - 2600, -_cs[2] + 2600);
   m4mul(cs.vp[3], cs.tmp, cs.view); cs.texel[3] = 2 * rad / SHADOW_S_RES;
   frMat('shadowVP', cs.vp[3], 3);
@@ -351,7 +351,7 @@ function renderFrame() {
 R.preFrame = [];
 // renderiza o mapa de sombras estático do mundo (uma vez, depois que todas as malhas estáticas existem)
 function renderStaticShadow() {
-  const ctr = new Float32Array([TRK.cx, 0, TRK.cz]);
+  const ctr = new Float32Array(TRK.shadowC ? [TRK.shadowC[0], 0, TRK.shadowC[1]] : [TRK.cx, 0, TRK.cz]);
   staticShadowSetup(); setPass(4, R.casc.vp[3], ctr);
   G.dev.queue.writeBuffer(R.frameBuf, 0, FR.data); G.dev.queue.writeBuffer(R.passBuf, 0, R.passData, 0, 12 * 64);
   G.dev.queue.writeBuffer(R.objBuf, 0, R.objData, 0, R.objCount * 64);
