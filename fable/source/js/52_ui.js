@@ -55,6 +55,7 @@ function uiSet(st) {
   UI.res.style.display = st === ST.RESULT ? 'block' : 'none'; UI.cars.style.display = st === ST.INICIO ? 'flex' : 'none';
   if (UI.maps) UI.maps.style.display = UI.cars.style.display;
   if (UI.gfx) UI.gfx.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
+  if (UI.hand) UI.hand.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
   UI.tag.textContent = st === ST.BENCH ? 'Benchmark: 60 s demo lap · Esc cancels' : st === ST.FITA ? 'Demo lap · R takes the wheel · Esc menu' : st === ST.POSE ? 'Pose ' + (UI.pose + 1) + ' · ' + (POSES[UI.pose].label || POSES[UI.pose].nome) + ' · 1 to ' + POSES.length + ' switch · Esc back to driving' : '';
   UI.tag.style.display = UI.tag.textContent ? 'block' : 'none';
   hudShow(st === ST.JOGO || st === ST.FITA || (st === ST.PAUSA && UI.back !== ST.BENCH));
