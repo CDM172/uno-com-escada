@@ -340,6 +340,7 @@ function townSeaWalls() {
         for (let s = 0; s < m; s++) {
           const x0 = ax + (bx - ax) * s / m, z0 = az + (bz - az) * s / m, x1 = ax + (bx - ax) * (s + 1) / m, z1 = az + (bz - az) * (s + 1) / m, mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
           if (mx < T.x0 + 20 || mz < T.z0 + 20 || mx > T.x1 - 20 || mz > T.z1 - 20) continue;
+          if (mz < -2000) continue;      // north of Worlebury Hill (Sand Bay, Sand Point, Middle Hope) the shore is natural
           const hb = hfAt(mx + ix * 5, mz + iz * 5), hl = Math.max(hfAt(mx - ix * 4, mz - iz * 4), hfAt(mx - ix * 7, mz - iz * 7));
           if (hl - hb < 1.0) continue;
           // a promenade stands behind a sea wall; dunes, grass and woods slope down to the beach (Sand Bay, Uphill)

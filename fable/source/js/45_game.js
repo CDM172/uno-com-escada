@@ -16,13 +16,14 @@ const PADV = new Float64Array(3);
 const KEYMAP = { KeyW: K_W, ArrowUp: K_W, KeyS: K_S, ArrowDown: K_S, KeyA: K_A, ArrowLeft: K_A, KeyD: K_D, ArrowRight: K_D, Space: K_SPACE, KeyC: K_C, KeyR: K_R, KeyV: K_V };
 // Aston Martins only: the gadget keys (see 41_gadgets.js) and a fourth camera, in the cockpit (GS.cam = 3)
 if (GAD.on) Object.assign(KEYMAP, { KeyP: K_GPLATE, KeyG: K_GGUN, KeyK: K_GSHIELD, KeyT: K_GSLASH, KeyU: K_GRAM, KeyJ: K_GSMOKE, KeyO: K_GOIL, KeyE: K_GEJECT, KeyQ: K_GHORN, KeyL: K_GLAMP });
-const NCAM = GAD.on ? 4 : 3;
+const CAMB = GAD.on || CARSEL === 'oxa';   // cameras fixed to the body from the model's eye points: the Aston Martins and the garage cars
+const NCAM = CAMB ? 4 : 3;
 // Cameras fixed to the body of an Aston Martin, in the car frame [eye x, y, z, target x, y, z]: bonnet (above the scuttle,
 // looking down the long bonnet), bonnet looking back (behind the tail, the car out of the picture), cockpit (the driver's
 // eyes, on the right: steering wheel, dials and bonnet in view) and cockpit looking back over the left shoulder through
 // the rear window. The eye points come with the model (BCG, from DB5_META.car / V8_META.car); the rest is relative to them.
 const CAMP = new Float32Array(24);
-if (GAD.on) {
+if (CAMB) {
   const e = BCG.eye, b = BCG.bonnetCam, tail = -(BCG.rear + BCG.bumper);
   CAMP.set([
     b[0], b[1], b[2], b[0] + 6.4, b[1] - 0.5, b[2],
@@ -276,15 +277,15 @@ function gameCamera() {
     let dy = tgt - GS.chaseYaw; while (dy > PI) dy -= TAU; while (dy < -PI) dy += TAU;
     GS.chaseYaw += dy * (1 - Math.exp(-dt * 5.5)); GS.chaseY += (GS.cy - GS.chaseY) * (1 - Math.exp(-dt * 7));
     // (os fatores lb abaixo valem 1 olhando para a frente: a conta fica bit a bit a de antes)
-    const dist = 5.3 + GS.speed * 0.022, cc = Math.cos(GS.chaseYaw), ss = Math.sin(GS.chaseYaw);
-    const ex = GS.cx + c * 0.2 * lb - cc * dist * lb, ez = GS.cz + s * 0.2 * lb - ss * dist * lb; let ey = GS.chaseY + 1.62 - V.gPitch * dist * 0.6;
+    const dist = 5.3 + OXA_CHASE[0] + GS.speed * 0.022, cc = Math.cos(GS.chaseYaw), ss = Math.sin(GS.chaseYaw);   // (OXA_CHASE: further back and higher for the garage's vans and trucks; 0 for the others)
+    const ex = GS.cx + c * 0.2 * lb - cc * dist * lb, ez = GS.cz + s * 0.2 * lb - ss * dist * lb; let ey = GS.chaseY + 1.62 + OXA_CHASE[1] - V.gPitch * dist * 0.6;
     _gq[0] = ex; _gq[1] = ez; hfAtQ(_gq); if (ey < _gq[6] + 0.55) ey = _gq[6] + 0.55;
     let rl = -V.ay * 0.004; rl = rl < -0.05 ? -0.05 : rl > 0.05 ? 0.05 : rl;
-    q[0] = ex; q[1] = ey; q[2] = ez; q[3] = GS.cx + c * 1.6 * lb; q[4] = GS.cy + 0.95 + V.gPitch * 1.6; q[5] = GS.cz + s * 1.6 * lb; q[6] = 0.93 + (GS.speed < 50 ? GS.speed : 50) * 0.0042; q[7] = rl;
-  } else if (GS.cam === 1 && GAD.on) {
+    q[0] = ex; q[1] = ey; q[2] = ez; q[3] = GS.cx + c * 1.6 * lb; q[4] = GS.cy + 0.95 + OXA_CHASE[2] + V.gPitch * 1.6; q[5] = GS.cz + s * 1.6 * lb; q[6] = 0.93 + (GS.speed < 50 ? GS.speed : 50) * 0.0042; q[7] = rl;
+  } else if (GS.cam === 1 && CAMB) {
     // Aston Martin, bonnet camera
     camBody(lb < 0 ? 1 : 0); q[6] = 1.0; q[7] = -(V.gRoll + V.roll) * 0.8 * lb;
-  } else if (GS.cam === 3 && GAD.on) {
+  } else if (GS.cam === 3 && CAMB) {
     // Aston Martin, cockpit: the driver's eyes
     camBody(lb < 0 ? 3 : 2); q[6] = 1.05; q[7] = -(V.gRoll + V.roll) * 0.8 * lb;
   } else if (GS.cam === 1) {

@@ -119,11 +119,13 @@ function bcarDecode(buf) {
     let side = -1, side2 = -1;
     if (opt.split) { let zs = 0; for (let i = 0; i < nv; i++) zs += pos[i * 3 + 2]; side = zs >= 0 ? 1 : 0; if (ch.m) side2 = 1 - side; }
     const gr = group(tg, kind, side, glass, !!glow), mb = gr.mb, v0 = mb.nv, i0 = mb.ni, c = ch.id === 20 && BC.paint ? BC.paint : ch.c || [1, 1, 1];   // (garage cars: the paint colour goes into the vertex colour)
-    if (glow) mb.mat(glow, 0); else mb.mat(ch.id, BC.paint ? oxaLensA(ch, pos, sc, BCG.wheelbase) : ch.a || 0);   // (garage cars: clear covers of the tail lamps drawn red)
+    if (glow) mb.mat(glow, 0); else mb.mat(ch.id, ch.a || 0);
+    const lensLim = BC.paint ? oxaLensLim(ch, BCG.wheelbase) : -1e9;   // (garage cars: the clear covers of the tail lamps are drawn red)
     mb.color(c[0], c[1], c[2]);
     const b = bb[ch.t] || (bb[ch.t] = [1e9, -1e9, 1e9, -1e9, 1e9, -1e9, 1e9, -1e9]);
     for (let i = 0; i < nv; i++) {
       const x = pos[i * 3] * sc, y = pos[i * 3 + 1] * sc, z = pos[i * 3 + 2] * sc, az = Math.abs(z);
+      if (lensLim > -1e8) mb.mat(22, x < lensLim ? 1 : 0);
       mb.v(x, y, z, nrm[i * 4], nrm[i * 4 + 1], nrm[i * 4 + 2], uv ? uv[i * 2] : 1, uv ? uv[i * 2 + 1] : 0);
       if (x < b[0]) b[0] = x; if (x > b[1]) b[1] = x; if (y < b[2]) b[2] = y; if (y > b[3]) b[3] = y;
       if (z < b[4]) b[4] = z; if (z > b[5]) b[5] = z; if (ch.m && -z < b[4]) b[4] = -z; if (ch.m && -z > b[5]) b[5] = -z; if (az < b[6]) b[6] = az; if (az > b[7]) b[7] = az;

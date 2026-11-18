@@ -14,7 +14,7 @@
 // Physics runs in gameStep (trafficStep, 120 Hz, deterministic: its own random numbers, reset by gameRestart); the player
 // collides with both kinds in vehicleCollide (trafficCollide). No allocation in the game loop.
 const TRAF_N = 16;                     // moving cars
-const TRAF_PARK = 420;                 // most parked cars
+const TRAF_PARK = GFX === 'fast' ? 150 : 300;   // most parked cars (fewer in fast graphics)
 const TRAF = {
   on: TOWN.on, ready: false,
   // roads: per polyline q of TOWN.rd: kind (0 none, 1 traffic, 2 parking), lane offset (m, left of the direction of travel)
@@ -285,8 +285,7 @@ function trafficStep() {
     if (TRAF.hold[i] > 0) { TRAF.hold[i] -= dt; vt = 0; }
     // the player's car ahead in the lane (or crossing it): stop short of it
     {
-      const lx = dpx * -hx + dpz * -hz, lz = dpx * hz - dpz * hx;   // player relative to this car (forward, left)
-      const fwd = -lx, side = lz < 0 ? -lz : lz;
+      const fwd = -(dpx * hx + dpz * hz), lz = dpx * hz - dpz * hx, side = lz < 0 ? -lz : lz;   // the player's car from this one: ahead, to the side
       if (fwd > 0 && fwd < 32 && side < 2.6 + VP.halfW) { const vb = Math.max(0, (fwd - hl - VP.front - 2.5) * 0.7); if (vb < vt) vt = vb; }
     }
     // another moving car ahead, going the same way
@@ -412,7 +411,7 @@ async function trafficBuild() {
       t.fill(0); t[0] = c; t[2] = s; t[5] = 1; t[8] = -s; t[10] = c; t[12] = x; t[13] = y; t[14] = z; t[15] = 1;
       mb.push(t); gl.push(t); oxaEmit(mb, gl, md, paint, true); mb.pop(); gl.pop();
     }
-    const mesh = mb.upload(); set.add(mesh, 0, 3, 210); tris += mesh.count / 3;
+    const mesh = mb.upload(); set.add(mesh, 0, 3, 180); tris += mesh.count / 3;
     if (gl.ni) glass.add_(gl.upload(), 0);
   }
   // the moving cars: the pool of models (white), with their own slots

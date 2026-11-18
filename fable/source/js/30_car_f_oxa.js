@@ -25,7 +25,7 @@ const OXA_SPEC = {
 // engine kinds: idle, rpm of peak torque, red line (rpm); torque at idle and at the red line as shares of the peak
 const OXA_ENG = {
   p: [800, 4200, 6500, 0.62, 0.78], s: [900, 4800, 7200, 0.6, 0.82], v: [700, 3800, 6200, 0.7, 0.75],
-  d: [750, 2000, 4500, 0.45, 0.55], t: [600, 1200, 2300, 0.5, 0.7], e: [1, 4500, 14000, 1, 1],
+  d: [750, 2000, 4500, 0.45, 0.55], t: [600, 1200, 2300, 0.5, 0.7], e: [0, 4000, 12000, 1, 1],   // (electric: motor speed, 0 at rest)
 };
 // driver's eye over the front axle: the forward-control vans and the truck
 const OXA_CABOVER = /^(mitsubishi_delica|iveco_daily_1982|mazda_titan|shacman)/;
@@ -98,24 +98,26 @@ function oxaTorque(r) {
   const u = (r - P.rpmT) / (P.rpmMax - P.rpmT); return P.tq * (1 - (1 - P.tqE) * u * u);
 }
 
-// Material variant of a lamp lens (id 22) of a garage car: a clear lens behind the rear axle covers a tail lamp (the converter
-// names the clear covers "lens"; drawn opaque, they would hide the red lamp under them), so it is drawn red (a = 1).
-function oxaLensA(ch, pos, sc, L) {
-  if (ch.id !== 22 || ch.a) return ch.a || 0;
-  let x = 0; for (let q = 0; q < ch.nv; q++) x += pos[q * 3]; return x * sc / ch.nv < -L / 2 - 0.2 ? 1 : 0;
-}
+// Lamp lenses (id 22) of a garage car: the converter names the clear covers of the tail lamps "lens" (a = 0, with the
+// headlamps, in one chunk); drawn opaque they would hide the red lamps under them, so the clear lens behind the rear axle
+// is drawn as a tail lamp (a = 1), vertex by vertex. Returns the x below which a vertex of chunk ch is a tail lamp, or
+// -1e9 when the chunk is not a clear lens.
+function oxaLensLim(ch, L) { return ch.id === 22 && !ch.a ? -L / 2 - 0.2 : -1e9; }
 // model year, from the id (audi_q7_2015 → 2015)
 function oxaYear(id) { const m = id.match(/(19|20)\d\d/); return m ? m[0] : ''; }
 
 // ---- the table of the selected garage car for the Blender cars' loader (30_car_g_bcar.js)
 function oxaTable(e) {
   const k = e.meta.car, [len, H, W] = k.size, L = k.wheelbase, cab = OXA_CABOVER.test(k.id), van = k.category !== 'car';
-  // left-hand drive: the driver sits on the left (z < 0), the eyes 80 % of the way up the car
-  const ex = cab ? L * 0.5 + 0.05 : van ? L * 0.5 - 0.75 : L * 0.5 - 1.45, ey = H * 0.8, ez = -(W - 0.18) * 0.22;
+  // left-hand drive: the driver sits on the left (z < 0), the eyes 80 % of the way up the car. The models have no cabin
+  // (single-sided panels, no dashboard): from the driver's eyes the front wheels show through the bonnet. So the camera
+  // fixed to the body (camera 4, 45_game.js) rides above the roof, over the front seats, unless a model brings its own
+  // eye point (meta.car.eye).
+  const ex = cab ? L * 0.5 + 0.05 : van ? L * 0.5 - 0.75 : L * 0.5 - 1.45, ey = H * 0.8, ez = -(W - 0.18) * 0.22, roof = [ex + 0.1, H + 0.32, 0];
   return {
     id: 'oxa:' + k.id, name: k.name + ' · ' + oxaYear(k.id), meta: e.meta, b64: e.b64, paint: k.paint,
     geom: {
-      wheelbase: L, wheelR: k.wheelR, hubs: k.hubs, steerPos: [ex + 0.45, ey - 0.32, ez], steerTilt: van ? 145 : 160, eye: [ex, ey, ez],
+      wheelbase: L, wheelR: k.wheelR, hubs: k.hubs, steerPos: [ex + 0.45, ey - 0.32, ez], steerTilt: van ? 145 : 160, eye: roof, driverEye: [ex, ey, ez],
       bonnetCam: [ex + (van ? 0.55 : 0.9), ey - 0.06, 0], half: { w: (W - 0.18) / 2, front: len / 2, rear: len / 2 }, bumper: 0,
     },
     // shaders: the Blender cars' materials with the garage cars' own (#ifdef OXA): paint from the vertex colour (the car's
@@ -130,6 +132,9 @@ function oxaTable(e) {
   };
 }
 const BC_OXA = CARSEL === 'oxa' ? oxaTable(OXA_CARS[OXA.i]) : null;
+// chase camera (45_game.js): extra distance, height and height of the aim for the big ones (0 for every other car)
+const OXA_CHASE = new Float64Array(3);
+if (CARSEL === 'oxa') { const [len, H] = OXA_CARS[OXA.i].meta.car.size; OXA_CHASE[0] = Math.max(0, len - 4.4) * 0.9 + Math.max(0, H - 1.5) * 1.2; OXA_CHASE[1] = Math.max(0, H - 1.45) * 0.9; OXA_CHASE[2] = Math.max(0, H - 1.45) * 0.5; }
 
 // ---- any garage car as plain meshes (the Weston-super-Mare traffic, 43_traffic.js). oxaChunks decodes car i once into
 // its chunks (typed-array views of the inflated data); oxaEmit writes them into MeshBuilders through their current
@@ -151,9 +156,9 @@ async function oxaChunks(i) {
 function oxaEmit(mb, gl, md, paint, lowWheel) {
   const sc = md.sc, k = md.car;
   const emit = (dst, [ch, pos, nrm, idx]) => {
-    const c = ch.id === 20 && paint ? paint : ch.id === 22 && ch.a === 0 && oxaLensA(ch, pos, sc, k.wheelbase) ? [0.6, 0.02, 0.015] : ch.c || [1, 1, 1], v0 = dst.nv;
-    dst.mat(ch.id, oxaLensA(ch, pos, sc, k.wheelbase)); dst.color(c[0], c[1], c[2]);
-    for (let q = 0; q < ch.nv; q++) dst.v(pos[q * 3] * sc, pos[q * 3 + 1] * sc, pos[q * 3 + 2] * sc, nrm[q * 4], nrm[q * 4 + 1], nrm[q * 4 + 2], 1, 0);
+    const c = ch.id === 20 && paint ? paint : ch.c || [1, 1, 1], v0 = dst.nv, lim = oxaLensLim(ch, k.wheelbase);
+    dst.mat(ch.id, ch.a || 0); dst.color(c[0], c[1], c[2]);
+    for (let q = 0; q < ch.nv; q++) { const x = pos[q * 3] * sc; if (lim > -1e8) dst.mat(22, x < lim ? 1 : 0); dst.v(x, pos[q * 3 + 1] * sc, pos[q * 3 + 2] * sc, nrm[q * 4], nrm[q * 4 + 1], nrm[q * 4 + 2], 1, 0); }
     for (let q = 0; q < ch.ni; q += 3) dst.tri(v0 + idx[q], v0 + idx[q + 1], v0 + idx[q + 2]);
   };
   for (const c of md.body) emit(mb, c);
