@@ -44,6 +44,27 @@ frame), `ski`, `plateR` (hinged rear plate), `rocket` (with its flame, exported 
 Sources: the "1983 Aston Martin V8 Vantage" scale drawing from getoutlines.com (CC BY 4.0), scaled by the 2.610 m
 wheelbase, and published specifications (length ~4.67 m, width 1.83 m, height ~1.33 m, tracks ~1.50 m).
 
+## Weston-super-Mare: street furniture and landmarks
+
+`wsm_props.py` builds the town's street furniture and `wsm_landmarks.py` its landmark buildings. Both export into `../js/36_wsm_props.js` (`WSM_PROPS`, the cars' chunk format, one entry per model with its own position scale).
+
+The street furniture: Victorian lantern posts, lighting columns, benches, bins, bollards, Belisha beacons, traffic signals, bus stops and shelters, a pillar box, a phone booth, promenade railings, a glass balustrade, the seafront shelter.
+
+The landmarks:
+- the Town Hall, with its clock tower, gabled pavilion and three-arch porch;
+- the Grand Atlantic Hotel, with its mansard, dormers and turret spires;
+- the Winter Gardens, with its arched bow, dome and colonnade;
+- the Art Deco cinema;
+- the Tropicana.
+
+Each landmark stands on its OpenStreetMap footprint (`wsm_landmarks.json`, written by the map bake). Its masses take their heights from the Environment Agency LIDAR (DSM − DTM, which shows the tower, the turrets and every roof). The fronts follow reference photographs; the camera positions on the Geograph photo pages fix which side is which. There is no lettering or branding on any of them.
+
+```bash
+blender -b -P fable/source/blender/wsm_props.py -- --export fable/source/js/36_wsm_props.js
+blender -b -P fable/source/blender/wsm_props.py -- --render /tmp/props               # street furniture previews
+blender -b -P fable/source/blender/wsm_props.py -- --landmarks-render /tmp/lmk [--only town_hall] [--samples 24]
+```
+
 ## Sources
 
 - FIA/RAC homologation form no. 186 (Aston Martin DB5, 1963): dimensions, wheels and tyres, gearbox, engine.

@@ -421,10 +421,11 @@ def split_asym(bm, faces, static_part, moving_part, mat_index):
     bmesh.ops.delete(bm, geom=faces, context='FACES')
 
 
-def export_blob(parts, car=None):
-    """Pack parts into (meta, zlib bytes): the chunk layout shared by every Blender-made model in the game."""
+def export_blob(parts, car=None, scale=8000.0):
+    """Pack parts into (meta, zlib bytes): the chunk layout shared by every Blender-made model in the game.
+    Positions are int16 * scale (8000 per metre for the cars: +-4.1 m; buildings pass a smaller scale)."""
     import struct, zlib
-    SCALE = 8000.0
+    SCALE = float(scale)
     blob = bytearray()
     chunks, targets = [], {}
 
