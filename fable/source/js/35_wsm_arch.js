@@ -158,8 +158,10 @@ function archStyle(t, area, height, x, z, ctx) {
     return ARCH_S.SHOP;
   }
   if (kind === 6) return area > 600 || dist === 'modern' || dist === 'interwar' ? ARCH_S.COMMERCIAL : ARCH_S.VILLA;
-  const low = height > 0 && height < 3.5;
-  const chalet = low && rise > 3.2;
+  // (the LIDAR fit's eaves can be low on deep or stepped footprints: the ridge height tells a bungalow from a house)
+  const rh = height + Math.max(0, rise);
+  const low = height > 0 && (rise >= 0 ? rh < 6.0 && height < 3.6 : height < 3.5);
+  const chalet = height > 0 && height < 3.4 && rise >= 0 && rh >= 6.0 && rh < 6.9;
   if (kind === 2) {
     if ((dist === 'victorian' || dist === 'seafront' || dist === 'centre') && area < 420 && height < 13) return dist === 'seafront' ? ARCH_S.HOTEL : ARCH_S.VILLA;
     return ARCH_S.FLATS;
@@ -295,34 +297,47 @@ function aConvex(us, vs) { const n = us.length; for (let i = 0; i < n; i++) { co
 // length is kept (party[i]) with the neighbour (nb[i]). Buildings joined by party walls form a row (group) that shares
 // its materials, heights and bays, as a terrace does.
 function archParty() {
-  const Rq = ARCH.reqs, cell = 6, grid = new Map(), key = (i, j) => i * 73856093 ^ j * 19349663;
+  const Rq = ARCH.reqs, cell = 4;
+  // all edges in flat arrays; each edge listed in the grid cells along it (3 m steps)
+  let ne = 0; for (const r of Rq) ne += r.n;
+  const EX = new Float64Array(ne * 4), EB = new Int32Array(ne), EI = new Int32Array(ne), grid = new Map(), stamp = new Int32Array(ne).fill(-1);
+  let k = 0;
   for (const r of Rq) {
-    r.party = new Float32Array(r.n); r.nb = new Int32Array(r.n).fill(-1);
-    for (let i = 0; i < r.n; i++) {
-      const j = (i + 1) % r.n, mx = (r.p[i * 2] + r.p[j * 2]) / 2, mz = (r.p[i * 2 + 1] + r.p[j * 2 + 1]) / 2, k = key(Math.floor(mx / cell), Math.floor(mz / cell));
-      let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(r.idx, i);
+    r.party = new Float32Array(r.n); r.nb = new Int32Array(r.n).fill(-1); r.e0 = k;
+    for (let i = 0; i < r.n; i++, k++) {
+      const j = (i + 1) % r.n, ax = r.p[i * 2], az = r.p[i * 2 + 1], bx = r.p[j * 2], bz = r.p[j * 2 + 1];
+      EX[k * 4] = ax; EX[k * 4 + 1] = az; EX[k * 4 + 2] = bx; EX[k * 4 + 3] = bz; EB[k] = r.idx; EI[k] = i;
+      const L = Math.hypot(bx - ax, bz - az), m = Math.max(1, Math.ceil(L / 3));
+      let last = -1;
+      for (let q = 0; q <= m; q++) {
+        const x = ax + (bx - ax) * q / m, z = az + (bz - az) * q / m, key = Math.floor(x / cell) * 65536 + Math.floor(z / cell);
+        if (key === last) continue; last = key;
+        let a = grid.get(key); if (!a) grid.set(key, a = []); if (a[a.length - 1] !== k) a.push(k);
+      }
     }
   }
   const par = new Int32Array(Rq.length); for (let i = 0; i < par.length; i++) par[i] = i;
   const find = i => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
-  for (const r of Rq) for (let i = 0; i < r.n; i++) {
-    const j = (i + 1) % r.n, ax = r.p[i * 2], az = r.p[i * 2 + 1], bx = r.p[j * 2], bz = r.p[j * 2 + 1], L = Math.hypot(bx - ax, bz - az); if (L < 0.4) continue;
-    const dx = (bx - ax) / L, dz = (bz - az) / L, mx = (ax + bx) / 2, mz = (az + bz) / 2, ci = Math.floor(mx / cell), cj = Math.floor(mz / cell);
-    let best = 0, bn = -1;
-    for (let gj = cj - 2; gj <= cj + 2; gj++) for (let gi = ci - 2; gi <= ci + 2; gi++) {
-      const a = grid.get(key(gi, gj)); if (!a) continue;
-      for (let q = 0; q < a.length; q += 2) {
-        const o = Rq[a[q]]; if (o === r) continue;
-        const e = a[q + 1], f = (e + 1) % o.n, ox = o.p[e * 2], oz = o.p[e * 2 + 1], px = o.p[f * 2], pz = o.p[f * 2 + 1], ol = Math.hypot(px - ox, pz - oz); if (ol < 0.4) continue;
+  for (let e = 0; e < ne; e++) {
+    const ax = EX[e * 4], az = EX[e * 4 + 1], bx = EX[e * 4 + 2], bz = EX[e * 4 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.4) continue;
+    const dx = (bx - ax) / L, dz = (bz - az) / L, own = EB[e], m = Math.max(1, Math.ceil(L / 3));
+    let best = 0, bn = -1, last = -1;
+    for (let q = 0; q <= m; q++) {
+      const x = ax + (bx - ax) * q / m, z = az + (bz - az) * q / m, key = Math.floor(x / cell) * 65536 + Math.floor(z / cell);
+      if (key === last) continue; last = key;
+      const a = grid.get(key); if (!a) continue;
+      for (let t = 0; t < a.length; t++) {
+        const o = a[t]; if (EB[o] === own || stamp[o] === e) continue; stamp[o] = e;
+        const ox = EX[o * 4], oz = EX[o * 4 + 1], px = EX[o * 4 + 2], pz = EX[o * 4 + 3], ol = Math.hypot(px - ox, pz - oz); if (ol < 0.4) continue;
         if (((px - ox) * dx + (pz - oz) * dz) / ol > -0.96) continue;                                  // runs back along this one
         if (Math.abs((ox - ax) * dz - (oz - az) * dx) > 0.5 || Math.abs((px - ax) * dz - (pz - az) * dx) > 0.5) continue;
         const t0 = (ox - ax) * dx + (oz - az) * dz, t1 = (px - ax) * dx + (pz - az) * dz;
         const ov = Math.min(L, Math.max(t0, t1)) - Math.max(0, Math.min(t0, t1));
-        if (ov / L > best) { best = ov / L; bn = o.idx; }
+        if (ov / L > best) { best = ov / L; bn = EB[o]; }
       }
     }
-    r.party[i] = Math.min(1, best); r.nb[i] = bn;
-    if (best > 0.45 && bn >= 0) { const a = find(r.idx), b = find(bn); if (a !== b) par[Math.max(a, b)] = Math.min(a, b); }
+    const r = Rq[own]; r.party[EI[e]] = Math.min(1, best); r.nb[EI[e]] = bn;
+    if (best > 0.45 && bn >= 0) { const a = find(own), b = find(bn); if (a !== b) par[Math.max(a, b)] = Math.min(a, b); }
   }
   for (const r of Rq) r.group = find(r.idx);
 }
@@ -517,6 +532,17 @@ function aPropAlong(proto, cls, mat, rec, x, y, z, dx, dy, dz, sx, sy, sz, col, 
 function aPropYaw(proto, cls, mat, rec, x, y, z, dx, dz, sx, sy, sz, col, a) { return aPropAlong(proto, cls, mat, rec, x, y, z, dx, 0, dz, sx, sy, sz, col, a); }
 
 // ---------------------------------------------------------------- shell emitters
+// MeshBuilder.v without the transform stack and Math.hypot (the shell is built without transforms); same layout
+function aVt(mb, px, py, pz, nx, ny, nz, u, vv) {
+  if (mb.nv >= mb.cap) mb._growV();
+  let l = nx * nx + ny * ny + nz * nz; l = l > 0 ? 1 / Math.sqrt(l) : 1;
+  const i = mb.nv++, f = i * 9, s = i * 18, b8 = i * 36, F = mb.f32, I = mb.i16, U = mb.u8, m = mb.m, c = mb.c;
+  F[f] = px; F[f + 1] = py; F[f + 2] = pz;
+  I[s + 6] = (nx * l * 32767) | 0; I[s + 7] = (ny * l * 32767) | 0; I[s + 8] = (nz * l * 32767) | 0; I[s + 9] = Math.round(mb.w * 32767);
+  F[f + 5] = u; F[f + 6] = vv;
+  U[b8 + 28] = m[0]; U[b8 + 29] = m[1]; U[b8 + 30] = m[2]; U[b8 + 31] = m[3]; U[b8 + 32] = c[0]; U[b8 + 33] = c[1]; U[b8 + 34] = c[2]; U[b8 + 35] = c[3];
+  return i;
+}
 function aSetMat(mb, id, rec, c0, c1, c2, c3) { const m = mb.m, c = mb.c; m[0] = id; m[1] = rec & 255; m[2] = (rec >> 8) & 255; m[3] = (rec >> 16) & 255; c[0] = c0 & 255; c[1] = c1 & 255; c[2] = c2 & 255; c[3] = c3 & 255; }
 // solid surfaces (stone, paint, stacks...): colour bytes = [surface code, r, g, b]
 // (the same packing as the instances: colour in rgb, the surface code in alpha as code / 15)
@@ -542,7 +568,7 @@ function aPoly(mb, xs, ys, zs, nx, ny, nz, fu) {
   const us = [], vs = []; for (let i = 0; i < n; i++) { us.push(xs[i] * tx + ys[i] * ty + zs[i] * tz); vs.push(xs[i] * bx + ys[i] * by + zs[i] * bz); }
   if (aArea(us, vs) < 0) { us.reverse(); vs.reverse(); xs = xs.slice().reverse(); ys = ys.slice().reverse(); zs = zs.slice().reverse(); }
   const tris = aEars(us, vs), v0 = mb.nv;
-  for (let i = 0; i < n; i++) { const t = fu(xs[i], ys[i], zs[i]); mb.v(xs[i], ys[i], zs[i], nx, ny, nz, t[0], t[1]); }
+  for (let i = 0; i < n; i++) { const t = fu(xs[i], ys[i], zs[i]); aVt(mb, xs[i], ys[i], zs[i], nx, ny, nz, t[0], t[1]); }
   for (let q = 0; q < tris.length; q += 3) aT(mb, v0 + tris[q], v0 + tris[q + 1], v0 + tris[q + 2], nx, ny, nz);
 }
 // box in the shell: base centre, X along (dx, dz), sizes; faces: bit 1 top, 2 bottom, 4 +x end, 8 -x end, 16 outer (+n), 32 inner
@@ -550,7 +576,7 @@ function aBox(mb, x, y, z, dx, dz, sx, sy, sz, faces, uvs) {
   const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l; const nx = dz, nz = -dx;   // n = outward (right of the X axis)
   const hx = sx / 2, hz = sz / 2, y1 = y + sy, P = (a, b, yy) => [x + dx * a + nx * b, yy, z + dz * a + nz * b];
   const sc = uvs || 1;
-  const face = (p0, p1, p2, p3, fx, fy, fz, w, h) => { const a = mb.v(p0[0], p0[1], p0[2], fx, fy, fz, 0, 0), b = mb.v(p1[0], p1[1], p1[2], fx, fy, fz, w * sc, 0), c = mb.v(p2[0], p2[1], p2[2], fx, fy, fz, w * sc, h * sc), d = mb.v(p3[0], p3[1], p3[2], fx, fy, fz, 0, h * sc); aQ(mb, a, b, c, d, fx, fy, fz); };
+  const face = (p0, p1, p2, p3, fx, fy, fz, w, h) => { const a = aVt(mb, p0[0], p0[1], p0[2], fx, fy, fz, 0, 0), b = aVt(mb, p1[0], p1[1], p1[2], fx, fy, fz, w * sc, 0), c = aVt(mb, p2[0], p2[1], p2[2], fx, fy, fz, w * sc, h * sc), d = aVt(mb, p3[0], p3[1], p3[2], fx, fy, fz, 0, h * sc); aQ(mb, a, b, c, d, fx, fy, fz); };
   faces = faces === undefined ? 63 : faces;
   if (faces & 1) face(P(-hx, hz, y1), P(hx, hz, y1), P(hx, -hz, y1), P(-hx, -hz, y1), 0, 1, 0, sx, sz);
   if (faces & 2) face(P(-hx, -hz, y), P(hx, -hz, y), P(hx, hz, y), P(-hx, hz, y), 0, -1, 0, sx, sz);
@@ -595,7 +621,79 @@ function archFrame(r, st) {
   const S = ARCH_S, s = st.style;
   const step = s === S.TERRACE || s === S.VILLA || s === S.HOTEL ? 0.3 + (st.hash % 7) * 0.035 : s === S.SHOP || s === S.CAFE || s === S.INDUSTRIAL || s === S.COMMERCIAL || s === S.GARAGE ? 0.05 : s === S.CARAVAN ? 0.55 : 0.15;
   B.gF = gF; B.yf = Math.max(r.y0 + 0.08, Math.min(gF + step, r.eave - 2.2));
-  B.yE = r.eave;
+  // roof frame
+  let ang = r.ridgeAng;
+  if (ang === undefined || ang === null) ang = Math.atan2(F.dz, F.dx) + (st.gableFront ? PI / 2 : 0);
+  let bestD = 0.21, snap = null;   // snap the frame to the footprint's own edges (within 12 degrees)
+  for (const e of E) { if (e.L < 2) continue; const a = Math.atan2(e.dz, e.dx), d = Math.abs(Math.sin(a - ang)); if (d < bestD && Math.cos(a - ang) * Math.cos(a - ang) > 0.5) { bestD = d; snap = a; } }
+  if (snap !== null) ang = snap;
+  const cr = Math.cos(ang), sr = Math.sin(ang), us = new Array(n), vs = new Array(n);
+  let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+  for (let i = 0; i < n; i++) { const x = p[i * 2], z = p[i * 2 + 1], u = x * cr + z * sr, v = -x * sr + z * cr; us[i] = u; vs[i] = v; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+  B.cr = cr; B.sr = sr; B.us = us; B.vs = vs; B.u0 = u0; B.u1 = u1; B.v0 = v0; B.v1 = v1;
+  B.uc = (u0 + u1) / 2; B.hu = (u1 - u0) / 2;
+  // ---- the roof. Planes in groups: the roof is the highest of the groups, each group the lowest of its planes
+  // (a gable or hip roof); a rear outrigger is a second, lower group that runs into the main roof along valleys.
+  // Plane [a, b, c, g]: height above the eaves = a u + b v + c, in group g.
+  let roof = r.roof;
+  if (roof === undefined || roof === null) roof = st.roofKind !== undefined ? st.roofKind : 1;
+  if (roof === 3) roof = 0;
+  if (roof && (v1 - v0) < 1.6) roof = 0;
+  B.roof = roof;
+  const fvn = -F.nx * sr + F.nz * cr, frontV0 = fvn < 0, sgv = frontV0 ? 1 : -1;   // the street side: v0 (depth grows with v) or v1
+  const vF = frontV0 ? v0 : v1, Dtot = v1 - v0, parallel = Math.abs(F.dx * cr + F.dz * sr) > 0.8;
+  const houseLike = s === S.TERRACE || s === S.VILLA || s === S.HOTEL || s === S.SHOP || s === S.POSTWAR || s === S.MODERN || s === S.PUB || s === S.COTTAGE || s === S.DECO;
+  // depth of the main block: where the footprint narrows (a back outrigger), measured on slabs across
+  let Dm = Dtot;
+  if (roof && parallel && houseLike && n > 4 && Dtot > 6) {
+    const wAt = t => { const va = vF + sgv * (t - 0.3), vb = vF + sgv * (t + 0.3); let [cu, cv] = aClip(us, vs, 0, sgv > 0 ? -1 : 1, sgv > 0 ? -va : va); [cu, cv] = aClip(cu, cv, 0, sgv > 0 ? 1 : -1, sgv > 0 ? vb : -vb); if (cu.length < 3) return 0; let a = 1e9, b = -1e9; for (const u of cu) { a = Math.min(a, u); b = Math.max(b, u); } return b - a; };
+    const w0 = Math.max(wAt(0.8), wAt(1.6));
+    for (let t = 3.5; t < Dtot - 1.8; t += 0.4) if (wAt(t) < 0.72 * w0) { Dm = t; break; }
+  }
+  B.vF = vF; B.sgv = sgv; B.Dm = Dm;
+  const P = B.planes = [];
+  let yE = r.eave, ridgeY = r.ridge !== undefined && r.ridge !== null && r.ridge > r.eave + 0.3 ? r.ridge : null;
+  const hvM = Dm / 2, pitchMax = s === S.COTTAGE || s === S.BARN ? 1.25 : s === S.CHALET_BUNGALOW ? 1.2 : 1.0;
+  if (roof) {
+    // a measured rise steeper than the style allows over the main span: the fit's eaves were low (a deep or stepped
+    // footprint); keep the measured ridge and put the eaves under it at the style's pitch
+    if (ridgeY !== null && (ridgeY - yE) / hvM > pitchMax) yE = ridgeY - hvM * Math.min(st.pitch, pitchMax);
+    if (ridgeY === null) ridgeY = yE + Math.min(hvM * st.pitch, 7.5);
+  } else ridgeY = yE;
+  yE = Math.max(yE, B.yf + 2.2);
+  B.yE = yE; B.rise = roof ? clamp(ridgeY - yE, 0.3, hvM * 1.7) : 0; B.yR = yE + B.rise;
+  const off = Dm === Dtot ? clamp(r.ridgeOff || 0, -0.3 * Dtot, 0.3 * Dtot) : 0;
+  const vM = vF + sgv * Dm, vRidge = vF + sgv * (Dm / 2) + off;   // back of the main block, its ridge
+  B.vc = vRidge; B.hvA = Math.abs(vRidge - vF); B.hvB = Math.abs(vM - vRidge); B.hv = Math.max(B.hvA, B.hvB); B.kk = roof ? B.rise / B.hv : 0;
+  if (roof) {
+    const ka = B.rise / B.hvA, kb = B.rise / B.hvB;
+    // f = ka * (dist in from the front eaves) and kb * (dist in from the back of the main block)
+    P.push([0, ka * sgv, -ka * sgv * vF, 0]);
+    P.push([0, -kb * sgv, kb * sgv * vM, 0]);
+    if (roof === 2 || roof === 4) {
+      const kh = B.rise / B.hv * (roof === 4 ? 2 : 1);
+      let freeL = true, freeR = true;
+      for (const e of E) if (e.role === 'P') { const c = e.nx * cr + e.nz * sr; if (c < -0.7) freeL = false; if (c > 0.7) freeR = false; }
+      if (freeL) P.push([kh, 0, -kh * u0, 0]);
+      if (freeR) P.push([-kh, 0, kh * u1, 0]);
+    }
+    // the outrigger: a gable along the depth over the narrower back part, a little lower, from behind the main ridge
+    if (Dm < Dtot - 1.5) {
+      let [cu] = aClip(us, vs, 0, sgv > 0 ? -1 : 1, sgv > 0 ? -(vM + sgv * 0.2) : (vM + sgv * 0.2));
+      if (cu.length >= 3) {
+        let a = 1e9, b = -1e9; for (const u of cu) { a = Math.min(a, u); b = Math.max(b, u); }
+        const hw = (b - a) / 2, uo = (a + b) / 2, ko = Math.min(B.kk * 1.05, 1.1), drop = st.storeys === 1 ? 0 : 0.35;
+        if (hw > 0.9) {
+          P.push([ko, 0, ko * (hw - uo) - drop, 1]);
+          P.push([-ko, 0, ko * (hw + uo) - drop, 1]);
+          P.push([0, 60 * sgv, -60 * sgv * vRidge, 1]);   // (nothing in front of the main ridge)
+          B.out = { a, b, drop };
+        }
+      }
+    }
+  }
+  B.groups = P.length && P[P.length - 1][3] === 1 ? 2 : 1;
+  // storeys under the (corrected) eaves
   const tot = B.yE - B.yf;
   if (!st.storeys) {
     const per = s === S.TERRACE || s === S.VILLA || s === S.HOTEL || s === S.SHOP || s === S.PUB ? 3.0 : s === S.COTTAGE ? 2.45 : s === S.FLATS ? 2.85 : s === S.COMMERCIAL ? 3.5 : 2.6;
@@ -612,50 +710,19 @@ function archFrame(r, st) {
   }
   st.gWinH = Math.min(st.gWinH, st.gH - st.gSill - 0.3); st.uWinH = Math.min(st.uWinH, st.uH - st.uSill - 0.3);
   if (st.shopTop) st.shopTop = Math.min(st.shopTop, st.gH - 0.2);
-  // roof frame
-  let ang = r.ridgeAng;
-  if (ang === undefined || ang === null) ang = Math.atan2(F.dz, F.dx) + (st.gableFront ? PI / 2 : 0);
-  let bestD = 0.21, snap = null;   // snap the frame to the footprint's own edges (within 12 degrees)
-  for (const e of E) { if (e.L < 2) continue; const a = Math.atan2(e.dz, e.dx), d = Math.abs(Math.sin(a - ang)); if (d < bestD && Math.cos(a - ang) * Math.cos(a - ang) > 0.5) { bestD = d; snap = a; } }
-  if (snap !== null) ang = snap;
-  const cr = Math.cos(ang), sr = Math.sin(ang), us = new Array(n), vs = new Array(n);
-  let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
-  for (let i = 0; i < n; i++) { const x = p[i * 2], z = p[i * 2 + 1], u = x * cr + z * sr, v = -x * sr + z * cr; us[i] = u; vs[i] = v; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
-  B.cr = cr; B.sr = sr; B.us = us; B.vs = vs; B.u0 = u0; B.u1 = u1; B.v0 = v0; B.v1 = v1;
-  B.uc = (u0 + u1) / 2; B.hu = (u1 - u0) / 2;
-  const off = clamp(r.ridgeOff || 0, -0.35 * (v1 - v0), 0.35 * (v1 - v0));
-  B.vc = (v0 + v1) / 2 + off; B.hvA = B.vc - v0; B.hvB = v1 - B.vc; B.hv = Math.max(B.hvA, B.hvB);
-  let roof = r.roof;
-  if (roof === undefined || roof === null) roof = st.roofKind !== undefined ? st.roofKind : 1;
-  if (roof === 3) roof = 0;
-  if (roof && Math.min(B.hvA, B.hvB) < 0.8) roof = 0;
-  B.roof = roof;
-  let rise = r.ridge !== undefined && r.ridge !== null ? r.ridge - B.yE : -1;
-  if (roof && !(rise > 0.3)) rise = Math.min(B.hv * st.pitch, 7.5);
-  if (roof) rise = clamp(rise, 0.3, B.hv * 1.7);
-  B.rise = roof ? rise : 0; B.kk = roof ? rise / B.hv : 0; B.yR = B.yE + B.rise;
-  // planes: eaves either side of the ridge (an off-centre ridge: two pitches), hips at free ends (half-hip: steeper)
-  const P = B.planes = [];
-  if (roof) {
-    const ka = B.rise / B.hvA, kb = B.rise / B.hvB;
-    P.push([0, ka, ka * (B.hvA - B.vc)]);   // f = ka (v - v0): the slope rising from the v0 eaves
-    P.push([0, -kb, kb * (B.hvB + B.vc)]);  // f = kb (v1 - v)
-    if (roof === 2 || roof === 4) {
-      const s2 = roof === 4 ? 2 : 1, kh = B.rise / B.hv * s2;
-      // which ends are free (no party wall across them)
-      let freeL = true, freeR = true;
-      for (const e of E) if (e.role === 'P') { const c = e.nx * cr + e.nz * sr; if (c < -0.7) freeL = false; if (c > 0.7) freeR = false; }
-      if (freeL) P.push([kh, 0, -kh * u0]);
-      if (freeR) P.push([-kh, 0, kh * u1]);
-    }
-  }
   return B;
 }
-const aF = (B, u, v) => { const P = B.planes; if (!P.length) return 0; let f = 1e9; for (let k = 0; k < P.length; k++) { const q = P[k], t = q[2] + q[0] * u + q[1] * v; if (t < f) f = t; } return f; };
+// roof height above the eaves at (u, v): the highest group, each group the lowest of its planes
+function aF(B, u, v) {
+  const P = B.planes; if (!P.length) return 0;
+  let best = -1e9;
+  for (let g = 0; g < B.groups; g++) { let f = 1e9; for (let k = 0; k < P.length; k++) { const q = P[k]; if (q[3] !== g) continue; const t = q[2] + q[0] * u + q[1] * v; if (t < f) f = t; } if (f > best) best = f; }
+  return best;
+}
 const aU = (B, x, z) => x * B.cr + z * B.sr, aV_ = (B, x, z) => -x * B.sr + z * B.cr;
 const aX = (B, u, v) => u * B.cr - v * B.sr, aZ = (B, u, v) => u * B.sr + v * B.cr;
-// roof height (absolute) at a world point
-const aRoofY = (B, x, z) => B.yE + Math.max(0, aF(B, aU(B, x, z), aV_(B, x, z)));
+// roof height (absolute) at a world point (walls: no lower than 1.8 m above the floor)
+const aRoofY = (B, x, z) => B.yE + Math.max(B.yf + 1.8 - B.yE, B.groups > 1 ? aF(B, aU(B, x, z), aV_(B, x, z)) : Math.max(0, aF(B, aU(B, x, z), aV_(B, x, z))));
 // t in (0, 1) where the roof's creases cross the segment (ua, va) -> (ub, vb)
 function aCreases(B, ua, va, ub, vb, out) {
   const P = B.planes, du = ub - ua, dv = vb - va;
@@ -802,7 +869,7 @@ function aWallPiece(B, ax, az, bx, bz, nx, nz, y0, topY, uA, uB) {
     const t0 = ts[q], t1 = ts[q + 1]; if (t1 - t0 < 1e-5) continue;
     const x0 = ax + (bx - ax) * t0, z0 = az + (bz - az) * t0, x1 = ax + (bx - ax) * t1, z1 = az + (bz - az) * t1;
     const ya = topY(x0, z0), yb = topY(x1, z1), u0 = uA + (uB - uA) * t0, u1 = uA + (uB - uA) * t1;
-    const a = mb.v(x0, y0, z0, nx, 0, nz, u0, y0 - yf), b = mb.v(x1, y0, z1, nx, 0, nz, u1, y0 - yf), c = mb.v(x1, yb, z1, nx, 0, nz, u1, yb - yf), d = mb.v(x0, ya, z0, nx, 0, nz, u0, ya - yf);
+    const a = aVt(mb, x0, y0, z0, nx, 0, nz, u0, y0 - yf), b = aVt(mb, x1, y0, z1, nx, 0, nz, u1, y0 - yf), c = aVt(mb, x1, yb, z1, nx, 0, nz, u1, yb - yf), d = aVt(mb, x0, ya, z0, nx, 0, nz, u0, ya - yf);
     aQ(mb, a, b, c, d, nx, 0, nz);
   }
 }
@@ -832,7 +899,7 @@ function aRoofPolyEmit(B, us, vs, q, yAdd, cov) {
   aSetMat(mb, AM.ROOF, B.rec, cov === undefined ? 255 : cov, 0, 0, 0);
   for (let i = 0; i < us.length; i++) {
     const x = aX(B, us[i], vs[i]), z = aZ(B, us[i], vs[i]), t = q[2] + q[0] * us[i] + q[1] * vs[i];
-    mb.v(x, B.yE + t + yAdd, z, nx, ny, nz, (-gz * x + gx * z) / g, (top - t) * k);
+    aVt(mb, x, B.yE + t + yAdd, z, nx, ny, nz, (-gz * x + gx * z) / g, (top - t) * k);
   }
   for (let i = 0; i < tris.length; i += 3) aT(mb, v0 + tris[i], v0 + tris[i + 1], v0 + tris[i + 2], nx, ny, nz);
 }
@@ -843,12 +910,25 @@ function archRoof(B) {
   const [ou, ov] = aOffset(B.us, B.vs, ds);
   B.ou = ou; B.ov = ov; B.ds = ds;
   const regions = [];
+  // plane k is the roof where it is the lowest of its group and its group is the highest: with a second group, piece by
+  // piece over that group's active plane j (k above j there)
+  const clipMin = (cu, cv, k) => { for (let j = 0; j < P.length && cu.length >= 3; j++) { if (j === k || P[j][3] !== P[k][3]) continue; [cu, cv] = aClip(cu, cv, P[k][0] - P[j][0], P[k][1] - P[j][1], P[j][2] - P[k][2]); } return [cu, cv]; };
   for (let k = 0; k < P.length; k++) {
-    let cu = ou.slice(), cv = ov.slice();
-    for (let j = 0; j < P.length && cu.length >= 3; j++) { if (j === k) continue; [cu, cv] = aClip(cu, cv, P[k][0] - P[j][0], P[k][1] - P[j][1], P[j][2] - P[k][2]); }
-    if (cu.length < 3 || aArea(cu, cv) < 0.02) continue;
-    aRoofPolyEmit(B, cu, cv, P[k], 0.02);
-    regions.push([k, cu, cv]);
+    let [cu, cv] = clipMin(ou.slice(), ov.slice(), k);
+    if (cu.length < 3) continue;
+    const pieces = [];
+    if (B.groups < 2) pieces.push([cu, cv]);
+    else for (let j = 0; j < P.length; j++) {
+      if (P[j][3] === P[k][3]) continue;
+      let [pu, pv] = clipMin(cu.slice(), cv.slice(), j);
+      if (pu.length >= 3) [pu, pv] = aClip(pu, pv, P[j][0] - P[k][0], P[j][1] - P[k][1], P[k][2] - P[j][2]);   // (j below k)
+      if (pu.length >= 3) pieces.push([pu, pv]);
+    }
+    for (const [pu, pv] of pieces) {
+      if (aArea(pu, pv) < 0.02) continue;
+      aRoofPolyEmit(B, pu, pv, P[k], 0.02);
+      regions.push([k, pu, pv]);
+    }
   }
   // ridge and hip tiles: the region edges that lie on a crease
   const rc = st.ridgeCol || st.roofCol;
@@ -859,6 +939,7 @@ function archRoof(B) {
       if (Math.hypot(ub - ua, vb - va) < 0.2) continue;
       const tk = q => (u, v) => q[2] + q[0] * u + q[1] * v;
       for (let o = k + 1; o < P.length; o++) {
+        if (P[o][3] !== P[k][3]) continue;   // (a valley between the groups: no tiles)
         const fa = tk(P[k]), fb = tk(P[o]);
         if (Math.abs(fa(ua, va) - fb(ua, va)) > 1e-3 || Math.abs(fa(ub, vb) - fb(ub, vb)) > 1e-3) continue;
         const ya = B.yE + fa(ua, va), yb = B.yE + fa(ub, vb), xa = aX(B, ua, va), za = aZ(B, ua, va), xb = aX(B, ub, vb), zb = aZ(B, ub, vb);
@@ -1034,7 +1115,7 @@ function archHipRoof(B, xs, zs, free, y0, k, ov, cov, edgeProps) {
     const q = P[a], g = Math.hypot(q[0], q[1]) || 1e-6; let nx = -q[0], ny = 1, nz = -q[1]; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
     const tris = aEars(cu, cv), v0 = mb.nv; aSetMat(mb, AM.ROOF, B.rec, cov === undefined ? 255 : cov, 0, 0, 0);
     let tmax = 0; for (let i = 0; i < cu.length; i++) tmax = Math.max(tmax, q[2] + q[0] * cu[i] + q[1] * cv[i]);
-    for (let i = 0; i < cu.length; i++) { const t = q[2] + q[0] * cu[i] + q[1] * cv[i]; mb.v(cu[i], y0 + t, cv[i], nx, ny, nz, (-q[1] * cu[i] + q[0] * cv[i]) / g, (tmax - t) * Math.sqrt(1 + g * g) / g); }
+    for (let i = 0; i < cu.length; i++) { const t = q[2] + q[0] * cu[i] + q[1] * cv[i]; aVt(mb, cu[i], y0 + t, cv[i], nx, ny, nz, (-q[1] * cu[i] + q[0] * cv[i]) / g, (tmax - t) * Math.sqrt(1 + g * g) / g); }
     for (let i = 0; i < tris.length; i += 3) aT(mb, v0 + tris[i], v0 + tris[i + 1], v0 + tris[i + 2], nx, ny, nz);
   }
   if (edgeProps) for (let i = 0; i < n; i++) {
@@ -1085,7 +1166,7 @@ function archBays(B) {
     const sq0 = W2(s0, Pj), sq1 = W2(s1, Pj), yC = yT, yE = B.yE;
     aSolid(mb, AM.STONE, B.rec, stone ? ASC.ASHLAR : ASC.SMOOTH, st.dress === AD.NONE ? st.wallCol : st.dressCol);
     if (canted) for (const [a, b, q] of [[pA, pB, sq0], [pD, pC, sq1]]) {
-      const i0 = mb.v(a[0], yC, a[1], 0, -1, 0, 0, 0), i1 = mb.v(b[0], yC, b[1], 0, -1, 0, 1, 0), i2 = mb.v(q[0], yC, q[1], 0, -1, 0, 0, 1); aT(mb, i0, i1, i2, 0, -1, 0);
+      const i0 = aVt(mb, a[0], yC, a[1], 0, -1, 0, 0, 0), i1 = aVt(mb, b[0], yC, b[1], 0, -1, 0, 1, 0), i2 = aVt(mb, q[0], yC, q[1], 0, -1, 0, 0, 1); aT(mb, i0, i1, i2, 0, -1, 0);
     }
     const kg = Math.max(B.kk * 1.12, 0.95), yA = yE + kg * W / 2;
     const ow = Math.min(0.8, W * 0.34), attic = yA - yE > 1.25;
@@ -1111,7 +1192,7 @@ function archBays(B) {
       // plane normal: rises towards the ridge (across s)
       const gx = -sd * e.dx * kg, gz = -sd * e.dz * kg; let nx = -gx, ny = 1, nz = -gz; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
       aSetMat(mb, AM.ROOF, B.rec, 255, 0, 0, 0);
-      const v0 = mb.nv; for (let i = 0; i < 4; i++) { const sx = q[i][0]; mb.v(xs[i], ys[i], zs[i], nx, ny, nz, q[i][1], Math.abs(sx - c.c) * Math.sqrt(1 + kg * kg)); }
+      const v0 = mb.nv; for (let i = 0; i < 4; i++) { const sx = q[i][0]; aVt(mb, xs[i], ys[i], zs[i], nx, ny, nz, q[i][1], Math.abs(sx - c.c) * Math.sqrt(1 + kg * kg)); }
       aQ(mb, v0, v0 + 1, v0 + 2, v0 + 3, nx, ny, nz);
       // bargeboard along the verge, fascia and gutter along the side eaves
       const fl = W2(sL, dF), ap = W2(c.c, dF), yL = yE - kg * ovs;
@@ -1165,14 +1246,14 @@ function archDormers(B) {
     aSetMat(mb, AM.ROOF, B.rec, 255, 0, 0, 0);
     for (const us of [ua, ub]) {
       const f0 = W(us, vf), f1 = W(us, vW), nx = us === ua ? -B.cr : B.cr, nz = us === ua ? -B.sr : B.sr;
-      const i0 = mb.v(f0[0], yfr - 0.1, f0[1], nx, 0, nz, vf, 0), i1 = mb.v(f0[0], yW, f0[1], nx, 0, nz, vf, yW - yfr), i2 = mb.v(f1[0], yW, f1[1], nx, 0, nz, vW, yW - yfr);
+      const i0 = aVt(mb, f0[0], yfr - 0.1, f0[1], nx, 0, nz, vf, 0), i1 = aVt(mb, f0[0], yW, f0[1], nx, 0, nz, vf, yW - yfr), i2 = aVt(mb, f1[0], yW, f1[1], nx, 0, nz, vW, yW - yfr);
       aT(mb, i0, i1, i2, nx, 0, nz);
     }
     if (!gabled) {
       // a flat (felt) top from the front back to the main roof, with a fascia
       const vb = vAt(yTop), c0 = W(ua - 0.08, vf + sg * 0.12), c1 = W(ub + 0.08, vf + sg * 0.12), c2 = W(ub + 0.08, vb), c3 = W(ua - 0.08, vb);
       aSetMat(mb, AM.FLAT, B.rec, 255, 0, 0, 0);
-      const i0 = mb.v(c0[0], yTop + 0.04, c0[1], 0, 1, 0, 0, 0), i1 = mb.v(c1[0], yTop + 0.04, c1[1], 0, 1, 0, wd, 0), i2 = mb.v(c2[0], yTop + 0.04, c2[1], 0, 1, 0, wd, 1), i3 = mb.v(c3[0], yTop + 0.04, c3[1], 0, 1, 0, 0, 1);
+      const i0 = aVt(mb, c0[0], yTop + 0.04, c0[1], 0, 1, 0, 0, 0), i1 = aVt(mb, c1[0], yTop + 0.04, c1[1], 0, 1, 0, wd, 0), i2 = aVt(mb, c2[0], yTop + 0.04, c2[1], 0, 1, 0, wd, 1), i3 = aVt(mb, c3[0], yTop + 0.04, c3[1], 0, 1, 0, 0, 1);
       aQ(mb, i0, i1, i2, i3, 0, 1, 0);
       const fm = W(ud, vf + sg * 0.06);
       aPropYaw(APR.BOX, ACLS.BIG, AM.PAINT, B.rec, fm[0], yTop - 0.16, fm[1], B.cr, B.sr, wd + 0.18, 0.21, 0.13, st.fascia, 0.4);
@@ -1183,7 +1264,7 @@ function archDormers(B) {
         const uL = ud + sd * (wd / 2 + ovs), q = [[uL, vF], [ud, vF], [ud, vR], [uL, vV]];
         const gx = -sd * B.cr * kd, gz = -sd * B.sr * kd; let nx = -gx, ny = 1, nz = -gz; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
         aSetMat(mb, AM.ROOF, B.rec, 255, 0, 0, 0);
-        const v0 = mb.nv; for (const [u, v] of q) { const w = W(u, v); mb.v(w[0], yTop - kd * Math.abs(u - ud) + 0.02, w[1], nx, ny, nz, v, Math.abs(u - ud) * Math.SQRT2); }
+        const v0 = mb.nv; for (const [u, v] of q) { const w = W(u, v); aVt(mb, w[0], yTop - kd * Math.abs(u - ud) + 0.02, w[1], nx, ny, nz, v, Math.abs(u - ud) * Math.SQRT2); }
         aQ(mb, v0, v0 + 1, v0 + 2, v0 + 3, nx, ny, nz);
         const fl = W(uL, vF), ap = W(ud, vF), bx = ap[0] - fl[0], by = yTop - yL, bz = ap[1] - fl[1], BL = Math.hypot(bx, by, bz);
         aPropAlong(APR.BOX, ACLS.BIG, AM.PAINT, B.rec, (fl[0] + ap[0]) / 2 - nX * ovf / 2, (yL + yTop) / 2 - 0.2 * 0.7, (fl[1] + ap[1]) / 2 - nZ * ovf / 2, bx, by, bz, BL + 0.03, 0.2, ovf + 0.03, st.fascia, 0.6);
@@ -1236,7 +1317,7 @@ function archPorches(B) {
         const sL = sF + sd * (wp / 2 + 0.12), q = [[sL, dp + 0.12], [sF, dp + 0.12], [sF, 0], [sL, 0]];
         const gx = -sd * F.dx * kg, gz = -sd * F.dz * kg; let nx = -gx, ny = 1, nz = -gz; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
         aSetMat(mb, AM.ROOF, B.rec, 255, 0, 0, 0);
-        const v0 = mb.nv; for (const [sx, d] of q) { const w = W2(sx, d); mb.v(w[0], yA - kg * Math.abs(sx - sF) + 0.02, w[1], nx, ny, nz, d, Math.abs(sx - sF) * Math.SQRT2); }
+        const v0 = mb.nv; for (const [sx, d] of q) { const w = W2(sx, d); aVt(mb, w[0], yA - kg * Math.abs(sx - sF) + 0.02, w[1], nx, ny, nz, d, Math.abs(sx - sF) * Math.SQRT2); }
         aQ(mb, v0, v0 + 1, v0 + 2, v0 + 3, nx, ny, nz);
         const fl = W2(sL, dp + 0.12), ap = W2(sF, dp + 0.12), yL = yA - kg * (wp / 2 + 0.12);
         aPropAlong(APR.BOX, ACLS.BIG, AM.PAINT, B.rec, (fl[0] + ap[0]) / 2 - F.nx * 0.06, (yL + yA) / 2 - 0.14, (fl[1] + ap[1]) / 2 - F.nz * 0.06, ap[0] - fl[0], yA - yL, ap[1] - fl[1], Math.hypot(ap[0] - fl[0], yA - yL, ap[1] - fl[1]), 0.2, 0.14, st.fascia, 0.6);
@@ -1298,7 +1379,7 @@ function archShopfronts(B) {
       // the sign: uv in metres across the fascia (the shader fits the word from the sign atlas)
       aSetMat(mb, AM.SIGN, B.rec, 0, 0, 0, 0);
       const f0 = P(rn.a + 0.05, 0.16), f1 = P(rn.b - 0.05, 0.16);
-      const i0 = mb.v(f0[0], yB, f0[1], e.nx, 0, e.nz, 0, 0), i1 = mb.v(f1[0], yB, f1[1], e.nx, 0, e.nz, W - 0.1, 0), i2 = mb.v(f1[0], yB + fh, f1[1], e.nx, 0, e.nz, W - 0.1, fh), i3 = mb.v(f0[0], yB + fh, f0[1], e.nx, 0, e.nz, 0, fh);
+      const i0 = aVt(mb, f0[0], yB, f0[1], e.nx, 0, e.nz, 0, 0), i1 = aVt(mb, f1[0], yB, f1[1], e.nx, 0, e.nz, W - 0.1, 0), i2 = aVt(mb, f1[0], yB + fh, f1[1], e.nx, 0, e.nz, W - 0.1, fh), i3 = aVt(mb, f0[0], yB + fh, f0[1], e.nx, 0, e.nz, 0, fh);
       aQ(mb, i0, i1, i2, i3, e.nx, 0, e.nz);
       const stoneCol = st.dress === AD.BATH ? st.dressCol : [0.74, 0.73, 0.7];
       aPropYaw(APR.BOX, ACLS.BIG, AM.STONE, B.rec, m[0] + e.nx * 0.03, yB + fh, m[1] + e.nz * 0.03, e.dx, e.dz, W + 0.2, 0.1, 0.28, stoneCol, ASC.SMOOTH / 15);
@@ -1313,11 +1394,11 @@ function archShopfronts(B) {
         aSetMat(mb, AM.AWNING, B.rec, Math.round(ac[0] * 255), Math.round(ac[1] * 255), Math.round(ac[2] * 255), 255);
         const a0 = P(rn.a + 0.2, 0.1), a1 = P(rn.b - 0.2, 0.1), b1 = P(rn.b - 0.2, dO), b0 = P(rn.a + 0.2, dO);
         const sl = Math.hypot(dO, y1 - y2), ny = dO / sl, nn = (y1 - y2) / sl;
-        const j0 = mb.v(a0[0], y1, a0[1], e.nx * nn, ny, e.nz * nn, 0, 0), j1 = mb.v(a1[0], y1, a1[1], e.nx * nn, ny, e.nz * nn, W - 0.4, 0), j2 = mb.v(b1[0], y2, b1[1], e.nx * nn, ny, e.nz * nn, W - 0.4, sl), j3 = mb.v(b0[0], y2, b0[1], e.nx * nn, ny, e.nz * nn, 0, sl);
+        const j0 = aVt(mb, a0[0], y1, a0[1], e.nx * nn, ny, e.nz * nn, 0, 0), j1 = aVt(mb, a1[0], y1, a1[1], e.nx * nn, ny, e.nz * nn, W - 0.4, 0), j2 = aVt(mb, b1[0], y2, b1[1], e.nx * nn, ny, e.nz * nn, W - 0.4, sl), j3 = aVt(mb, b0[0], y2, b0[1], e.nx * nn, ny, e.nz * nn, 0, sl);
         aQ(mb, j0, j1, j2, j3, e.nx * nn, ny, e.nz * nn); aQ(mb, j0, j3, j2, j1, -e.nx * nn, -ny, -e.nz * nn);
-        const k0 = mb.v(b0[0], y2, b0[1], e.nx, 0, e.nz, 0, 0), k1 = mb.v(b1[0], y2, b1[1], e.nx, 0, e.nz, W - 0.4, 0), k2 = mb.v(b1[0], y2 - 0.26, b1[1], e.nx, 0, e.nz, W - 0.4, -0.26), k3 = mb.v(b0[0], y2 - 0.26, b0[1], e.nx, 0, e.nz, 0, -0.26);
+        const k0 = aVt(mb, b0[0], y2, b0[1], e.nx, 0, e.nz, 0, 0), k1 = aVt(mb, b1[0], y2, b1[1], e.nx, 0, e.nz, W - 0.4, 0), k2 = aVt(mb, b1[0], y2 - 0.26, b1[1], e.nx, 0, e.nz, W - 0.4, -0.26), k3 = aVt(mb, b0[0], y2 - 0.26, b0[1], e.nx, 0, e.nz, 0, -0.26);
         aQ(mb, k0, k1, k2, k3, e.nx, 0, e.nz); aQ(mb, k0, k3, k2, k1, -e.nx, 0, -e.nz);
-        for (const [p0, p1, sg] of [[a0, b0, -1], [a1, b1, 1]]) { const t0 = mb.v(p0[0], y1, p0[1], e.dx * sg, 0, e.dz * sg, 0, 0), t1 = mb.v(p1[0], y2, p1[1], e.dx * sg, 0, e.dz * sg, dO, 0), t2 = mb.v(p1[0], y2 - 0.26, p1[1], e.dx * sg, 0, e.dz * sg, dO, -0.26); aT(mb, t0, t1, t2, e.dx * sg, 0, e.dz * sg); aT(mb, t0, t2, t1, -e.dx * sg, 0, -e.dz * sg); }
+        for (const [p0, p1, sg] of [[a0, b0, -1], [a1, b1, 1]]) { const t0 = aVt(mb, p0[0], y1, p0[1], e.dx * sg, 0, e.dz * sg, 0, 0), t1 = aVt(mb, p1[0], y2, p1[1], e.dx * sg, 0, e.dz * sg, dO, 0), t2 = aVt(mb, p1[0], y2 - 0.26, p1[1], e.dx * sg, 0, e.dz * sg, dO, -0.26); aT(mb, t0, t1, t2, e.dx * sg, 0, e.dz * sg); aT(mb, t0, t2, t1, -e.dx * sg, 0, -e.dz * sg); }
       }
     }
   }
@@ -1341,7 +1422,6 @@ function archBalconies(B) {
     }
     const rx = F.ax + F.dx * (s0 + s1) / 2 + F.nx * (dp - 0.06), rz = F.az + F.dz * (s0 + s1) / 2 + F.nz * (dp - 0.06);
     aPropYaw(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, rx, y + 0.22, rz, F.dx, F.dz, s1 - s0, 0.95, 1, [0.05, 0.08, 0.07], ARAIL.ORNATE / 15);
-    for (const c of F.cols) if (c.up === AC.UWIN) c.up = AC.UFRENCH;
     if (st.storeys >= 3) {   // the veranda's own canopy over the first floor
       const y2 = B.yf + st.gH + st.uH - 0.35;
       aSolid(mb, AM.LEAD, B.rec, ASC.LEAD, [0.2, 0.22, 0.22]);
@@ -1354,15 +1434,467 @@ function archBalconies(B) {
   for (const e of B.E) {
     if (e.role !== 'F' && e.role !== 'B') continue;
     for (const c of e.cols) {
-      if (c.up !== AC.UWIN || ((st.hash >> ((c.unit | 0) % 13)) & 1)) continue;
+      if (!c.balc) continue;
       const w = Math.min(2.6, c.b - c.a - 0.3), px = e.ax + e.dx * c.c + e.nx * 0.6, pz = e.az + e.dz * c.c + e.nz * 0.6;
       for (let k = 1; k < st.storeys; k++) {
         const y = B.yf + st.gH + (k - 1) * st.uH - 0.1;
         aSolid(mb, AM.STONE, B.rec, ASC.CONCRETE, [0.55, 0.55, 0.52]);
         aBox(mb, px, y, pz, e.dx, e.dz, w, 0.16, 1.2, 63);
         aPropYaw(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, px + e.nx * 0.57, y + 0.16, pz + e.nz * 0.57, e.dx, e.dz, w, 1.05, 1, [0.6, 0.62, 0.62], (st.hash & 1 ? ARAIL.GLASS : ARAIL.BARS) / 15);
-        c.up = AC.UFRENCH;
       }
     }
   }
+}
+
+// ---------------------------------------------------------------- front gardens: a low wall (rubble, brick or render)
+// with its coping and gate piers, railings on it, a hedge behind it, a path to the door; wheelie bins
+function archBoundary(B) {
+  const st = B.st, r = B.r, F = B.E[B.f], mb = AG.S, G = B.G;
+  if (st.boundary === 'none' || !(r.gap > 1.0) || F.role !== 'F') return;
+  const off = r.gap - 0.15, h = mkRng(st.hash ^ 0x165667b1);
+  // gates: in front of each door (the drive in front of a garage)
+  const gaps = [];
+  for (const c of F.cols) { if (c.g === AC.GDOOR && !(c.v & 4)) gaps.push([c.c - 0.5, c.c + 0.5, 'gate', c]); else if (c.v & 4 && c.g === AC.GDOOR) gaps.push([c.c - 1.5, c.c + 1.5, 'drive', c]); }
+  gaps.sort((a, b) => a[0] - b[0]);
+  const segs = []; let s = -0.12;
+  for (const g of gaps) { if (g[0] - s > 0.3) segs.push([s, g[0]]); s = g[1]; }
+  if (F.L + 0.12 - s > 0.3) segs.push([s, F.L + 0.12]);
+  const P = (sx, d) => [F.ax + F.dx * sx + F.nx * d, F.az + F.dz * sx + F.nz * d];
+  const wh = st.wallH, hedgeOnly = st.boundary === 'hedge', cope = st.wallMat === AW.RUBBLE ? (st.dress === AD.BATH || st.dress === AD.RUSTIC ? [ASC.ASHLAR, st.dressCol] : [ASC.CONCRETE, [0.45, 0.44, 0.41]]) : st.wallMat === AW.BRICK || st.wallMat === AW.BUFF ? [ASC.BRICK, st.wallCol] : [ASC.SMOOTH, st.dressCol];
+  for (const [a, b] of segs) {
+    const p0 = P(a, off), p1 = P(b, off), q0 = P(a, off - 0.24), q1 = P(b, off - 0.24);
+    const gmin = Math.min(G(p0[0], p0[1]), G(p1[0], p1[1])) - 0.15, mid = P((a + b) / 2, off - 0.12);
+    if (!hedgeOnly) {
+      aWallMat(B, AC.GNONE | AC.UNONE, 0, 0, 0, 0);
+      const top = (x, z) => G(x, z) + wh;
+      aWallPiece(B, p0[0], p0[1], p1[0], p1[1], F.nx, F.nz, gmin, top, a, b);
+      aWallPiece(B, q1[0], q1[1], q0[0], q0[1], -F.nx, -F.nz, gmin, top, -b, -a);
+      for (const [sx, sg] of [[a, -1], [b, 1]]) { const e0 = P(sx, off), e1 = P(sx, off - 0.24); aWallPiece(B, sg < 0 ? e1[0] : e0[0], sg < 0 ? e1[1] : e0[1], sg < 0 ? e0[0] : e1[0], sg < 0 ? e0[1] : e1[1], F.dx * sg, F.dz * sg, gmin, top, 0, 0.24); }
+      AG.S.w = 0;
+      // coping along the top (it follows the ground: one box per metre or so on a slope)
+      const n = Math.max(1, Math.ceil((b - a) / 2.5));
+      for (let k = 0; k < n; k++) {
+        const t0 = a + (b - a) * k / n, t1 = a + (b - a) * (k + 1) / n, c0 = P(t0, off - 0.12), c1 = P(t1, off - 0.12), y0 = G(c0[0], c0[1]) + wh, y1 = G(c1[0], c1[1]) + wh;
+        aPropAlong(APR.BOX, ACLS.BIG, AM.STONE, B.rec, (c0[0] + c1[0]) / 2, (y0 + y1) / 2 - 0.01, (c0[1] + c1[1]) / 2, c1[0] - c0[0], y1 - y0, c1[1] - c0[1], Math.hypot(c1[0] - c0[0], y1 - y0, c1[1] - c0[1]) + 0.02, 0.09, 0.32, cope[1], cope[0] / 15);
+        if (st.rails) aPropAlong(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, (c0[0] + c1[0]) / 2, (y0 + y1) / 2 + 0.08, (c0[1] + c1[1]) / 2, c1[0] - c0[0], y1 - y0, c1[1] - c0[1], Math.hypot(c1[0] - c0[0], y1 - y0, c1[1] - c0[1]), 0.82, 1, [0.02, 0.02, 0.022], ARAIL.IRON / 15);
+      }
+    }
+    if (st.hedge || hedgeOnly) {
+      const hd = P((a + b) / 2, off - (hedgeOnly ? 0.35 : 0.62)), hh = (hedgeOnly ? 1.0 : wh + 0.35) + h() * 0.5;
+      aSetMat(mb, AM.HEDGE, B.rec, (h() * 255) | 0, 0, 0, 0);
+      aBox(mb, hd[0], G(hd[0], hd[1]) - 0.1, hd[1], F.dx, F.dz, b - a - 0.1, hh + 0.1, 0.7, 1 | 4 | 8 | 16 | 32);
+    }
+  }
+  // gate piers, the path, bins
+  for (const [a, b, kind, c] of gaps) {
+    if (!hedgeOnly && (st.style === ARCH_S.TERRACE || st.style === ARCH_S.VILLA || st.style === ARCH_S.HOTEL || st.style === ARCH_S.COTTAGE)) for (const sx of [a - 0.2, b + 0.2]) {
+      const q = P(sx, off - 0.12), g = G(q[0], q[1]);
+      aPropYaw(APR.BOX, ACLS.BIG, AM.STONE, B.rec, q[0], g - 0.1, q[1], F.dx, F.dz, 0.42, wh + 0.32, 0.42, cope[1], cope[0] / 15);
+      aPropYaw(APR.BOX, ACLS.SMALL, AM.STONE, B.rec, q[0], g + wh + 0.22, q[1], F.dx, F.dz, 0.52, 0.1, 0.52, cope[1], cope[0] / 15);
+    }
+    if (kind === 'gate' && r.gap > 1.4) {
+      const p0 = P(c.c - 0.5, off), p1 = P(c.c + 0.5, off), p2 = P(c.c + 0.5, 0.05), p3 = P(c.c - 0.5, 0.05), tiles = st.style === ARCH_S.TERRACE || st.style === ARCH_S.VILLA;
+      aSolid(mb, AM.PAVING, B.rec, tiles ? ASC.TILES : ASC.SLAB, tiles ? [0.3, 0.1, 0.06] : [0.4, 0.39, 0.36]);
+      const ids = [p0, p1, p2, p3].map(pp => aVt(mb, pp[0], G(pp[0], pp[1]) + 0.035, pp[1], 0, 1, 0, (pp[0] - F.ax) * F.dx + (pp[1] - F.az) * F.dz, (pp[0] - F.ax) * F.nx + (pp[1] - F.az) * F.nz));
+      aQ(mb, ids[0], ids[1], ids[2], ids[3], 0, 1, 0);
+    }
+  }
+  if (st.bins && r.gap > 1.6) {
+    const cols = [[0.025, 0.025, 0.028], [0.03, 0.1, 0.04], [0.03, 0.06, 0.18], [0.1, 0.06, 0.03], [0.18, 0.19, 0.2]];
+    const nb = 1 + (h() < 0.5 ? 1 : 0), sx = F.L * (h() < 0.5 ? 0.15 : 0.85);
+    for (let k = 0; k < nb; k++) { const q = P(sx + k * 0.66 - 0.33, off - 0.75), g = G(q[0], q[1]); aPropYaw(APR.BOX, ACLS.SMALL, AM.PAINT, B.rec, q[0], g, q[1], F.dx, F.dz, 0.58, 1.07, 0.72, archPick(cols, h()), 0.25); }
+  }
+}
+
+// ---------------------------------------------------------------- the small things on the walls: sills, heads,
+// doorsteps, burglar alarms, satellite dishes
+function archDetails(B) {
+  const st = B.st, S = ARCH_S, yf = B.yf;
+  const sillCol = st.dress === AD.BATH || st.dress === AD.PAINTED || st.dress === AD.DECO ? st.dressCol : st.dress === AD.BRICK ? st.wallCol : st.dress === AD.RUSTIC ? [0.4, 0.38, 0.34] : st.win === AWIN.UPVC && st.style === S.MODERN ? [0.8, 0.8, 0.78] : [0.46, 0.45, 0.42];
+  const sillCode = st.dress === AD.BATH ? ASC.ASHLAR : st.dress === AD.BRICK ? ASC.BRICK : st.dress === AD.PAINTED || st.dress === AD.DECO ? ASC.SMOOTH : ASC.CONCRETE;
+  const wide = st.dress === AD.BATH || st.dress === AD.CONCRETE || st.dress === AD.RUSTIC ? 0.12 : 0.05;
+  const opening = (c, k) => {   // [bottom, top, width] of the opening of column c in storey k (as the shader draws it), or null
+    const blank = (c.v >> 4) & 3; if (k < blank) return null;
+    if (k === 0) { if (c.g !== AC.GWIN) return null; return [st.gSill, st.gSill + st.gWinH, c.ow]; }
+    if (k >= st.storeys) return null;
+    const up = c.up; if (up === AC.UNONE) return null;
+    const sb = st.gH + (k - 1) * st.uH, w = up === AC.UNARROW ? Math.min(c.ow, st.winW * 0.7) : c.ow;
+    if (up === AC.UFRENCH && k === 1) return null;
+    if (c.v & 8) return null;
+    const top = Math.min(sb + st.uSill + st.uWinH, B.yE - yf - 0.25); if (top - (sb + st.uSill) < 0.5) return null;
+    return [sb + st.uSill, top, w];
+  };
+  for (const e of B.E) {
+    if (e.role === 'P') continue;
+    for (const c of e.cols) {
+      if (c.ow < 0.3) continue;
+      const px = e.ax + e.dx * c.c, pz = e.az + e.dz * c.c;
+      for (let k = 0; k < Math.max(1, st.storeys); k++) {
+        const o = opening(c, k); if (!o || o[2] < 0.3) continue;
+        aPropYaw(APR.BOX, ACLS.SMALL, AM.STONE, B.rec, px + e.nx * 0.03, yf + o[0] - 0.075, pz + e.nz * 0.03, e.dx, e.dz, o[2] + wide, 0.075, 0.07, sillCol, sillCode / 15);
+        if (st.dress === AD.BATH && e.role !== 'B') aPropYaw(APR.BOX, ACLS.SMALL, AM.STONE, B.rec, px + e.nx * 0.012, yf + o[1], pz + e.nz * 0.012, e.dx, e.dz, o[2] + 0.34, 0.24, 0.025, sillCol, sillCode / 15);
+      }
+      // doorsteps up to the floor
+      if (c.g === AC.GDOOR && !(c.v & 4) && !c.porchBox) {
+        const g = B.G(px + e.nx * 0.5, pz + e.nz * 0.5), rise = yf - g;
+        if (rise > 0.05) {
+          const n = Math.min(4, Math.max(1, Math.round(rise / 0.17))), hs = rise / n, w = (st.doorW || 0.9) + 0.36;
+          for (let i = 0; i < n; i++) { const d = 0.16 + (n - 1 - i) * 0.3; aPropYaw(APR.BOX, ACLS.SMALL, AM.STONE, B.rec, px + e.nx * d, g - 0.06, pz + e.nz * d, e.dx, e.dz, w, hs * (i + 1) + 0.06, 0.32 + (n - 1 - i) * 0.0, st.dress === AD.BATH ? st.dressCol : [0.42, 0.41, 0.39], (st.dress === AD.BATH ? ASC.ASHLAR : ASC.CONCRETE) / 15); }
+        }
+      }
+    }
+  }
+  const F = B.E[B.f], h = mkRng(st.hash ^ 0x2f8b3a1d);
+  if (st.alarm && st.storeys >= 2 && F.L > 3) {
+    const t = h() < 0.5 ? 0.35 : F.L - 0.35, cols = [[0.8, 0.8, 0.78], [0.5, 0.03, 0.02], [0.03, 0.1, 0.35], [0.7, 0.55, 0.05]];
+    aPropYaw(APR.BOX, ACLS.SMALL, AM.PAINT, B.rec, F.ax + F.dx * t + F.nx * 0.05, yf + st.gH + Math.min(st.uH * 0.65, 2.0), F.az + F.dz * t + F.nz * 0.05, F.dx, F.dz, 0.3, 0.38, 0.1, archPick(cols, h()), 0.5);
+  }
+  if (st.dish && st.storeys >= 1) {
+    const e = h() < 0.6 ? F : (B.E.find(x => x.role === 'S') || F), t = e.L * (h() < 0.5 ? 0.12 : 0.88), y = Math.min(B.yE - 0.6, yf + st.gH + 0.4);
+    aPropYaw(APR.DISH, ACLS.SMALL, AM.METAL, B.rec, e.ax + e.dx * t + e.nx * 0.25, y, e.az + e.dz * t + e.nz * 0.25, e.nx * 0.7 + e.dx * 0.3, e.nz * 0.7 + e.dz * 0.3, 0.6, 0.6, 0.6, [0.62, 0.62, 0.6]);
+  }
+}
+
+// ---------------------------------------------------------------- conservatories (the back of bungalows and semis)
+function archConservatory(B) {
+  const st = B.st, mb = AG.S; if (!st.conservatory) return;
+  let e = null; for (const x of B.E) if (x.role === 'B' && x.L > 4.2 && (!e || x.L > e.L)) e = x; if (!e) return;
+  const w = Math.min(3.6, e.L - 1.0), dp = 2.6, s0 = ((st.hash >> 19) & 1) ? 0.4 : e.L - 0.4 - w, s1 = s0 + w, yW = B.yf + 2.2, yH = Math.min(B.yE - 0.1, B.yf + 2.95);
+  const P = (sx, d) => [e.ax + e.dx * sx + e.nx * d, e.az + e.dz * sx + e.nz * d];
+  const a = P(s0, 0), b = P(s0, dp), c = P(s1, dp), d = P(s1, 0);
+  for (const [p, q, nx, nz, L] of [[a, b, -e.dx, -e.dz, dp], [b, c, e.nx, e.nz, w], [c, d, e.dx, e.dz, dp]]) {
+    aWallMat(B, AC.GABLE | AC.GNONE | AC.UNONE, L / 2, L - 0.12, Math.round(0.62 / 0.04), (yW - B.yf) - 0.06);
+    aWallPiece(B, p[0], p[1], q[0], q[1], nx, nz, B.base, () => yW, -L / 2, L / 2);
+  }
+  AG.S.w = 0;
+  // the glazed lean-to roof, its flashing against the house and the gutter
+  aSolid(mb, AM.GLASS, B.rec, ASC.GLASS, [0.6, 0.64, 0.66]);
+  const y0 = yW + 0.02, sl = Math.hypot(dp + 0.1, yH - y0), nyy = (dp + 0.1) / sl, nn = (yH - y0) / sl;
+  const r0 = P(s0 - 0.05, 0), r1 = P(s1 + 0.05, 0), r2 = P(s1 + 0.05, dp + 0.1), r3 = P(s0 - 0.05, dp + 0.1);
+  const i0 = aVt(mb, r0[0], yH, r0[1], e.nx * nn, nyy, e.nz * nn, 0, 0), i1 = aVt(mb, r1[0], yH, r1[1], e.nx * nn, nyy, e.nz * nn, w, 0), i2 = aVt(mb, r2[0], y0, r2[1], e.nx * nn, nyy, e.nz * nn, w, sl), i3 = aVt(mb, r3[0], y0, r3[1], e.nx * nn, nyy, e.nz * nn, 0, sl);
+  aQ(mb, i0, i1, i2, i3, e.nx * nn, nyy, e.nz * nn);
+  const m = P((s0 + s1) / 2, 0.06), g = P((s0 + s1) / 2, dp + 0.14);
+  aPropYaw(APR.BOX, ACLS.BIG, AM.PAINT, B.rec, m[0], yH - 0.05, m[1], e.dx, e.dz, w + 0.1, 0.12, 0.14, [0.8, 0.8, 0.78], 0.4);
+  aPropYaw(APR.BOX, ACLS.BIG, AM.PAINT, B.rec, g[0], y0 - 0.12, g[1], e.dx, e.dz, w + 0.1, 0.12, 0.12, [0.8, 0.8, 0.78], 0.4);
+}
+
+// ---------------------------------------------------------------- static caravans: long and low, rounded corners, ribbed
+// white or cream sides with a coloured band, a shallow curved roof (or the newer lodges' low apex), on blocks behind a
+// skirt, steps and a little decked veranda by the door
+function archCaravan(r, st) {
+  // the box of the footprint: long axis along its longest edge
+  const p = r.p, n = r.n; let ang = 0, bl = 0;
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n, L = Math.hypot(p[j * 2] - p[i * 2], p[j * 2 + 1] - p[i * 2 + 1]); if (L > bl) { bl = L; ang = Math.atan2(p[j * 2 + 1] - p[i * 2 + 1], p[j * 2] - p[i * 2]); } }
+  const cr = Math.cos(ang), sr = Math.sin(ang); let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+  for (let i = 0; i < n; i++) { const u = p[i * 2] * cr + p[i * 2 + 1] * sr, v = -p[i * 2] * sr + p[i * 2 + 1] * cr; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+  const L = Math.min(13, u1 - u0), W = clamp(v1 - v0, 2.8, 4.2), uc = (u0 + u1) / 2, vc = (v0 + v1) / 2;
+  const X = (u, v) => [(uc + u) * cr - (vc + v) * sr, (uc + u) * sr + (vc + v) * cr], cx = X(0, 0);
+  const G = r.ground || (() => r.y0), g0 = G(cx[0], cx[1]), yb = g0 + 0.58, h = mkRng(st.hash ^ 0x7feb352d);
+  // which long side has the door: the one towards the road (or the given front)
+  let side = h() < 0.5 ? 1 : -1;
+  if (r.road) { const dv = -(r.road[0] - cx[0]) * sr + (r.road[1] - cx[1]) * cr; side = dv > 0 ? 1 : -1; }
+  st.storeys = 1; st.gH = 2.25; st.gSill = 0.8; st.gWinH = 0.85; st.uH = 2.25;
+  const rq = { p: null, n: 4, party: null, nb: null, front: -1, road: null, ground: G, y0: g0, eave: yb + 2.3, ridge: yb + 2.3 + (st.apex ? 0.38 : 0), roof: st.apex ? 1 : 0, ridgeAng: ang, order: 0, gap: 0, idx: r.idx };
+  const rc = st.apex ? 0.02 : 0.28, seg = st.apex ? 1 : 3;
+  // outline: a rounded rectangle (counter-clockwise in x, z), as the "footprint" of the body
+  const pts = [], cs = [[L / 2 - rc, W / 2 - rc, 0], [-L / 2 + rc, W / 2 - rc, 1], [-L / 2 + rc, -W / 2 + rc, 2], [L / 2 - rc, -W / 2 + rc, 3]];
+  for (const [ux, vy, q] of cs) for (let k = 0; k <= seg; k++) { const a = (q + k / seg) * PI / 2; const w = X(ux + Math.cos(a) * rc, vy + Math.sin(a) * rc); pts.push(w[0], w[1]); }
+  let ar = 0; const m = pts.length / 2; for (let i = 0; i < m; i++) { const j = (i + 1) % m; ar += pts[i * 2] * pts[j * 2 + 1] - pts[j * 2] * pts[i * 2 + 1]; }
+  if (ar < 0) { const q = []; for (let i = m - 1; i >= 0; i--) q.push(pts[i * 2], pts[i * 2 + 1]); pts.length = 0; pts.push(...q); }
+  rq.p = new Float64Array(pts); rq.n = pts.length / 2;
+  st.unitW = 30; st.boundary = 'none'; st.porch = 'none'; st.chimney = 'none'; st.ovE = st.apex ? 0.14 : 0.03; st.ovV = st.apex ? 0.1 : 0.03; st.pitch = 0.2;
+  const B = archFrame(rq, st); B.yf = yb + 0.04; B.base = yb - 0.04; B.yE = yb + 2.3;
+  if (!st.apex) { B.planes = []; B.roof = 0; B.rise = 0; B.kk = 0; B.yR = B.yE; }
+  B.rec = archRecord(st);
+  // the walls: the long sides get windows (and the door), the ends a big lounge window and a small one
+  for (const e of B.E) {
+    e.cols = [];
+    const cl = Math.abs(e.dx * cr + e.dz * sr), lng = cl > 0.9 && e.L > 3, end = cl < 0.1 && e.L > 1.5;
+    const sd = -e.nx * sr + e.nz * cr > 0 ? 1 : -1;   // which side (along v) this wall faces
+    if (lng) {
+      const nW = Math.max(2, Math.round(e.L / 2.3)), w = e.L / nW, di = sd === side ? 1 + ((h() * (nW - 2)) | 0) : -1;
+      for (let i = 0; i < nW; i++) { const c = archCol(i * w, (i + 1) * w, (i + 0.5) * w, i === di ? AC.GDOOR : AC.GWIN, AC.UNONE, i === di ? 0.75 : (i === 0 || i === nW - 1 ? 1.25 : 0.85), i === di ? 0 : (h() < 0.25 ? 1 : 0)); c.kind = i === di ? 'door' : 'win'; e.cols.push(c); }
+    } else if (end) { const big = (e.nx * cr + e.nz * sr > 0) === (((st.hash >> 3) & 1) === 1); e.cols.push(archCol(0, e.L, e.L / 2, big ? AC.GWIN : AC.GNONE, AC.UNONE, big ? Math.min(2.2, e.L - 0.5) : 0, big ? 3 : 0)); }
+    else archBlank(e.cols, e.L);
+  }
+  archWalls(B);
+  // the roof: a shallow camber across, in strips (or the apex roof of a lodge)
+  if (st.apex) archRoof(B);
+  else {
+    const mb = AG.S, yt = B.yE, cam = v => yt + 0.15 * (1 - (2 * v / W) * (2 * v / W)) - 0.0;
+    const br = [-W / 2 - 0.04, -W / 3, -W / 6, 0, W / 6, W / 3, W / 2 + 0.04];
+    const lu = [], lv = []; for (let i = 0; i < rq.n; i++) { const x = rq.p[i * 2], z = rq.p[i * 2 + 1]; lu.push((x * cr + z * sr) - uc); lv.push((-x * sr + z * cr) - vc); }
+    const [ou, ov] = aOffset(lu, lv, new Array(rq.n).fill(0.04));
+    aSetMat(mb, AM.ROOF, B.rec, AROOF.CARAVAN, 0, 0, 0);
+    for (let k = 0; k < br.length - 1; k++) {
+      let [cu, cv] = aClip(ou, ov, 0, -1, -br[k]); [cu, cv] = aClip(cu, cv, 0, 1, br[k + 1]); if (cu.length < 3) continue;
+      const ya = cam(Math.max(-W / 2, br[k])), yb2 = cam(Math.min(W / 2, br[k + 1])), dv = br[k + 1] - br[k], sl = (yb2 - ya) / dv;
+      let nx = sr * sl, ny = 1, nz = -cr * sl; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
+      const tris = aEars(cu, cv), v00 = mb.nv;
+      for (let i = 0; i < cu.length; i++) { const t = (cv[i] - br[k]) / dv, w = X(cu[i], cv[i]); aVt(mb, w[0], ya + (yb2 - ya) * t, w[1], nx, ny, nz, cu[i], cv[i]); }
+      for (let i = 0; i < tris.length; i += 3) aT(mb, v00 + tris[i], v00 + tris[i + 1], v00 + tris[i + 2], nx, ny, nz);
+    }
+    // the rounded trim along the top edge
+    for (const e of B.E) aPropYaw(APR.BOX, ACLS.BIG, AM.PAINT, B.rec, (e.ax + e.bx) / 2 + e.nx * 0.02, yt - 0.06, (e.az + e.bz) / 2 + e.nz * 0.02, e.dx, e.dz, e.L + 0.02, 0.09, 0.06, st.trimCol, 0.5);
+  }
+  // skirt on blocks: dark panels from the ground to the body
+  const mb = AG.S, sk = archPick([[0.12, 0.13, 0.12], [0.2, 0.17, 0.13], [0.3, 0.3, 0.28], [0.08, 0.12, 0.09]], h());
+  aSolid(mb, AM.PAINT, B.rec, ASC.SMOOTH, sk);
+  const c0 = X(0, 0); aBox(mb, c0[0], g0 - 0.15, c0[1], cr, sr, L - 0.25, yb - g0 + 0.15, W - 0.12, 4 | 8 | 16 | 32);
+  // steps and a decked veranda by the door
+  for (const e of B.E) for (const c of e.cols) {
+    if (c.g !== AC.GDOOR) continue;
+    const px = e.ax + e.dx * c.c, pz = e.az + e.dz * c.c, deck = h() < 0.65;
+    if (deck) {
+      const dw = 2.6, dd = 1.5, mx = px + e.nx * dd / 2, mz = pz + e.nz * dd / 2;
+      aSolid(mb, AM.PAVING, B.rec, ASC.DECK, archPick([[0.3, 0.22, 0.15], [0.22, 0.2, 0.18], [0.36, 0.3, 0.22]], h()));
+      aBox(mb, mx, yb - 0.08, mz, e.dx, e.dz, dw, 0.12, dd, 63);
+      aPropYaw(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, px + e.nx * (dd - 0.04), yb + 0.04, pz + e.nz * (dd - 0.04), e.dx, e.dz, dw - 1.0, 0.85, 1, h() < 0.5 ? [0.78, 0.78, 0.75] : [0.3, 0.24, 0.18], (h() < 0.4 ? ARAIL.GLASS : ARAIL.TIMBER) / 15);
+      for (const sg of [-1, 1]) aPropYaw(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, px + e.dx * sg * (dw / 2 - 0.03) + e.nx * dd / 2, yb + 0.04, pz + e.dz * sg * (dw / 2 - 0.03) + e.nz * dd / 2, e.nx, e.nz, dd - 0.1, 0.85, 1, [0.78, 0.78, 0.75], ARAIL.TIMBER / 15);
+      const sx = px + e.dx * (dw / 2 - 0.45) + e.nx * (dd + 0.35), sz = pz + e.dz * (dw / 2 - 0.45) + e.nz * (dd + 0.35), gs = G(sx, sz);
+      for (let i = 0; i < 3; i++) aPropYaw(APR.BOX, ACLS.SMALL, AM.STONE, B.rec, sx - e.nx * i * 0.28, gs - 0.05, sz - e.nz * i * 0.28, e.dx, e.dz, 0.8, (yb - gs) * (i + 1) / 3 + 0.02, 0.3, [0.42, 0.41, 0.39], ASC.CONCRETE / 15);
+    } else {
+      const gs = G(px + e.nx * 0.6, pz + e.nz * 0.6);
+      for (let i = 0; i < 3; i++) aPropYaw(APR.BOX, ACLS.SMALL, AM.METAL, B.rec, px + e.nx * (0.25 + (2 - i) * 0.25), gs - 0.04, pz + e.nz * (0.25 + (2 - i) * 0.25), e.dx, e.dz, 0.85, (yb - gs) * (i + 1) / 3 + 0.03, 0.27, [0.5, 0.5, 0.5]);
+    }
+  }
+  // a gas bottle, sometimes an aerial or a dish on a pole
+  const ge = B.E[0], gx = ge.ax + ge.dx * 0.5 + ge.nx * 0.3, gz = ge.az + ge.dz * 0.5 + ge.nz * 0.3;
+  aPropYaw(APR.CYL, ACLS.SMALL, AM.PAINT, B.rec, gx, G(gx, gz), gz, ge.dx, ge.dz, 0.32, 0.85, 0.32, h() < 0.5 ? [0.55, 0.05, 0.03] : [0.05, 0.12, 0.3], 0.6);
+  if (st.dish) aPropYaw(APR.DISH, ACLS.SMALL, AM.METAL, B.rec, gx + ge.nx * 0.2, yb + 2.0, gz + ge.nz * 0.2, 0.6, 0.8, 0.55, 0.55, 0.55, [0.6, 0.6, 0.58]);
+  return B;
+}
+
+// ---------------------------------------------------------------- one building
+function archHouse(r, st) {
+  const S = ARCH_S, s = st.style;
+  if (s === S.COTTAGE && ((st.hash >> 21) % 10) < 3 && (r.ridgeAng === undefined || r.ridgeAng === null)) st.gableFront = true;
+  if (s === S.FLATS || s === S.COMMERCIAL) st.parapet = r.roof === 0 || r.roof === undefined ? 0.75 : 0;
+  if (s === S.SHOP && r.roof === 0) st.parapet = 0.5;
+  if (s === S.GARAGE) { st.parapet = 0; st.fasciaFlat = [0.05, 0.05, 0.055]; }
+  if (s === S.INDUSTRIAL) { st.ovE = 0.12; st.ovV = 0.1; st.fascia = st.wallCol; }
+  const B = archFrame(r, st);
+  if (s === S.HOTEL && st.balcony) st.bay = 'none';
+  archFacades(B);
+  // plans that change the openings before the walls are drawn: French windows behind balconies
+  const F = B.E[B.f];
+  if (st.balcony && s === S.HOTEL) for (const c of F.cols) { if (c.up === AC.UWIN) c.up = AC.UFRENCH; }
+  if (st.balcony && s === S.FLATS) for (const e of B.E) if (e.role === 'F' || e.role === 'B') for (const c of e.cols) if (c.up === AC.UWIN && !((st.hash >> ((c.unit | 0) % 13)) & 1)) { c.balc = true; c.v |= 8; }
+  if (s === S.PUB || s === S.CAFE) { st.signRow = true; }
+  B.rec = archRecord(st);
+  archWalls(B);
+  archBays(B);
+  archRoof(B);
+  archDormers(B);
+  archChimneys(B);
+  archPorches(B);
+  archShopfronts(B);
+  archBalconies(B);
+  archConservatory(B);
+  if (s === S.PUB || s === S.CAFE) archNameBoard(B);
+  archBoundary(B);
+  archDetails(B);
+  return B;
+}
+// pubs and beach cafés: a painted name board on the front wall above the ground floor windows (or the café's fascia)
+function archNameBoard(B) {
+  const st = B.st, F = B.E[B.f], mb = AG.S; if (st.style === ARCH_S.CAFE && F.cols.some(c => c.g === AC.GSHOP)) return;
+  const W = Math.min(F.L - 1.0, Math.max(3.5, F.L * 0.6)), y = B.yf + st.gH - 0.1 + (st.storeys > 1 ? 0 : -0.6), h = 0.7, sc = F.L / 2;
+  const P = (sx, d) => [F.ax + F.dx * sx + F.nx * d, F.az + F.dz * sx + F.nz * d], m = P(sc, 0.05);
+  aSolid(mb, AM.PAINT, B.rec, ASC.SMOOTH, AP.shopBg[st.signBg % AP.shopBg.length]);
+  aBox(mb, m[0], y, m[1], F.dx, F.dz, W, h, 0.1, 1 | 2 | 4 | 8);
+  aSetMat(mb, AM.SIGN, B.rec, 0, 0, 0, 0);
+  const f0 = P(sc - W / 2, 0.1), f1 = P(sc + W / 2, 0.1);
+  const i0 = aVt(mb, f0[0], y, f0[1], F.nx, 0, F.nz, 0, 0), i1 = aVt(mb, f1[0], y, f1[1], F.nx, 0, F.nz, W, 0), i2 = aVt(mb, f1[0], y + h, f1[1], F.nx, 0, F.nz, W, h), i3 = aVt(mb, f0[0], y + h, f0[1], F.nx, 0, F.nz, 0, h);
+  aQ(mb, i0, i1, i2, i3, F.nx, 0, F.nz);
+}
+function archGen(r) {
+  const st = archLook(r);
+  if (r.style === ARCH_S.CARAVAN) return archCaravan(r, st);
+  return archHouse(r, st);
+}
+
+// ---------------------------------------------------------------- everything handed over: generated by 128 m tiles
+const ARCH_TILE = 128;
+function archGenerate() {
+  const Rq = ARCH.reqs, t0 = performance.now();
+  archParty();
+  // the order of the houses along each row (alternate houses mirror their doors and bays)
+  const groups = new Map(); for (const r of Rq) { let g = groups.get(r.group); if (!g) groups.set(r.group, g = []); g.push(r); }
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const r0 = g[0]; let dx = 1, dz = 0, best = 0;
+    for (let i = 0; i < r0.n; i++) { const j = (i + 1) % r0.n, ex = r0.p[j * 2] - r0.p[i * 2], ez = r0.p[j * 2 + 1] - r0.p[i * 2 + 1], L = Math.hypot(ex, ez); if (r0.party[i] > 0.45 && L > best) { best = L; dx = -ez / L; dz = ex / L; } }
+    g.sort((a, b) => (a.cx * dx + a.cz * dz) - (b.cx * dx + b.cz * dz));
+    g.forEach((r, i) => { r.order = i; });
+  }
+  let x0 = 1e9, z0 = 1e9; for (const r of Rq) { x0 = Math.min(x0, r.cx); z0 = Math.min(z0, r.cz); }
+  ARCH.cx0 = Math.floor((x0 - 300) / 64) * 64; ARCH.cz0 = Math.floor((z0 - 300) / 64) * 64;
+  AG.S = new MeshBuilder(Math.max(1 << 16, Rq.length * 140)); AG.P = new ArchInst(); AG.rec = new Uint32Array(16 * Math.max(1024, Rq.length + 64)); AG.nrec = 0;
+  // by tile (contiguous index ranges for the culling)
+  const key = r => Math.floor((r.cz - ARCH.cz0) / ARCH_TILE) * 4096 + Math.floor((r.cx - ARCH.cx0) / ARCH_TILE);
+  const ord = Rq.slice().sort((a, b) => key(a) - key(b));
+  const ranges = []; let cur = -1, i0 = 0, fails = 0;
+  for (const r of ord) {
+    const k = key(r);
+    if (k !== cur) { if (AG.S.ni > i0) ranges.push(i0, AG.S.ni); cur = k; i0 = AG.S.ni; }
+    try { archGen(r); } catch (e) { fails++; if (fails < 4) console.error('arch: building ' + r.idx + ' (' + ARCH_SNAME[r.style] + '): ' + e.message); }
+  }
+  if (AG.S.ni > i0) ranges.push(i0, AG.S.ni);
+  const st = ARCH.stats;
+  st.buildings = Rq.length; st.failed = fails; st.records = AG.nrec; st.shellTris = AG.S.ni / 3; st.shellVerts = AG.S.nv; st.props = AG.P.n;
+  st.genMs = Math.round(performance.now() - t0);
+  const by = {}; for (const r of Rq) by[ARCH_SNAME[r.style]] = (by[ARCH_SNAME[r.style]] || 0) + 1; st.styles = by;
+  return ranges;
+}
+
+// ---------------------------------------------------------------- GPU: families, record texture, sign atlas, draw sets
+// detail instance layout (36 bytes): position, rotation, size, material + record, colour
+const ARCH_INST = { arrayStride: 36, stepMode: 'instance', attributes: [
+  { shaderLocation: 5, offset: 0, format: 'float32x3' }, { shaderLocation: 6, offset: 12, format: 'snorm16x4' }, { shaderLocation: 7, offset: 20, format: 'unorm16x4' },
+  { shaderLocation: 8, offset: 28, format: 'uint32' }, { shaderLocation: 9, offset: 32, format: 'unorm8x4' }] };
+const ARCH_NEAR = [200, 120];   // detail classes: drawn within (m)
+// the shell: ranges of one index buffer, culled by frustum and distance (cube faces within 420 m, like the town)
+class ArchSet {
+  constructor(fam, bg3) { this.fam = fam; this.bg3 = bg3; this.r = []; this.vb = null; this.ib = null; }
+  add(mb, i0, i1, flags, maxDist) {
+    let x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1e9, y1 = -1e9, z1 = -1e9; const f = mb.f32, ix = mb.idx;
+    for (let i = i0; i < i1; i++) { const v = ix[i] * 9, x = f[v], y = f[v + 1], z = f[v + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; }
+    this.r.push({ first: i0, count: i1 - i0, x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (z0 + z1) / 2, rad: Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2, flags, maxDist: maxDist || 1e9 });
+  }
+  draw(pass, ctx) {
+    const pipe = this.fam.pipe[ctx.kind]; if (!pipe || !this.vb) return;
+    const bit = 1 << ctx.kind, rs = this.r, stat = ctx.kind === 1 && ctx.cascade === 3; let set = false;
+    for (let i = 0; i < rs.length; i++) {
+      const r = rs[i]; if (!(r.flags & bit)) continue;
+      SQ[0] = r.x; SQ[1] = r.y; SQ[2] = r.z; SQ[3] = r.rad; if (!sphereQ(ctx.planes, ctx.nPlanes)) continue;
+      if (!stat) { const dx = r.x - ctx.cx, dy = r.y - ctx.cy, dz = r.z - ctx.cz, md = r.maxDist + r.rad; if (dx * dx + dy * dy + dz * dz > md * md) continue; }
+      if (!set) { pass.setPipeline(pipe); R.dyn2[0] = 0; pass.setBindGroup(2, R.objBG, R.dyn2, 0, 1); pass.setBindGroup(3, this.bg3); pass.setVertexBuffer(0, this.vb); pass.setIndexBuffer(this.ib, 'uint32'); set = true; }
+      pass.drawIndexed(r.count, 1, r.first, 0, 0);
+      ARCH.cnt[ctx.kind * 2]++; ARCH.cnt[ctx.kind * 2 + 1] += r.count / 3;
+    }
+  }
+}
+// the detail: per 64 m cell, class and prototype a run of instances (cells: x, y, z, radius; runs: class, proto, first, count)
+class ArchProps {
+  constructor(fam, famR, bg3) { this.fam = fam; this.famR = famR; this.bg3 = bg3; this.cells = null; this.runs = null; this.nc = 0; this.vb = null; this.ib = null; this.inst = null; this.pFirst = null; this.pCount = null; }
+  draw(pass, ctx) {
+    if (ctx.kind === 2 || !this.inst) return;                         // (not in the cube faces)
+    if (ctx.kind === 1 && ctx.cascade > 1) return;                    // shadows of the detail only in the near cascades
+    for (let pf = 0; pf < 2; pf++) {
+      const fam = pf ? this.famR : this.fam, pipe = fam.pipe[ctx.kind]; if (!pipe) continue;
+      let set = false;
+      const C = this.cells, Rn = this.runs, cx = ctx.cx, cy = ctx.cy, cz = ctx.cz;
+      for (let c = 0; c < this.nc; c++) {
+        const o = c * 6, x = C[o], y = C[o + 1], z = C[o + 2], rad = C[o + 3], dx = x - cx, dy = y - cy, dz = z - cz, d2 = dx * dx + dy * dy + dz * dz;
+        const lim = ARCH_NEAR[0] + rad; if (d2 > lim * lim) continue;
+        SQ[0] = x; SQ[1] = y; SQ[2] = z; SQ[3] = rad; if (!sphereQ(ctx.planes, ctx.nPlanes)) continue;
+        for (let q = C[o + 4], qe = C[o + 4] + C[o + 5]; q < qe; q++) {
+          const k = q * 4, cls = Rn[k], proto = Rn[k + 1];
+          if ((proto === APR.RAIL) !== (pf === 1)) continue;
+          const l2 = ARCH_NEAR[cls] + rad; if (d2 > l2 * l2) continue;
+          if (ctx.kind === 1 && (cls === ACLS.SMALL ? ctx.cascade > 0 : false)) continue;
+          if (!set) { pass.setPipeline(pipe); R.dyn2[0] = 0; pass.setBindGroup(2, R.objBG, R.dyn2, 0, 1); pass.setBindGroup(3, this.bg3); pass.setVertexBuffer(0, this.vb); pass.setVertexBuffer(1, this.inst); pass.setIndexBuffer(this.ib, 'uint32'); set = true; }
+          pass.drawIndexed(this.pCount[proto], Rn[k + 3], this.pFirst[proto], 0, Rn[k + 2]);
+          ARCH.cnt[ctx.kind * 2]++; ARCH.cnt[ctx.kind * 2 + 1] += this.pCount[proto] / 3 * Rn[k + 3];
+        }
+      }
+    }
+  }
+}
+ARCH.cnt = new Float64Array(6);
+// prototypes of the detail (unit sizes: x, z in -0.5..0.5, y 0..1), one mesh
+function archProtos() {
+  const mb = new MeshBuilder(4096), first = new Uint32Array(APR.N), count = new Uint32Array(APR.N);
+  const mark = (p, f) => { first[p] = mb.ni; f(); count[p] = mb.ni - first[p]; };
+  mb.mat(0);
+  mark(APR.BOX, () => mb.box(0, 0.5, 0, 1, 1, 1));
+  mark(APR.WEDGE, () => {   // ridge-tile section: a low triangle across z, along x
+    const q = (a, b, c, d) => mb.quad(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], d[0], d[1], d[2]);
+    q([-0.5, 0, 0.5], [0.5, 0, 0.5], [0.5, 1, 0], [-0.5, 1, 0]); q([0.5, 0, -0.5], [-0.5, 0, -0.5], [-0.5, 1, 0], [0.5, 1, 0]);
+    const e = s => { const a = mb.v(s * 0.5, 0, -0.5, s, 0, 0, 0, 0), b = mb.v(s * 0.5, 0, 0.5, s, 0, 0, 1, 0), c = mb.v(s * 0.5, 1, 0, s, 0, 0, 0.5, 1); if (s > 0) mb.tri(a, c, b); else mb.tri(a, b, c); };
+    e(1); e(-1);
+  });
+  mark(APR.POT, () => { mb.lathe([[0, 0.5], [0.12, 0.5], [0.12, 0.43], [0.85, 0.4], [0.88, 0.47], [1.0, 0.47], [1.0, 0.36], [0.62, 0.36], [0.62, 0.0]], 8); });
+  mark(APR.CYL, () => mb.cyl(0, 0, 0, 0.5, 1, 0.5, 8, false, true));
+  mark(APR.DISH, () => { mb.lathe([[0, 0.02], [0.08, 0.3], [0.16, 0.48], [0.17, 0.49], [0.1, 0.32], [0.04, 0.12]], 10); });
+  mark(APR.RAIL, () => { const a = mb.v(-0.5, 0, 0, 0, 0, 1, 0, 0), b = mb.v(0.5, 0, 0, 0, 0, 1, 1, 0), c = mb.v(0.5, 1, 0, 0, 0, 1, 1, 1), d = mb.v(-0.5, 1, 0, 0, 0, 1, 0, 1); mb.quadI(a, b, c, d); });
+  // (the pot is lathed along x: turn it upright, y up; the dish faces +x, its local X axis)
+  for (const p of [APR.POT]) {
+    const vs = new Set(); for (let i = first[p]; i < first[p] + count[p]; i++) vs.add(mb.idx[i]);
+    for (const v of vs) {
+      const f = mb.f32, s16 = mb.i16, x = f[v * 9], y = f[v * 9 + 1], z = f[v * 9 + 2]; f[v * 9] = y; f[v * 9 + 1] = x; f[v * 9 + 2] = z;
+      const nx = s16[v * 18 + 6], ny = s16[v * 18 + 7]; s16[v * 18 + 6] = ny; s16[v * 18 + 7] = nx;
+    }
+    // the swap of two axes mirrors: flip the winding back
+    for (let i = first[p]; i < first[p] + count[p]; i += 3) { const t = mb.idx[i + 1]; mb.idx[i + 1] = mb.idx[i + 2]; mb.idx[i + 2] = t; }
+  }
+  return { mesh: mb.upload(), first, count };
+}
+// the sign words, one per row (2048 x 128 each), stroked by the circuit's own letter shapes plus '&'
+function archSignAtlas() {
+  const rows = ARCH_SIGNS.length, W = 1024, H = 64, cv = document.createElement('canvas'); cv.width = W; cv.height = H * rows;
+  const g = cv.getContext('2d'); g.clearRect(0, 0, W, H * rows);
+  if (!GLY['&']) GLY['&'] = 'M4,0L.6,3.8C-.4,5 .4,6.2 1.6,6.2C2.8,6.2 3.4,5 2.2,3.9L1,2.8C-.3,1.6 .2,0 1.8,0C2.8,0 3.5,.6 4,1.6';
+  for (let i = 0; i < rows; i++) {
+    const t = ARCH_SIGNS[i]; let h = 40; const tw = textW(t, h); if (tw > W * 0.92) h *= W * 0.92 / tw;
+    strokeText(g, t, (W - textW(t, h)) / 2, i * H + (H - h) / 2, h, '#ffffff', 1.6, 0);
+  }
+  const tex = mkTex(W, H * rows, 'rgba8unorm', TU.RT | TU.TB | TU.CD, { mipLevelCount: 6 });
+  G.dev.queue.copyExternalImageToTexture({ source: cv }, { texture: tex }, [W, H * rows]);
+  genMips(tex, 'rgba8unorm');
+  return tex;
+}
+function archUpload(ranges) {
+  const dev = G.dev, defs = {}, t0 = performance.now();
+  ARCH.fam = mkFamily('arch', { src: 'mat_arch', defs, shadowBias: 3, shadowSlope: 2.5 });
+  ARCH.famP = mkFamily('archP', { src: 'mat_arch', defs: { ARCH_PROPS: '' }, buffers: [VLAYOUT, ARCH_INST], noCube: true, shadowBias: 3, shadowSlope: 2.5 });
+  ARCH.famR = mkFamily('archR', { src: 'mat_arch', defs: { ARCH_PROPS: '', ARCH_RAIL: '' }, buffers: [VLAYOUT, ARCH_INST], alpha: true, cull: 'none', noCube: true, shadowBias: 3, shadowSlope: 2.5 });
+  // records: 4 texels per building in a 1024-wide rgba32uint texture
+  const nt = Math.max(1, AG.nrec) * 4, th = Math.ceil(nt / 1024), data = new Uint32Array(1024 * th * 4); data.set(AG.rec.subarray(0, AG.nrec * 16));
+  const rec = ARCH.recTex = mkTex(1024, th, 'rgba32uint', TU.TB | TU.CD);
+  dev.queue.writeTexture({ texture: rec }, data, { bytesPerRow: 1024 * 16 }, [1024, th]);
+  const sign = ARCH.signTex = archSignAtlas();
+  const bg3 = dev.createBindGroup({ layout: ARCH.fam.bgl3, entries: [{ binding: 0, resource: rec.createView() }, { binding: 1, resource: sign.createView() }] });
+  const bg3P = dev.createBindGroup({ layout: ARCH.famP.bgl3, entries: [{ binding: 0, resource: rec.createView() }, { binding: 1, resource: sign.createView() }] });
+  // the shell
+  const S = ARCH.shell = new ArchSet(ARCH.fam, bg3), mb = AG.S;
+  for (let i = 0; i < ranges.length; i += 2) { S.add(mb, ranges[i], ranges[i + 1], 3); S.add(mb, ranges[i], ranges[i + 1], 4, 420); }
+  const m = mb.upload(); S.vb = m.vb; S.ib = m.ib;
+  // the detail: instances sorted by cell, class and prototype
+  const P = AG.P, n = P.n, ord = new Uint32Array(n); for (let i = 0; i < n; i++) ord[i] = i;
+  ord.sort((a, b) => P.key[a] - P.key[b]);
+  const out = new Uint8Array(n * 36), src = P.u8; for (let i = 0; i < n; i++) out.set(src.subarray(ord[i] * 36, ord[i] * 36 + 36), i * 36);
+  const cells = [], runs = []; let lastCell = -1, lastRun = -1, cellIdx = -1;
+  const cx0 = new Float64Array(1), bb = [];
+  for (let i = 0; i < n; i++) {
+    const key = P.key[ord[i]], cell = Math.floor(key / 16), run = key % 16;
+    if (cell !== lastCell) { cells.push([cell, runs.length / 4, 0, 1e9, 1e9, 1e9, -1e9, -1e9, -1e9]); lastCell = cell; lastRun = -1; cellIdx = cells.length - 1; }
+    if (run !== lastRun) { runs.push((run >> 3) & 1, run & 7, i, 0); lastRun = run; cells[cellIdx][2]++; }
+    runs[runs.length - 1]++;
+    const f = ord[i] * 9, x = P.f32[f], y = P.f32[f + 1], z = P.f32[f + 2], c = cells[cellIdx];
+    if (x < c[3]) c[3] = x; if (y < c[4]) c[4] = y; if (z < c[5]) c[5] = z; if (x > c[6]) c[6] = x; if (y > c[7]) c[7] = y; if (z > c[8]) c[8] = z;
+  }
+  const pr = archProtos(), D = ARCH.props = new ArchProps(ARCH.famP, ARCH.famR, bg3P);
+  D.vb = pr.mesh.vb; D.ib = pr.mesh.ib; D.pFirst = pr.first; D.pCount = pr.count;
+  D.nc = cells.length; D.cells = new Float32Array(cells.length * 6); D.runs = new Uint32Array(runs);
+  cells.forEach((c, i) => { const o = i * 6; D.cells[o] = (c[3] + c[6]) / 2; D.cells[o + 1] = (c[4] + c[7]) / 2; D.cells[o + 2] = (c[5] + c[8]) / 2; D.cells[o + 3] = Math.hypot(c[6] - c[3], c[7] - c[4], c[8] - c[5]) / 2 + 12; D.cells[o + 4] = c[1]; D.cells[o + 5] = c[2]; });
+  if (n) D.inst = mkBuf(n * 36, BU.V, out);
+  R.drawables.push(S, D);
+  const st = ARCH.stats; st.uploadMs = Math.round(performance.now() - t0); st.cells = cells.length; st.shellRanges = S.r.length;
+  st.gpuMB = +((mb.nv * 36 + mb.ni * 4 + n * 36 + data.byteLength) / 1048576).toFixed(1);
+  AG.S = null; AG.P = null;                                           // (the CPU copies are not needed any more)
+}
+function archFinish() {
+  if (!ARCH.reqs.length) return ARCH.stats;
+  const ranges = archGenerate();
+  if (typeof G !== 'undefined' && G.dev) archUpload(ranges);
+  window.__cap = window.__cap || {};
+  window.__cap.arch = { stats: ARCH.stats, cnt: ARCH.cnt, views: ARCH.views, view: archView };
+  return ARCH.stats;
+}
+function archView(name) {
+  const v = ARCH.views && ARCH.views[name]; if (!v) return Object.keys(ARCH.views || {});
+  setCamera(v[0], v[1], v[2], v[3], v[4], v[5], v[6] || 0.9); R.cube.pos.set([v[0] * 0.5 + v[3] * 0.5, Math.max(1.2, v[1] * 0.3 + v[4] * 0.7), v[2] * 0.5 + v[5] * 0.5]);
+  return name;
 }

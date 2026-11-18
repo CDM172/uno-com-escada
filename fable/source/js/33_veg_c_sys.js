@@ -104,15 +104,18 @@ function vegPlace() {
   srt.sort(); for (let i = 0; i < n; i++) idx[i] = srt[i] % 1048576;
   const inst = V.inst = new Float32Array(n * 8); V.n = n;
   const nCell = V.NC * V.NC, nSup = V.NS * V.NS;
-  V.subStart = new Uint32Array(nCell * VEG_NA * 16); V.subCount = new Uint16Array(nCell * VEG_NA * 16);
+  // 16 m subcells (single leaves) only for the (cell, archetype) pairs that have trees with leaves: a compact table
+  // reached through subIdx (dense tables were nCell x archetypes x 16, 60 MB on the town map with the British set)
+  let np = 0; for (let i = 0, last = -1; i < n; i++) { const k = keys[idx[i]] >>> 4; if (k !== last) { last = k; if (k % VEG_NA < VEG_NT) np++; } }
+  V.subIdx = new Int32Array(nCell * VEG_NA).fill(-1); V.subStart = new Uint32Array(np * 16); V.subCount = new Uint16Array(np * 16); let ns = 0;
   V.cellStart = new Uint32Array(nCell * VEG_NA); V.cellCount = new Uint32Array(nCell * VEG_NA); V.cellY = new Float32Array(nCell); const cn = new Uint32Array(nCell);
   V.supStart = new Uint32Array(nSup); V.supCount = new Uint32Array(nSup); V.supY = new Float32Array(nSup);
   for (let i = 0; i < n; i++) {
     const s = idx[i]; inst.set(data.subarray(s * 8, s * 8 + 8), i * 8);
     const k = keys[s] >>> 4, s16 = keys[s] & 15, arch = k % VEG_NA, cs = Math.floor(k / VEG_NA), sup = cs >> 4, sub = cs & 15;
     const cx = (sup % V.NS) * 4 + (sub & 3), cz = Math.floor(sup / V.NS) * 4 + (sub >> 2), c = cz * V.NC + cx;
-    if (!V.cellCount[c * VEG_NA + arch]) V.cellStart[c * VEG_NA + arch] = i; V.cellCount[c * VEG_NA + arch]++;
-    const sq = (c * VEG_NA + arch) * 16 + s16; if (!V.subCount[sq]) V.subStart[sq] = i; V.subCount[sq]++;
+    if (!V.cellCount[c * VEG_NA + arch]) { V.cellStart[c * VEG_NA + arch] = i; if (arch < VEG_NT) V.subIdx[c * VEG_NA + arch] = ns++; } V.cellCount[c * VEG_NA + arch]++;
+    if (arch < VEG_NT) { const sq = V.subIdx[c * VEG_NA + arch] * 16 + s16; if (!V.subCount[sq]) V.subStart[sq] = i; V.subCount[sq]++; }
     if (!V.supCount[sup]) V.supStart[sup] = i; V.supCount[sup]++;
     V.cellY[c] += data[s * 8 + 1]; cn[c]++; V.supY[sup] += data[s * 8 + 1];
   }
@@ -217,7 +220,8 @@ const vegDrawable = {
         const m = V.leafMeshes[a]; if (!m) continue; let set = false;
         for (let dz = -rs; dz <= rs; dz++) for (let dx = -rs; dx <= rs; dx++) {
           const sx = scx + dx, sz = scz + dz; if (sx < 0 || sz < 0 || sx >= n16 || sz >= n16) continue;
-          const c = (sz >> 2) * NC + (sx >> 2), q = (c * NA + a) * 16 + (sz & 3) * 4 + (sx & 3), cnt = V.subCount[q]; if (!cnt) continue;
+          const c = (sz >> 2) * NC + (sx >> 2), si = V.subIdx[c * NA + a]; if (si < 0) continue;
+          const q = si * 16 + (sz & 3) * 4 + (sx & 3), cnt = V.subCount[q]; if (!cnt) continue;
           const mx = V.x0 + sx * S16, mz = V.z0 + sz * S16;
           const ex = camx < mx ? mx - camx : camx > mx + S16 ? camx - mx - S16 : 0, ez = camz < mz ? mz - camz : camz > mz + S16 ? camz - mz - S16 : 0;
           const d2 = ex * ex + ez * ez; if (d2 > rl * rl) continue;

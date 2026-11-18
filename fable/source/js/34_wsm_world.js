@@ -306,6 +306,7 @@ const TB_ROOF = { slate: [[0.06, 0.066, 0.078], [0.045, 0.05, 0.058], [0.07, 0.0
 const _bu = [], _bv = [], _bt = [];
 function townBuilding(mb, b) {
   const T = TOWN, B = T.bd, bi = T.binfo, k0 = B.off[b], n = B.off[b + 1] - k0; if (n < 3) return;
+  const lp = townLandmarkProp(b); if (lp >= 0) { const f = townLandmarkFrame(b); townPropPut(lp, f[0], f[2], f[1], f[3]); return; }   // (its own model)
   const kind = bi[b * 8], hgt = bi[b * 8 + 1] * 0.25; let roof = bi[b * 8 + 2]; const ridge = bi[b * 8 + 3] / 256 * PI;
   if (roof === 4) roof = 2;   // (a half-hip, from the LIDAR: drawn as a hip here)
   const h0 = bi[b * 8 + 4] / 255, h1 = bi[b * 8 + 5] / 255, lu = bi[b * 8 + 6] & 15, look = bi[b * 8 + 6] >> 4;   // look: landmark (bake)
@@ -315,6 +316,9 @@ function townBuilding(mb, b) {
   let base = gmin - 0.5, eaveY = gmax + hgt;
   let onDeck = false;
   for (const d of TOWNW.decks) if (cx > d.x0 && cx < d.x1 && cz > d.z0 && cz < d.z1 && townInRing(d.ring, cx, cz)) { base = d.y - 0.3; eaveY = d.y + hgt; onDeck = true; }   // on a pier deck
+  if (kind === 11 && !onDeck && cx < 260 && cz > -900 && cz < 2900 && townProp('shelter') >= 0) {   // (a seafront shelter: the Blender model)
+    const f = townLandmarkFrame(b); townPropPut(townProp('shelter'), f[0], f[2], f[1], f[3]); return;
+  }
   if (kind === 11 && !onDeck) {   // shelter: a roof on posts (bus shelters; the one on the Grand Pier is its glazed walkway)
     const us = [], vs = []; for (let k = k0; k < k0 + n; k++) { us.push(p[k * 2]); vs.push(p[k * 2 + 1]); }
     const tris = []; townEarClip(us, vs, n, tris);
@@ -483,8 +487,8 @@ function townBuilding(mb, b) {
 }
 // small details (chimneys, dormers, street furniture, boundaries, markings) are built in 128 m tiles drawn only near the
 // camera (each tile a range with its own distance limit)
-function townJob(x, z, f, dist) {
-  const k = Math.floor(x / 128) + ',' + Math.floor(z / 128) + ',' + (dist || 600); let l = TOWNW.jobs.get(k); if (!l) TOWNW.jobs.set(k, l = []); l.push(f);
+function townJob(x, z, f, dist) {   // (two distance classes per tile: the small things within 350 m, the tall ones within 600 m)
+  const k = Math.floor(x / 128) + ',' + Math.floor(z / 128) + ',' + ((dist || 600) <= 350 ? 350 : 600); let l = TOWNW.jobs.get(k); if (!l) TOWNW.jobs.set(k, l = []); l.push(f);
 }
 function townJobsRun(mb, rs) {
   for (const [k, fs] of TOWNW.jobs) {
@@ -1068,6 +1072,96 @@ function townVegPlace(push) {
   }
 }
 
+// ---------------------------------------------------------------- props modelled in Blender (36_wsm_props.js, optional)
+// WSM_PROPS = [{meta: {scale, targets, chunks, prop: {name, kind, size, anchor}}, b64}, ...] in the cars' chunk format
+// (positions int16 / scale, normals int8, optional uvs, indices; materials are the car shader's). Origin on the ground at
+// the foot of the prop (a landmark: its footprint's centroid), X the side that faces the road, Y up. The town asks for a
+// prop by a placement kind (WSMP_KINDS: the names a prop may carry); where one is loaded it is instanced there (batched
+// by 128 m cells, drawn within 350 m, landmarks at any distance) and the procedural placeholder is skipped.
+const WSMP_KINDS = {
+  lamp_victorian: ['lamp_victorian', 'seafront_lamp', 'victorian_lamp', 'lamp_standard_victorian', 'promenade_lamp'],
+  lamp_modern: ['lamp_modern', 'street_light', 'street_lamp', 'lamp_column', 'streetlight'],
+  bench: ['bench', 'seafront_bench', 'bench_cast_iron'], bin: ['bin', 'litter_bin', 'waste_basket', 'litter_bin_seafront'],
+  bollard: ['bollard'], post_box: ['post_box', 'pillar_box'], phone: ['phone_kiosk', 'telephone_box', 'phone_box', 'k6', 'telephone_kiosk'],
+  bus_shelter: ['bus_shelter'], bus_stop: ['bus_stop', 'bus_stop_pole', 'bus_stop_flag'], signal: ['traffic_signal', 'traffic_light', 'signal_pole', 'traffic_signals'],
+  belisha: ['belisha_beacon', 'belisha'], signpost: ['signpost', 'fingerpost', 'guidepost'], railing: ['promenade_railing', 'railing', 'railing_section'],
+  shelter: ['seafront_shelter', 'promenade_shelter', 'shelter'],
+};
+const WSMP = { idx: null, place: [], landmark: new Map() };
+function townPropIndex() {
+  if (WSMP.idx) return WSMP.idx; WSMP.idx = new Map();
+  if (typeof WSM_PROPS === 'undefined' || !WSM_PROPS || !WSM_PROPS.length) return WSMP.idx;
+  for (let i = 0; i < WSM_PROPS.length; i++) {
+    const p = (WSM_PROPS[i].meta && WSM_PROPS[i].meta.prop) || {}, nm = String(p.name || '').toLowerCase(), kd = String(p.kind || '').toLowerCase();
+    if (kd === 'landmark' || kd.startsWith('landmark')) { WSMP.landmark.set(nm, i); continue; }
+    for (const [k, names] of Object.entries(WSMP_KINDS)) if (names.includes(kd) || names.includes(nm)) { if (!WSMP.idx.has(k)) WSMP.idx.set(k, i); }
+  }
+  return WSMP.idx;
+}
+// a prop for a placement kind (index into WSM_PROPS) or -1; place(kind, x, y, z, facing angle (the X axis))
+function townProp(kind) { const i = townPropIndex().get(kind); return i === undefined ? -1 : i; }
+function townPropPut(i, x, y, z, yaw) { WSMP.place.push(i, x, y, z, yaw); }
+async function townPropChunks(i) {
+  const e = WSM_PROPS[i], M = e.meta, buf = await bcInflate(e.b64), out = { sc: 1 / M.scale, body: [], glass: [], anchor: (M.prop && M.prop.anchor) || [0, 0, 0] }; let off = 0;
+  for (const ch of M.chunks) {
+    if (ch.mirror) continue;                     // (no mirrored chunks in the props)
+    const nv = ch.nv, ni = ch.ni;
+    const pos = new Int16Array(buf, off, nv * 3); off = (off + nv * 6 + 3) & ~3;
+    const nrm = new Int8Array(buf, off, nv * 4); off += nv * 4;
+    if (ch.uv) off += nv * 8;
+    const idx = ch.i32 ? new Uint32Array(buf, off, ni) : new Uint16Array(buf, off, ni); off = (off + ni * (ch.i32 ? 4 : 2) + 3) & ~3;
+    (ch.t === 'glass' ? out.glass : out.body).push([ch, pos, nrm, idx]);
+  }
+  return out;
+}
+function townPropEmit(mb, gl, md) {
+  const sc = md.sc, an = md.anchor;
+  const emit = (dst, [ch, pos, nrm, idx]) => {
+    const c = ch.c || [1, 1, 1], v0 = dst.nv; dst.mat(ch.id, ch.a || 0); dst.color(c[0], c[1], c[2]);
+    for (let q = 0; q < ch.nv; q++) dst.v(pos[q * 3] * sc - an[0], pos[q * 3 + 1] * sc - an[1], pos[q * 3 + 2] * sc - an[2], nrm[q * 4], nrm[q * 4 + 1], nrm[q * 4 + 2], 1, 0);
+    for (let q = 0; q < ch.ni; q += 3) dst.tri(v0 + idx[q], v0 + idx[q + 1], v0 + idx[q + 2]);
+  };
+  for (const c of md.body) emit(mb, c);
+  for (const c of md.glass) emit(gl, c);
+}
+// landmarks: the OSM building b whose model is loaded (by its landmark name) is not drawn; the model stands at the
+// footprint's centroid, facing the road (the building's street front)
+const WSM_LANDMARKS = ['', 'odeon', 'winter_gardens', 'town_hall', 'knightstone_baths', 'knightstone_opera_house', 'tropicana', 'birnbeck_pier', 'birnbeck_lifeboat_station', 'grand_atlantic_hotel', 'royal_hotel', 'weston_museum', 'playhouse', 'grand_pier_pavilion'];
+function townLandmarkProp(b) {
+  const T = TOWN; if (!T.lmkOf) { T.lmkOf = new Map(); const L = T.lmk; if (L) for (let q = 0; q < L.length; q += 3) T.lmkOf.set(L[q] | (L[q + 1] << 8), L[q + 2]); }
+  const code = T.lmkOf.get(b); if (!code) return -1; townPropIndex();
+  const i = WSMP.landmark.get(WSM_LANDMARKS[code]); return i === undefined ? -1 : i;
+}
+function townLandmarkFrame(b) {   // [centroid x, z, ground y, facing angle]
+  const T = TOWN, B = T.bd, k0 = B.off[b], n = B.off[b + 1] - k0; let cx = 0, cz = 0, ar = 0, gmin = 1e9;
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n, x0 = B.p[(k0 + i) * 2], z0 = B.p[(k0 + i) * 2 + 1], x1 = B.p[(k0 + j) * 2], z1 = B.p[(k0 + j) * 2 + 1], c = x0 * z1 - x1 * z0; ar += c; cx += (x0 + x1) * c; cz += (z0 + z1) * c; gmin = Math.min(gmin, hfAt(x0, z0)); }
+  cx /= 3 * ar; cz /= 3 * ar;
+  let yaw = 0; const e = T.bfront ? T.bfront[b] : 255;
+  if (e !== 255 && e < n) { const ax = B.p[(k0 + e) * 2], az = B.p[(k0 + e) * 2 + 1], bx = B.p[(k0 + (e + 1) % n) * 2], bz = B.p[(k0 + (e + 1) % n) * 2 + 1], L = Math.hypot(bx - ax, bz - az) || 1; yaw = Math.atan2(-(bx - ax) / L, (bz - az) / L); }
+  return [cx, cz, gmin, yaw];
+}
+async function townPropsBuild() {
+  const P = WSMP.place; if (!P.length || typeof WSM_PROPS === 'undefined') return;
+  const fam = WSMP.fam = mkFamily('wsmProps', { src: 'mat_car', noCube: true, defs: { BCAR: '', OXA: '', RADIAL: '', TRAFFIC: '', PAINT_ALB: 'in.col.rgb', PAINT_MET: '0.3' } });
+  const set = WSMP.set = new MeshSet(fam), glass = WSMP.glass = new GlassSet(), models = new Map(), cells = new Map();
+  for (let q = 0; q < P.length; q += 5) { const i = P[q], big = WSM_PROPS[i].meta.prop && String(WSM_PROPS[i].meta.prop.kind || '').startsWith('landmark'); const k = (big ? 'L' : '') + Math.floor(P[q + 1] / 128) + ',' + Math.floor(P[q + 3] / 128); let l = cells.get(k); if (!l) cells.set(k, l = []); l.push(q); if (!models.has(i)) models.set(i, await townPropChunks(i)); }
+  let tris = 0; const t = m4();
+  for (const [k, list] of cells) {
+    const mb = new MeshBuilder(1 << 16), gl = new MeshBuilder(1 << 12);
+    for (const q of list) { const md = models.get(P[q]), c = Math.cos(P[q + 4]), s = Math.sin(P[q + 4]); t.fill(0); t[0] = c; t[2] = s; t[5] = 1; t[8] = -s; t[10] = c; t[12] = P[q + 1]; t[13] = P[q + 2]; t[14] = P[q + 3]; t[15] = 1; mb.push(t); gl.push(t); townPropEmit(mb, gl, md); mb.pop(); gl.pop(); }
+    if (!mb.ni) continue;
+    const mesh = mb.upload(); set.add(mesh, 0, 3, k[0] === 'L' ? 3000 : 350); tris += mesh.count / 3; if (gl.ni) glass.add_(gl.upload(), 0);
+  }
+  R.drawables.push({ draw(pass, ctx) {
+    if (ctx.kind === KIND.SHADOW && ctx.cascade === 3) return;
+    if (!WSMP.bg) { if (!fam.bgl3) return; const tex = mkTex(4, 4, 'rgba8unorm-srgb', TU.TB | TU.CD); G.dev.queue.writeTexture({ texture: tex }, new Uint8Array(64).fill(255), { bytesPerRow: 16 }, [4, 4]); WSMP.bg = G.dev.createBindGroup({ layout: fam.bgl3, entries: [{ binding: 0, resource: tex.createView() }] }); }
+    pass.setBindGroup(3, WSMP.bg); set.draw(pass, ctx);
+  } });
+  R.transparents.push(glass);
+  TOWNW.stats.props = { models: models.size, placed: P.length / 5, tris: Math.round(tris) };
+}
+if (TOWN.on && WORLD.active) queueMicrotask(() => BUILD.push(async () => { await townPropsBuild(); }));
+
 // ---------------------------------------------------------------- street furniture and boundaries
 // OSM's street furniture where it is mapped (bus stops, crossings, benches, bins, bollards, post boxes, phone boxes,
 // signals, gates, signposts...), and the defaults the map leaves out: street lamps along every lit street (ornate
@@ -1097,6 +1191,9 @@ function townFurnitureBuild(mb, rs) {
     return NR[2] < rmax;
   };
   const rot = (x, z, a) => mb.push(m4mul(m4(), m4translate(m4(), x, 0, z), m4rotY(m4(), -a)));
+  // (a Blender prop of that kind where one is loaded, facing yaw; else the placeholder below, as a job)
+  const put = (kind, x, y, z, yaw, job, dist) => { const i = townProp(kind); if (i >= 0) townPropPut(i, x, y, z, yaw); else townJob(x, z, job, dist); };
+  const faceYaw = () => Math.atan2(NR[3] * -NR[0], NR[3] * NR[1]);   // (the X axis towards the nearest road, after nearRoad)
   // ---- the pieces (in a local frame: x along, z across, y up from the ground at y0)
   const lampModern = (x, z, a, y0) => {          // 8 m galvanised column, a short arm and a flat LED lantern over the road
     rot(x, z, a); mb.mat(13, 120).color(0.46, 0.47, 0.47, 1); mb.cyl(0, y0, 0, 0.085, y0 + 8, 0.06, 6, false, true);
@@ -1214,15 +1311,15 @@ function townFurnitureBuild(mb, rs) {
     // (a point mapped on the carriageway itself is moved to the kerb: bus stops, signals, signs stand on the pavement)
     const toKerb = (extra) => { if (on && NR[2] < NR[5] + 0.4) { const sd = NR[3] || 1; px = x + (-NR[1]) * sd * (NR[5] + extra - NR[2]) * 1; pz = z + NR[0] * sd * (NR[5] + extra - NR[2]); } };
     const face = () => on ? Math.atan2(NR[1], NR[0]) + (NR[3] > 0 ? PI : 0) : 0;   // (turned towards the road)
-    const J = (f, d) => townJob(px, pz, f, d || 300), fa = face(), gp = gy(px, pz);
-    if (c === FN.LAMP) { toKerb(0.6); const X = px, Zz = pz, A = face() + PI / 2, Y = gy(px, pz); townJob(X, Zz, () => lampModern(X, Zz, A, Y), 450); lampsAt.push(px, pz); }
-    else if (c === FN.BENCH) { const sea = px < 230 && pz > -1000 && pz < 2700 && zoneAt(px - 12, pz) === TZ.SAND; J(() => bench(px, pz, sea ? PI / 2 : fa, gp, sea)); }
-    else if (c === FN.BIN) J(() => bin(px, pz, gp), 200);
-    else if (c === FN.BOLLARD) J(() => bollard(px, pz, gp), 200);
-    else if (c === FN.BUS) { toKerb(0.5); const X = px, Zz = pz, A = face(), Y = gy(px, pz); townJob(X, Zz, () => busStop(X, Zz, A, Y, sub & 1), 350); }
-    else if (c === FN.POST) { toKerb(0.6); const X = px, Zz = pz, Y = gy(px, pz); townJob(X, Zz, () => postBox(X, Zz, Y), 250); }
-    else if (c === FN.PHONE) { toKerb(0.9); const X = px, Zz = pz, A = face(), Y = gy(px, pz); townJob(X, Zz, () => phoneBox(X, Zz, A, Y), 300); }
-    else if (c === FN.GUIDE || c === FN.INFO) { toKerb(0.6); const X = px, Zz = pz, Y = gy(px, pz); townJob(X, Zz, () => guidepost(X, Zz, a, Y), 250); }
+    const J = (f, d) => townJob(px, pz, f, d || 300), fa = face(), gp = gy(px, pz), fy = on ? faceYaw() : 0;
+    if (c === FN.LAMP) { toKerb(0.6); const X = px, Zz = pz, A = face() + PI / 2, Y = gy(px, pz); put('lamp_modern', X, Y, Zz, fy, () => lampModern(X, Zz, A, Y), 450); lampsAt.push(px, pz); }
+    else if (c === FN.BENCH) { const sea = px < 230 && pz > -1000 && pz < 2700 && zoneAt(px - 12, pz) === TZ.SAND; put('bench', px, gp, pz, sea ? PI : fy, () => bench(px, pz, sea ? PI / 2 : fa, gp, sea)); }
+    else if (c === FN.BIN) put('bin', px, gp, pz, fy, () => bin(px, pz, gp), 200);
+    else if (c === FN.BOLLARD) put('bollard', px, gp, pz, fy, () => bollard(px, pz, gp), 200);
+    else if (c === FN.BUS) { toKerb(0.5); const X = px, Zz = pz, A = face(), Y = gy(px, pz), sh = sub & 1, kd = sh && townProp('bus_shelter') >= 0 ? 'bus_shelter' : 'bus_stop'; put(kd, X, Y, Zz, fy, () => busStop(X, Zz, A, Y, sh), 350); }
+    else if (c === FN.POST) { toKerb(0.6); const X = px, Zz = pz, Y = gy(px, pz); put('post_box', X, Y, Zz, fy, () => postBox(X, Zz, Y), 250); }
+    else if (c === FN.PHONE) { toKerb(0.9); const X = px, Zz = pz, A = face(), Y = gy(px, pz); put('phone', X, Y, Zz, fy, () => phoneBox(X, Zz, A, Y), 300); }
+    else if (c === FN.GUIDE || c === FN.INFO) { toKerb(0.6); const X = px, Zz = pz, Y = gy(px, pz); put('signpost', X, Y, Zz, fy, () => guidepost(X, Zz, a, Y), 250); }
     else if (c === FN.CYCLES) J(() => cycles(px, pz, a, gp), 200);
     else if (c === FN.MEMORIAL) J(() => memorial(px, pz, gp), 500);
     else if (c === FN.CABINET) { toKerb(0.5); const X = px, Zz = pz, A = face(), Y = gy(px, pz); townJob(X, Zz, () => cabinet(X, Zz, A, Y), 200); }
@@ -1231,8 +1328,8 @@ function townFurnitureBuild(mb, rs) {
     else if ((c === FN.SIGNALS || c === FN.CROSSING || c === FN.GIVEWAY || c === FN.STOP) && on) {
       // on the road: a pole on each kerb, facing the traffic (signals, crossings), the give-way or stop sign on the near side
       const tx = NR[0], tz = NR[1], hw = NR[5], nx = -tz, nz = tx;
-      if (c === FN.SIGNALS || (c === FN.CROSSING && sub === 2)) for (const sd of [-1, 1]) { const qx = x + nx * sd * (hw + 0.6) - tx * sd * 2.5, qz = z + nz * sd * (hw + 0.6) - tz * sd * 2.5, A = a + (sd > 0 ? 0 : PI), Y = gy(qx, qz); townJob(qx, qz, () => signalHead(qx, qz, A, Y, 3.2), 400); }
-      else if (c === FN.CROSSING && sub === 1) for (const sd of [-1, 1]) { const qx = x + nx * sd * (hw + 0.5), qz = z + nz * sd * (hw + 0.5), Y = gy(qx, qz); townJob(qx, qz, () => belisha(qx, qz, Y), 350); }
+      if (c === FN.SIGNALS || (c === FN.CROSSING && sub === 2)) for (const sd of [-1, 1]) { const qx = x + nx * sd * (hw + 0.6) - tx * sd * 2.5, qz = z + nz * sd * (hw + 0.6) - tz * sd * 2.5, A = a + (sd > 0 ? 0 : PI), Y = gy(qx, qz); put('signal', qx, Y, qz, A + PI, () => signalHead(qx, qz, A, Y, 3.2), 400); }   // (X: towards the traffic it faces)
+      else if (c === FN.CROSSING && sub === 1) for (const sd of [-1, 1]) { const qx = x + nx * sd * (hw + 0.5), qz = z + nz * sd * (hw + 0.5), Y = gy(qx, qz); put('belisha', qx, Y, qz, Math.atan2(-nz * sd, -nx * sd), () => belisha(qx, qz, Y), 350); }
       else if (c === FN.GIVEWAY || c === FN.STOP) { const qx = x - nx * (hw + 0.7), qz = z - nz * (hw + 0.7), A = a + PI / 2, Y = gy(qx, qz); townJob(qx, qz, () => signPost(qx, qz, A, Y, c), 300); }
     }
     nf++;
@@ -1263,7 +1360,7 @@ function townFurnitureBuild(mb, rs) {
           const o = hw + (pave ? Math.min(pave - 0.35, 0.6) : 0.9), x = cx + nx * sd * o, z = cz + nz * sd * o, zc = zoneAt(x, z);
           if (zc === TZ.ROAD || zc === TZ.BLD || zc === TZ.WATER || zc === TZ.OUT || lampNear(x, z)) continue;
           if (seafront(x, z)) continue;          // (the promenade has its own)
-          const A = Math.atan2(tz, tx) + (sd > 0 ? -PI / 2 : PI / 2), Y = gy(x, z); townJob(x, z, () => lampModern(x, z, A, Y), 450); lampsAt.push(x, z); nl++;
+          const A = Math.atan2(tz, tx) + (sd > 0 ? -PI / 2 : PI / 2), Y = gy(x, z); put('lamp_modern', x, Y, z, Math.atan2(-nz * sd, -nx * sd), () => lampModern(x, z, A, Y), 450); lampsAt.push(x, z); nl++;
         }
         side = -side;
       }
@@ -1278,7 +1375,12 @@ function townFurnitureBuild(mb, rs) {
     let nx = -tz, nz = tx; if (hfAt(mx + nx * 4, mz + nz * 4) > hfAt(mx - nx * 4, mz - nz * 4)) { nx = -nx; nz = -nz; }   // n: towards the beach
     if (!seafront(mx, mz)) continue;
     const pr = Math.floor((ax * tx + az * tz) / 26), pr2 = Math.floor((bx * tx + bz * tz) / 26);
-    if (pr !== pr2) { const x = mx - nx * 1.4, z = mz - nz * 1.4, zc = zoneAt(x, z); if (zc !== TZ.ROAD && zc !== TZ.BLD && !lampNear(x, z)) { const A = Math.atan2(tz, tx), Y = hfAt(x, z) + TZH[zc]; townJob(x, z, () => lampVictorian(x, z, A, Y), 500); lampsAt.push(x, z); ns++; } }
+    if (pr !== pr2) { const x = mx - nx * 1.4, z = mz - nz * 1.4, zc = zoneAt(x, z); if (zc !== TZ.ROAD && zc !== TZ.BLD && !lampNear(x, z)) { const A = Math.atan2(tz, tx), Y = hfAt(x, z) + TZH[zc]; put('lamp_victorian', x, Y, z, Math.atan2(-nz, -nx), () => lampVictorian(x, z, A, Y), 500); lampsAt.push(x, z); ns++; } }
+    if (townProp('railing') >= 0) {   // (the Blender railing sections, end to end along the coping, facing the promenade)
+      const ri_ = townProp('railing'), sz = (WSM_PROPS[ri_].meta.prop && WSM_PROPS[ri_].meta.prop.size) || [0.2, 1.1, 2.5], seg = Math.max(0.5, sz[2] || 2.5), m = Math.max(1, Math.round(L / seg));
+      for (let e = 0; e < m; e++) { const f = (e + 0.5) / m, x = ax + (bx - ax) * f - nx * 0.25, z = az + (bz - az) * f - nz * 0.25; townPropPut(ri_, x, top, z, Math.atan2(-nz, -nx)); }
+      continue;
+    }
     // railings on the coping (painted the seafront's green)
     townJob(mx, mz, () => { rot(mx, mz, Math.atan2(tz, tx)); const ox = -0.25;
       mb.mat(13, 100).color(0.07, 0.2, 0.17, 1); mb.box(0, top + 0.95, ox, L, 0.05, 0.05); mb.box(0, top + 0.5, ox, L, 0.04, 0.04); mb.box(-L / 2, top + 0.5, ox, 0.06, 1.0, 0.06);

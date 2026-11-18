@@ -73,6 +73,7 @@ async function townLoad() {
   T.rh = A.rh || null;                   // road heights at the vertices (LIDAR DTM, dm; -32768: none)
   // per building (bake, LIDAR): the edge facing the street (255: none); chimney stacks and dormers, by building
   T.bfront = A.bfront || null;
+  T.lmk = A.lmk || null;                 // landmark buildings: [index lo, index hi, code] (WSM_LANDMARKS in 34_wsm_world.js)
   T.chim = A.chxz ? { xz: A.chxz, b: A.chb, h: A.chh, n: A.chb.length } : null;
   // street furniture from OSM (x, z cm; code, sub-code: see FURN in the bake) and boundaries (walls, fences, hedges:
   // polylines + code, height dm, material)

@@ -568,7 +568,7 @@ def bake_caravans(areas, bl, lidar, lu_lookup, log):
                 ht = float(min(3.6, max(2.4, np.percentile(chm[cj.astype(int), ci.astype(int)], 70) - 0.35)))
                 ang = math.remainder(math.atan2(uz, ux), math.pi)
                 if ang < 0: ang += math.pi
-                out.append((cx, cz, ring2, 0, ht, 1, ang, hc, lu_lookup(cx, cz), 0.22, 1, [], [], 255))
+                out.append((cx, cz, ring2, 0, ht, 1, ang, hc, lu_lookup(cx, cz), 0.22, 1, [], [], 255, 0))
     log(f'static caravans from the LIDAR: {len(out)} on {nsite} caravan sites')
     return out
 
@@ -891,6 +891,20 @@ def roof_fit(r, ang, lidar, ground=None):
     return out
 
 
+# landmark buildings (by their OSM names): their own models replace them in the game (36_wsm_props.js)
+LANDMARKS = [('plaza weston', 1, 'odeon'), ('odeon', 1, 'odeon'), ('winter gardens', 2, 'winter_gardens'), ('town hall', 3, 'town_hall'),
+             ('knightstone baths', 4, 'knightstone_baths'), ('knightstone opera', 5, 'knightstone_opera_house'), ('tropicana', 6, 'tropicana'),
+             ('birnbeck pier', 7, 'birnbeck_pier'), ('old lifeboat station', 8, 'birnbeck_lifeboat_station'), ('grand atlantic', 9, 'grand_atlantic_hotel'),
+             ('royal hotel', 10, 'royal_hotel'), ('weston museum', 11, 'weston_museum'), ('the playhouse', 12, 'playhouse'), ('grand pier main pavilion', 13, 'grand_pier_pavilion')]
+
+
+def landmark_code(t):
+    nm = (t.get('name', '') + ' ' + t.get('old_name', '')).lower()
+    for key, code, _ in LANDMARKS:
+        if key in nm: return code
+    return 0
+
+
 def front_edge(r, roadgrid):
     """index of the footprint edge that faces the nearest road (its outward normal towards it), or 255"""
     best, bi = 1e9, 255
@@ -1090,7 +1104,7 @@ def bake_buildings(buildings, roadgrid, lu_lookup, log, lidar=None, decks=()):
         look = landmark_look(t)
         if look == 0 and kind in (0, 1) and math.hypot(cx - 1764, cz + 1891) < 330 and hc % 3: look = 4    # Kewstoke's old stone cottages
         if 'New Inn' in t.get('name', ''): look = 4
-        out.append((cx, cz, r, kind, h, roof, ridge, hc, lu, rise, look, rf['chim'] if rf else [], rf['dorm'] if rf else [], fe))
+        out.append((cx, cz, r, kind, h, roof, ridge, hc, lu, rise, look, rf['chim'] if rf else [], rf['dorm'] if rf else [], fe, landmark_code(t)))
     rk = collections.Counter(b[5] for b in out)
     log(f'roofs: {rk.get(0, 0)} flat, {rk.get(1, 0)} gabled, {rk.get(2, 0)} hipped, {rk.get(4, 0)} half-hipped, {rk.get(3, 0)} ruins; '
         f'{sum(len(b[11]) for b in out)} chimney stacks, {sum(len(b[12]) for b in out)} dormers, {sum(1 for b in out if b[13] != 255)} street fronts')
@@ -1397,6 +1411,9 @@ def main():
     # per building: the edge facing the street; chimney stacks (x, z cm; building; top dm; size dm); dormers (x, z cm;
     # building; width dm; top dm; side of the ridge)
     blob.add('bfront', np.asarray([b[13] for b in bl], 'u1'))
+    lm = [(i, b[14]) for i, b in enumerate(bl) if b[14]]
+    if lm: blob.add('lmk', np.asarray([[i & 255, i >> 8, c] for i, c in lm], 'u1').ravel())
+    log('landmarks: ' + ', '.join(next(n for _, c2, n in LANDMARKS if c2 == c) for _, c in lm))
     ch = [(x, z, bi_, tp, sz) for bi_, b in enumerate(bl) for x, z, tp, sz in b[11]]
     if ch:
         blob.add('chxz', np.asarray([[int(round(x * 100)), int(round(z * 100))] for x, z, _, _, _ in ch], '<i4').ravel())

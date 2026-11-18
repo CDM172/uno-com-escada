@@ -52,13 +52,16 @@ fn surf(in: V2F, ff: bool) -> Surface {
   let nz = vegNoise(in.pos.xy);
   var keep = 1.0 - in.ext.x;
   let dcam = distance(in.wpos, F.camPos.xyz);
-  keep *= sat((dcam - 1.0) / 2.2);
+  // foliage very close to the lens fades out (a TV camera behind a bush); bark only right at the lens
+  keep *= select(sat((dcam - 0.3) / 0.4), sat((dcam - 1.0) / 2.2), matId(in.mat) == 1u);
   var s = surfDefault(normalize(in.nrm));
   if (matId(in.mat) == 1u) {
     let ai = min((in.mat >> 16u) & 255u, VEG_NA_UK - 1u); let pm = VEG_UKM[ai]; let pv = VEG_UKV[ai];
     let t = textureSample(tLeaf, sLeaf, in.uv);
     keep *= vegCover(t.a, 0.5);
-    if (in.ext.w < VEG_D0) { keep *= sat((dcam - 3.0) / 5.0); }
+    // a card a few metres from the lens (its texture magnified too much) fades out and the single leaves stay; not the
+    // face of a clipped hedge (it is the surface: behind it are only its stems)
+    if (in.ext.w < VEG_D0 && pv.w < 1.5) { keep *= sat((dcam - 1.5) / 3.5); }
     if (keep <= nz) { discard; }
     let ao = in.col.a;
     var geo = normalize(cross(dpdx(in.wpos), dpdy(in.wpos))); if (dot(geo, s.normal) < 0.0) { geo = -geo; }
@@ -83,10 +86,15 @@ fn surf(in: V2F, ff: bool) -> Surface {
     // gloss: waxy evergreen leaves (holly, holm oak, laurel, ivy, privet) catch the sun, the rest is matt (VEG_UKM.x)
     s.rough = mix(0.95, mix(0.7, 0.42, pm.x), smoothstep(0.7 - pm.x * 0.35, 0.85, cell) * ao); s.ao = max(ao, 0.58) * mix(0.88, 1.0, nearK);
     // back of the leaf: lighter and matt; silver-felted undersides (holm oak, sea buckthorn: VEG_UKM.z)
-    if (!ff) { s.albedo = mix(s.albedo * vec3f(1.06, 1.08, 0.94), vec3f(dot(s.albedo, vec3f(0.33)) * 1.5 + 0.02), pm.z); s.rough = 0.98; }
+    if (!ff) { s.albedo = mix(s.albedo * vec3f(1.06, 1.08, 0.94), vec3f(dot(s.albedo, vec3f(0.33)) * 1.4 + 0.01), pm.z * 0.5); s.rough = 0.98; }
   } else {
     if (keep <= nz) { discard; }
-    let bt = min((in.mat >> 16u) & 255u, 15u); let vr = f32((in.mat >> 24u) & 255u) / 255.0; let N = s.normal;
+    let bt = min((in.mat >> 16u) & 255u, 15u); let N = s.normal;
+    // variant up the stem (interpolated, unlike the flat mat bytes): Scots pine's orange upper bark comes in the vertex
+    // colour; birch's black, fissured foot is the first ~2.5 m
+    var vr = 0.0;
+    if (bt == 5u) { vr = sat((in.col.r - in.col.b - 0.06) / 0.3); }
+    if (bt == 7u) { vr = 1.0 - smoothstep(0.4, 2.8, in.ext.z); }
     let B4 = UK_BK[bt]; let style = u32(B4.w);
     var sc = B4.xy; var depth = B4.z;
     if (bt == 5u) { sc = mix(sc, vec2f(0.9, 0.5), vr); depth = mix(depth, 0.32, vr); }   // Scots pine: thin papery flakes up the stem
@@ -108,9 +116,12 @@ fn surf(in: V2F, ff: bool) -> Surface {
       hx = textureSample(tNoise, sLin, q + vec2f(e, 0.0)).r * 0.6 + textureSample(tNoise, sLin, q2 + vec2f(e * 3.1, 0.0)).g * 0.4;
       hy = textureSample(tNoise, sLin, q + vec2f(0.0, e)).r * 0.6 + textureSample(tNoise, sLin, q2 + vec2f(0.0, e * 2.3)).g * 0.4;
     } else {
-      h0 = textureSample(tNoise, sLin, q).b * 0.72 + textureSample(tNoise, sLin, q2).b * 0.28;
-      hx = textureSample(tNoise, sLin, q + vec2f(e, 0.0)).b * 0.72 + textureSample(tNoise, sLin, q2 + vec2f(e * 3.1, 0.0)).b * 0.28;
-      hy = textureSample(tNoise, sLin, q + vec2f(0.0, e)).b * 0.72 + textureSample(tNoise, sLin, q2 + vec2f(0.0, e * 2.3)).b * 0.28;
+      // plates and fissures: a sharpened cellular profile (crisp dark cracks between raised plates) plus fine cracks
+      let q3 = uvb * sc * vec2f(8.3, 6.1) + wr * 0.3;
+      h0 = textureSample(tNoise, sLin, q).b * 0.7 + textureSample(tNoise, sLin, q2).b * 0.22 + textureSample(tNoise, sLin, q3).b * 0.08;
+      hx = textureSample(tNoise, sLin, q + vec2f(e, 0.0)).b * 0.7 + textureSample(tNoise, sLin, q2 + vec2f(e * 3.1, 0.0)).b * 0.22 + textureSample(tNoise, sLin, q3 + vec2f(e * 8.3, 0.0)).b * 0.08;
+      hy = textureSample(tNoise, sLin, q + vec2f(0.0, e)).b * 0.7 + textureSample(tNoise, sLin, q2 + vec2f(0.0, e * 2.3)).b * 0.22 + textureSample(tNoise, sLin, q3 + vec2f(0.0, e * 6.1)).b * 0.08;
+      h0 = smoothstep(0.22, 0.68, h0); hx = smoothstep(0.22, 0.68, hx); hy = smoothstep(0.22, 0.68, hy);
     }
     let g = vec2f(hx - h0, hy - h0) / e * 0.034 * depth;
     let dp1 = dpdx(in.wpos); let dp2 = dpdy(in.wpos); let du1 = dpdx(q); let du2 = dpdy(q);
@@ -124,18 +135,18 @@ fn surf(in: V2F, ff: bool) -> Surface {
     let hue = textureSample(tNoise, sLin, uvb * vec2f(0.13, 0.031) + 0.7).g;
     if (style == 3u) {
       // flaking: patches of fresher bark (plane: cream and olive camouflage; sycamore: pinkish-orange scars)
-      let pc = textureSample(tNoise, sLin, uvb * sc * 0.7 + 0.31).b; let pid = fract(pc * 7.3 + wr.y);
-      let flake = smoothstep(0.5, 0.56, pc);
-      var pcol = mix(vec3f(1.55, 1.45, 1.05), vec3f(1.05, 1.08, 0.72), step(0.5, pid));
+      let f1 = textureSample(tNoise, sLin, uvb * sc * 2.2 + 0.31).r; let f2 = textureSample(tNoise, sLin, uvb * sc * 2.9 + vec2f(0.57, 0.13)).g;
+      let e1 = smoothstep(0.52, 0.535, f1); let e2 = smoothstep(0.55, 0.565, f2);
+      var pcol = mix(vec3f(1.6, 1.5, 1.1), vec3f(1.0, 1.06, 0.7), e2);   // plane: cream, olive-green, the old grey-brown
       if (bt != 8u) { pcol = vec3f(1.25, 1.02, 0.85); }
-      col = mix(col, col * pcol, flake * select(0.45, 1.0, bt == 8u));
+      col = mix(col, col * pcol, max(e1, e2 * 0.8) * select(0.45, 1.0, bt == 8u));
       k = mix(k, 1.0, 0.5);
     }
     if (style == 4u) {
       // horizontal lenticels (birch) / leaf-scar rings (cordyline)
-      let ln = abs(fract(uvb.y * select(9.0, 26.0, bt == 11u) + wr.x * 2.0) - 0.5);
-      let dash = smoothstep(0.42, 0.5, textureSample(tNoise, sLin, uvb * vec2f(1.7, 0.9)).r);
-      let lent = (1.0 - smoothstep(0.03, 0.08, ln)) * select(dash, 1.0, bt == 11u);
+      let ln = abs(fract(uvb.y * select(7.0, 26.0, bt == 11u) + wr.x * 3.0 + textureSample(tNoise, sLin, uvb * vec2f(0.9, 0.3)).g * 1.5) - 0.5);
+      let dash = smoothstep(0.55, 0.62, textureSample(tNoise, sLin, uvb * vec2f(2.6, 1.3)).r);
+      let lent = (1.0 - smoothstep(0.025, 0.07, ln)) * select(dash, 1.0, bt == 11u);
       k *= 1.0 - lent * select(0.75, 0.35, bt == 11u);
       if (bt == 7u) { k = mix(k, k * 0.22 * (0.6 + 0.8 * ridge), smoothstep(0.35, 0.8, vr * (0.7 + 0.6 * h0))); }   // the black, fissured base
     }
@@ -143,7 +154,8 @@ fn surf(in: V2F, ff: bool) -> Surface {
     let vein = textureSample(tNoise, sLin, uvb * vec2f(1.9, 0.05)).g;
     k *= mix(0.78, 1.1, smoothstep(0.35, 0.62, vein)) * mix(0.55, 1.0, smoothstep(0.0, 1.8, in.ext.z));
     // green algae and lichen: the damp side of the stems in the woods (strongest on smooth barks), moss at the foot
-    let moss = smoothstep(0.46, 0.72, wr.y + (1.0 - sat(in.ext.z * 0.2)) * 0.26 + sat(N.y) * 0.25 + sat(-N.x) * 0.12) * 0.55;
+    let smoothB = bt == 1u || bt == 7u || bt == 8u || bt == 12u;
+    let moss = smoothstep(0.5, 0.76, wr.y + (1.0 - sat(in.ext.z * 0.4)) * 0.24 + sat(N.y) * 0.25 + sat(-N.x) * 0.1) * select(0.38, 0.28, smoothB);
     var alb = col * mix(vec3f(1.08, 0.95, 0.85), vec3f(0.92, 0.98, 1.06), smoothstep(0.3, 0.7, hue)) * k * 0.56;
     alb = mix(alb, vec3f(0.07, 0.1, 0.03) * (0.6 + 0.8 * h0), moss);
     // ivy up the trunk on part of the trees (per tree, from its seed; the share per species is VEG_UKM.w): dark glossy

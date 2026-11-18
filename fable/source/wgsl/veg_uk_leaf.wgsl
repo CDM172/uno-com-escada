@@ -37,10 +37,10 @@ fn vert(in: VIn) -> VSOut {
 // 15 narrow linear, silvery (sea buckthorn)
 // per type: (gloss, translucency, silvery underside, vein strength)
 const UK_LT = array<vec4f, 16>(
-  vec4f(0.45, 0.8, 0.0, 1.0), vec4f(0.5, 1.0, 0.0, 1.0), vec4f(0.15, 1.0, 0.0, 0.8), vec4f(0.2, 0.95, 0.0, 1.0),
+  vec4f(0.3, 0.8, 0.0, 1.0), vec4f(0.5, 1.0, 0.0, 1.0), vec4f(0.15, 1.0, 0.0, 0.8), vec4f(0.2, 0.95, 0.0, 1.0),
   vec4f(0.15, 1.1, 0.0, 1.2), vec4f(0.15, 1.1, 0.0, 1.0), vec4f(0.25, 1.15, 0.0, 0.7), vec4f(1.0, 0.35, 0.0, 0.6),
   vec4f(0.3, 0.45, 0.0, 0.0), vec4f(0.35, 0.8, 0.0, 0.3), vec4f(0.15, 1.05, 0.0, 1.2), vec4f(0.85, 0.5, 0.0, 1.0),
-  vec4f(0.2, 0.9, 0.0, 0.7), vec4f(0.2, 0.8, 0.0, 1.0), vec4f(0.6, 0.4, 0.75, 0.5), vec4f(0.1, 0.5, 0.6, 0.2));
+  vec4f(0.2, 0.9, 0.0, 0.7), vec4f(0.2, 0.8, 0.0, 1.0), vec4f(0.6, 0.4, 0.45, 0.5), vec4f(0.1, 0.5, 0.5, 0.2));
 fn ukTeeth(u: f32, n: f32, a: f32) -> f32 { return 1.0 - a * abs(fract(u * n) - 0.5) * 2.0; }
 // half width of the leaf at u (0 base, 1 tip), normalised: |v| < half = inside. v is needed by the needle tuft.
 fn leafHalf(u: f32, v: f32, t: u32) -> f32 {
