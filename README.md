@@ -106,9 +106,15 @@ The 1987 car, as winterised for the film, with these gadgets:
 
 The head-up display shows in the cockpit view while the weapons are in use. The physics follow published figures (2610 mm wheelbase, 5340 cc V8, about 400 bhp, ZF five-speed, 255/60 VR15 tyres), and its V8 is synthesised live with a cross-plane firing order.
 
+### More cars and easy handling (Fable version)
+
+Under the three main cars, **More cars** opens a list of 37 more cars, vans and trucks from the [openx-assets](https://github.com/vevalabs/openx-assets) library (Audi, BMW, Fiat, Honda, Hyundai, Iveco, Mercedes-Benz, Mini, Nissan, Tesla, Toyota, Volvo and others), or open the page with `?car=oxa:<id>`. Their physics come from each model's data (mass, size, axles, wheels, top speed, acceleration and braking), each borrows the nearest engine sound (the electric ones have a motor whine), and `C` cycles chase, bonnet, TV and roof cameras. They have no gadgets.
+
+**Easy handling** is on by default for every car: stability and traction control, ABS, smoother steering and throttle, more grip and help out of spins. **Realistic handling** (the menu row under Graphics, or `?handling=real`) gives the original physics.
+
 ### Weston-super-Mare (Fable version)
 
-Pick the map on the start screen (or `?map=wsm`). The town is built from OpenStreetMap: real streets and building footprints, terrain from elevation data, the beach, the Marine Lake and the Grand Pier. Laps run on a 3.5 km street circuit (Royal Parade, Knightstone Road, the Boulevard, Alexandra Parade, Station Road, Walliscote Road, Beach Road), and you can leave it to drive anywhere in town. The bake script is [`tools/osm/bake_wsm.py`](tools/osm/bake_wsm.py).
+Pick the map on the start screen (or `?map=wsm`). Parked cars line the streets and some traffic drives around town. The town is built from OpenStreetMap: real streets and building footprints, terrain from elevation data, the beach, the Marine Lake and the Grand Pier. Laps run on a 3.5 km street circuit (Royal Parade, Knightstone Road, the Boulevard, Alexandra Parade, Station Road, Walliscote Road, Beach Road), and you can leave it to drive anywhere in town. The bake script is [`tools/osm/bake_wsm.py`](tools/osm/bake_wsm.py).
 
 ## How it was made
 
@@ -146,6 +152,9 @@ Each command rewrites that version's `index.html`. `sh packaging/make_zip.sh` bu
 | `js/33_veg_*.js` | The forest: trees, grass and the far-away impostors |
 | `js/40_vehicle.js` | The car physics |
 | `js/41_gadgets*.js` | The DB5's and the V8's gadgets |
+| `js/40_assist.js` | Easy handling (driving aids) |
+| `js/28_oxa_data.js`, `js/30_car_f_oxa.js` | The 37 openx-assets cars (converted by `blender/oxa_build.py`) and their physics |
+| `js/43_traffic.js` | Parked cars and traffic in Weston-super-Mare |
 | `js/12_wsm_data.js`, `js/13_wsm_town.js`, `js/34_wsm_world.js` | Weston-super-Mare: baked map data, town builder, world |
 | `js/45_game.js` | Input, cameras and the scripted lap |
 | `js/50_som.js` | The sound, synthesised live |
@@ -171,7 +180,8 @@ Each command rewrites that version's `index.html`. `sh packaging/make_zip.sh` bu
 - DB5 body proportions measured from the "1965 Aston Martin DB5 Coupe" blueprint by [getoutlines.com](https://getoutlines.com/blueprints/12592/1965-aston-martin-db5-coupe-blueprints), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), and from FIA/RAC homologation form no. 186.
 - V8 Vantage body proportions measured from the "1983 Aston Martin V8 Vantage" blueprint by [getoutlines.com](https://getoutlines.com/blueprints/13815/1983-aston-martin-v8-vantage-coupe-blueprints), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 - Weston-super-Mare: map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL). Contains Environment Agency information © Environment Agency and/or database right (LIDAR, Open Government Licence v3.0). Terrain: AWS Terrain Tiles (Mapzen/Tilezen): UK terrain data © Environment Agency copyright and/or database right 2015; SRTM and GMTED2010 courtesy of the U.S. Geological Survey; ETOPO1 from NOAA; EU-DEM produced using Copernicus data.
-- This is an unofficial, non-commercial fan project. Aston Martin, DB5 and Vantage are trademarks of Aston Martin Lagonda Ltd; the project is not affiliated with or endorsed by Aston Martin or by the makers of the James Bond films.
+- The 37 extra cars, vans and trucks come from [openx-assets](https://github.com/vevalabs/openx-assets) by Dogan Ulus (MPL-2.0), based on Sketchfab models licensed CC BY 4.0 by razor24, Daniel Zhabotinsky, Lexyc16, wintrez, Max, andikapratamaw, kekomag, mk2design, Ajay Gawde, Armored Wave, Blue3D, Mehdi Lagzouli, myedsu and mormphy. The converted data file `fable/source/js/28_oxa_data.js` keeps their licence (MPL-2.0 AND CC-BY-4.0); each car's credits also show in the game's menu.
+- This is an unofficial, non-commercial fan project. Aston Martin, DB5 and Vantage are trademarks of Aston Martin Lagonda Ltd, and the other car names belong to their makers; the project is not affiliated with or endorsed by any of them or by the makers of the James Bond films.
 
 ## Licence
 

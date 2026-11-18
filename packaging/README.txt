@@ -46,6 +46,17 @@ update Chrome/Edge and your graphics driver, then open  chrome://gpu  (or  edge:
 and check that it says  "WebGPU: Hardware accelerated".
 
 
+MORE CARS AND HANDLING
+----------------------
+- "More cars" (under the three main cars on the start screen) opens 37 more cars,
+  vans and trucks from the openx-assets library. C cycles chase, bonnet, TV and
+  roof cameras for them; they have no gadgets.
+- Easy handling is on by default (stability and traction control, ABS, smoother
+  steering, help out of spins). Pick "Realistic handling" in the menu under Graphics
+  for the original physics.
+- In Weston-super-Mare, parked cars line the streets and some traffic drives around.
+
+
 CONTROLS
 --------
 Keyboard                              Gamepad
@@ -110,6 +121,9 @@ Credits
   "1983 Aston Martin V8 Vantage" blueprints by getoutlines.com, licensed CC BY 4.0:
   https://getoutlines.com/blueprints/12592/1965-aston-martin-db5-coupe-blueprints
   https://getoutlines.com/blueprints/13815/1983-aston-martin-v8-vantage-coupe-blueprints
+- The 37 extra vehicles: openx-assets by Dogan Ulus (MPL-2.0), based on Sketchfab
+  models licensed CC BY 4.0 by razor24, Daniel Zhabotinsky, Lexyc16, wintrez, Max, andikapratamaw, kekomag, mk2design, Ajay Gawde, Armored Wave, Blue3D, Mehdi Lagzouli, myedsu and mormphy.
+  https://github.com/vevalabs/openx-assets - each car's credits also show in the menu.
 - Weston-super-Mare: map data (c) OpenStreetMap contributors, ODbL
   (https://www.openstreetmap.org/copyright). Contains Environment Agency information
   (c) Environment Agency and/or database right (LIDAR, Open Government Licence v3.0).
@@ -119,6 +133,7 @@ Credits
 - The game engine, the circuit and the Fiat Uno come from the original
   "Uno com Escada" game (see LICENSE.md: PolyForm Noncommercial 1.0.0).
 
-This is an unofficial, non-commercial fan project. Aston Martin, DB5 and Vantage are trademarks
-of Aston Martin Lagonda Ltd; the project is not affiliated with or endorsed by
-Aston Martin or by the makers of the James Bond films.
+This is an unofficial, non-commercial fan project. Aston Martin, DB5 and Vantage are
+trademarks of Aston Martin Lagonda Ltd, and the other car names belong to their makers;
+the project is not affiliated with or endorsed by any of them or by the makers of the
+James Bond films.
