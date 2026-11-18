@@ -68,7 +68,7 @@ function townTerrainBuild(rs) {
     for (let q = 0; q < 4 && !p; q++) { const zi = Math.min(zw - 1, i * 2 - 1 + (q & 1)), zj = Math.min(T.zh - 1, j * 2 - 1 + (q >> 1)); if (zi < 0 || zj < 0) continue; const c = Z[zj * zw + zi]; if (c === TZ.ROAD || c === TZ.PAVE || c === TZ.KERB || c === TZ.PATH || c === TZ.TRACK) p = 1; }
     push[j * w + i] = p;
   }
-  for (let it = 0; it < 2; it++) {
+  for (let it = 0; it < 1; it++) {   // (2 m around the ribbons: the ground the car drives on beside the road is the ground drawn)
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { const k = j * w + i; tmp[k] = push[k] | (i > 0 ? push[k - 1] : 0) | (i < w - 1 ? push[k + 1] : 0); }
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { const k = j * w + i; push[k] = tmp[k] | (j > 0 ? tmp[k - w] : 0) | (j < h - 1 ? tmp[k + w] : 0); }
   }
@@ -76,14 +76,30 @@ function townTerrainBuild(rs) {
   const H = (px, pz) => {
     if (px >= HF.x0 && pz >= HF.z0 && px <= hx1 && pz <= hz1) {
       const fi = (px - HF.x0) * HF.ir, fj = (pz - HF.z0) * HF.ir;
-      if (Number.isInteger(fi) && Number.isInteger(fj)) { const k = fj * w + fi; return HF.d[k] - (push[k] ? 0.3 : 0); }
+      if (Number.isInteger(fi) && Number.isInteger(fj)) { const k = fj * w + fi; return HF.d[k] - (push[k] ? 0.14 : 0); }
       return hfAt(px, pz);
     }
     return townH(px, pz);
   };
-  // 128 m cells that hold roads or pavements (their ground must be fine enough to stay under the ribbons)
-  const rc = 128, rgw = Math.ceil((T.x1 - T.x0) / rc), rgh = Math.ceil((T.z1 - T.z0) / rc), roadCell = new Uint8Array(rgw * rgh);
-  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (push[j * w + i]) roadCell[Math.min(rgh - 1, (j * HF.res / rc) | 0) * rgw + Math.min(rgw - 1, (i * HF.res / rc) | 0)] = 1;
+  // 64 m cells that hold roads or pavements (4 m ground: fine enough to stay just under the ribbons, so the verges the car
+  // drives onto are where they are drawn)
+  // (only where the 8 m ground of a 128 m leaf would stray more than 10 cm from the heightfield beside a road: banks and
+  // cuttings on the hills; the flat town keeps its coarser ground)
+  const rc = 64, rgw = Math.ceil((T.x1 - T.x0) / rc), rgh = Math.ceil((T.z1 - T.z0) / rc), roadCell = new Uint8Array(rgw * rgh), D = HF.d;
+  for (let j = 0; j < h - 4; j++) for (let i = 0; i < w - 4; i++) {
+    if (!push[j * w + i]) continue;
+    const c = Math.min(rgh - 1, (j * HF.res / rc) | 0) * rgw + Math.min(rgw - 1, (i * HF.res / rc) | 0); if (roadCell[c]) continue;
+    const i8 = i - (i & 3), j8 = j - (j & 3), u = (i & 3) / 4, v = (j & 3) / 4, k = j8 * w + i8;
+    const b = (D[k] * (1 - u) + D[k + 4] * u) * (1 - v) + (D[k + 4 * w] * (1 - u) + D[k + 4 * w + 4] * u) * v;
+    if (Math.abs(D[j * w + i] - b) > 0.1) roadCell[c] = 1;
+  }
+  const anyRoad = new Uint8Array(rgw * rgh);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (push[j * w + i]) anyRoad[Math.min(rgh - 1, (j * HF.res / rc) | 0) * rgw + Math.min(rgw - 1, (i * HF.res / rc) | 0)] = 1;
+  const hasRoads0 = (x, z, size) => {
+    const i0 = Math.max(0, Math.floor((x - T.x0) / rc)), i1 = Math.min(rgw - 1, Math.floor((x + size - 1 - T.x0) / rc)), j0 = Math.max(0, Math.floor((z - T.z0) / rc)), j1 = Math.min(rgh - 1, Math.floor((z + size - 1 - T.z0) / rc));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (anyRoad[j * rgw + i]) return true;
+    return false;
+  };
   const hasRoads = (x, z, size) => {
     const i0 = Math.max(0, Math.floor((x - T.x0) / rc)), i1 = Math.min(rgw - 1, Math.floor((x + size - 1 - T.x0) / rc)), j0 = Math.max(0, Math.floor((z - T.z0) / rc)), j1 = Math.min(rgh - 1, Math.floor((z + size - 1 - T.z0) / rc));
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (roadCell[j * rgw + i]) return true;
@@ -103,7 +119,7 @@ function townTerrainBuild(rs) {
     const key = x + ',' + z + ',' + size; let v = cache.get(key);
     if (v === undefined) {
       const d = boxD(x, z, size);
-      if (d <= 0) v = size > 256 || (size > 128 && hasRoads(x, z, size)) || (size > 64 && nearToll(x, z, size));
+      if (d <= 0) v = size > 256 || (size > 128 && hasRoads0(x, z, size)) || (size > 64 && (hasRoads(x, z, size) || nearToll(x, z, size)));
       else v = d < size * 1.0;
       cache.set(key, v);
     }
@@ -290,6 +306,7 @@ const _bu = [], _bv = [], _bt = [];
 function townBuilding(mb, b) {
   const T = TOWN, B = T.bd, bi = T.binfo, k0 = B.off[b], n = B.off[b + 1] - k0; if (n < 3) return;
   const kind = bi[b * 8], hgt = bi[b * 8 + 1] * 0.25; let roof = bi[b * 8 + 2]; const ridge = bi[b * 8 + 3] / 256 * PI;
+  if (roof === 4) roof = 2;   // (a half-hip, from the LIDAR: drawn as a hip here)
   const h0 = bi[b * 8 + 4] / 255, h1 = bi[b * 8 + 5] / 255, lu = bi[b * 8 + 6] & 15, look = bi[b * 8 + 6] >> 4;   // look: landmark (bake)
   const p = B.p; let gmin = 1e9, gmax = -1e9, cx = 0, cz = 0;
   for (let k = k0; k < k0 + n; k++) { const g = hfAt(p[k * 2], p[k * 2 + 1]); gmin = Math.min(gmin, g); gmax = Math.max(gmax, g); cx += p[k * 2]; cz += p[k * 2 + 1]; }
@@ -460,6 +477,55 @@ function townBuilding(mb, b) {
     }
     tris.length = 0; townEarClip(cu, cv, m, tris);
     for (let q = 0; q < tris.length; q += 3) townTri(mb, v0i + tris[q], v0i + tris[q + 1], v0i + tris[q + 2], nx, ny, nz);
+  }
+  townRoofExtras(mb, b, gmax, eaveY, fRoof, cr, sr, vc, hv, rise, wall, wmat, rcol, rtile, bh);
+}
+// The LIDAR's chimney stacks (brick or the house's own walls, with clay pots) and dormers (a box on the slope with a window
+// in its face and a flat lead top) on a pitched roof; in the ridge frame (u along the ridge, v across), fRoof(u, v) is the
+// roof's height above the eaves.
+function townRoofExtras(mb, b, gmax, eaveY, fRoof, cr, sr, vc, hv, rise, wall, wmat, rcol, rtile, bh) {
+  const T = TOWN, C = T.chim, D = T.dorm; if (!C && !D) return;
+  if (!T.chimStart) {   // (first call: per-building index of the stacks and dormers)
+    const n = T.bd.n, idx = (L) => { const st = new Int32Array(n + 1); if (L) { for (let i = 0; i < L.n; i++) st[L.b[i] + 1]++; for (let k = 0; k < n; k++) st[k + 1] += st[k]; } return st; };
+    T.chimStart = idx(C); T.dormStart = idx(D);
+  }
+  const toU = (x, z) => x * cr + z * sr, toV = (x, z) => -x * sr + z * cr, toX = (u, v) => u * cr - v * sr, toZ = (u, v) => u * sr + v * cr;
+  if (C) for (let i = T.chimStart[b]; i < T.chimStart[b + 1]; i++) {
+    const x = C.xz[i * 2] * 0.01, z = C.xz[i * 2 + 1] * 0.01, top = Math.max(eaveY + 0.8, gmax + C.h[i * 2] * 0.1), wdt = Math.max(0.6, C.h[i * 2 + 1] * 0.1);
+    const u = toU(x, z), v = toV(x, z), yr = eaveY + fRoof(u, v), y0 = yr - 0.3; if (top < yr + 0.5) continue;
+    // the stack: across the ridge, brick unless the house is stone or rendered (then the stack is too), a cap course
+    const brick = wmat === 1 || wmat === 3, col = brick ? [0.36, 0.17, 0.1] : wall;
+    mb.push(m4mul(m4(), m4translate(m4(), x, 0, z), m4rotY(m4(), -Math.atan2(sr, cr))));
+    mb.mat(15).color(col[0], col[1], col[2], 1); mb.box(0, (y0 + top) / 2, 0, 0.62, top - y0, wdt);
+    mb.color(col[0] * 0.8, col[1] * 0.8, col[2] * 0.8, 1); mb.box(0, top - 0.06, 0, 0.72, 0.12, wdt + 0.1);
+    const np = Math.max(1, Math.min(5, Math.round(wdt / 0.42)));
+    mb.mat(15).color(0.5, 0.24, 0.13, 1);
+    for (let q = 0; q < np; q++) { const pz = (q + 0.5) / np * wdt - wdt / 2; mb.cyl(0, top, pz, 0.1, top + 0.42, 0.085, 7, false, true); }
+    mb.pop();
+  }
+  if (D && rise > 0.8) for (let i = T.dormStart[b]; i < T.dormStart[b + 1]; i++) {
+    const x = D.xz[i * 2] * 0.01, z = D.xz[i * 2 + 1] * 0.01, wd = Math.max(1.2, D.h[i * 3] * 0.1), sd = D.h[i * 3 + 2] ? 1 : -1;
+    const u = toU(x, z), v = toV(x, z), kk = rise / hv;
+    // the face stands a little down the slope from the blob's middle; its top at the measured height (or 1.4 m up)
+    const vf = vc + sd * Math.min(hv - 0.5, Math.abs(v - vc) + 0.5), yb = eaveY + fRoof(u, vf), yt = Math.min(eaveY + rise - 0.25, Math.max(yb + 1.1, gmax + D.h[i * 3 + 1] * 0.1));
+    const vb = vc + sd * Math.max(0.2, hv - (yt - eaveY) / kk); if (Math.abs(vf - vc) <= Math.abs(vb - vc) + 0.3) continue;
+    const ua = u - wd / 2, ub = u + wd / 2, nxf = -sr * sd, nzf = cr * sd;
+    // face: the house's wall material with one window
+    mb.mat(10, 0, (wmat << 6) | 13, Math.max(1, Math.round(wd))).color(wall[0], wall[1], wall[2], bh).weight((yt - yb + 0.6) / 64);
+    let a = mb.v(toX(ua, vf), yb, toZ(ua, vf), nxf, 0, nzf, 0, 0.6), c2 = mb.v(toX(ub, vf), yb, toZ(ub, vf), nxf, 0, nzf, wd, 0.6), c3 = mb.v(toX(ub, vf), yt, toZ(ub, vf), nxf, 0, nzf, wd, 0.6 + yt - yb), c4 = mb.v(toX(ua, vf), yt, toZ(ua, vf), nxf, 0, nzf, 0, 0.6 + yt - yb);
+    townQuad(mb, a, c2, c3, c4, nxf, 0, nzf); mb.weight(0);
+    // cheeks (the triangles between the face, the top and the roof slope)
+    mb.mat(15).color(wall[0] * 0.9, wall[1] * 0.9, wall[2] * 0.9, 1);
+    for (const ue of [ua, ub]) {
+      const sn = ue === ua ? -1 : 1, enx = cr * sn, enz = sr * sn;
+      const p0 = mb.v(toX(ue, vf), yb, toZ(ue, vf), enx, 0, enz, 0, 0), p1 = mb.v(toX(ue, vf), yt, toZ(ue, vf), enx, 0, enz, 0, 0), p2 = mb.v(toX(ue, vb), yt, toZ(ue, vb), enx, 0, enz, 0, 0);
+      townTri(mb, p0, p1, p2, enx, 0, enz);
+    }
+    // a flat lead top (slightly proud)
+    mb.mat(12).color(0.22, 0.23, 0.24, bh);
+    const e = 0.08, t0 = mb.v(toX(ua - e, vf + sd * e), yt + 0.04, toZ(ua - e, vf + sd * e), 0, 1, 0, 0, 0), t1 = mb.v(toX(ub + e, vf + sd * e), yt + 0.04, toZ(ub + e, vf + sd * e), 0, 1, 0, 0, 0);
+    const t2 = mb.v(toX(ub + e, vb), yt + 0.04, toZ(ub + e, vb), 0, 1, 0, 0, 0), t3 = mb.v(toX(ua - e, vb), yt + 0.04, toZ(ua - e, vb), 0, 1, 0, 0, 0);
+    townQuad(mb, t0, t1, t2, t3, 0, 1, 0);
   }
 }
 // the pavilion's slim round towers with grey-green domes: where the LIDAR saw them, else at the corners of the hall

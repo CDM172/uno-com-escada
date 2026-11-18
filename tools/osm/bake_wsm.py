@@ -126,6 +126,15 @@ class Lidar:
         lon, lat = unproj(np.asarray(xs, float), np.asarray(zs, float))
         return self.tr.transform(lon, lat)
 
+    def local(self, E, N):
+        """British National Grid -> the local frame (x, z), by an affine map fitted once over the region"""
+        if not hasattr(self, '_aff'):
+            gx, gz = np.meshgrid(np.linspace(TOWN[0], TOWN[2], 9), np.linspace(TOWN[1], TOWN[3], 9))
+            e, n = self.en(gx.ravel(), gz.ravel()); A = np.stack([np.asarray(e), np.asarray(n), np.ones(e.size)], 1)
+            self._aff = (np.linalg.lstsq(A, gx.ravel(), rcond=None)[0], np.linalg.lstsq(A, gz.ravel(), rcond=None)[0])
+        a, b = self._aff; E = np.asarray(E, float); N = np.asarray(N, float)
+        return a[0] * E + a[1] * N + a[2], b[0] * E + b[1] * N + b[2]
+
     def tile(self, kind, te, tn):
         k = (kind, te, tn)
         if k in self.tiles:
@@ -509,7 +518,7 @@ def bake_caravans(areas, bl, lidar, lu_lookup, log):
                 ht = float(min(3.6, max(2.4, np.percentile(chm[cj.astype(int), ci.astype(int)], 70) - 0.35)))
                 ang = math.remainder(math.atan2(uz, ux), math.pi)
                 if ang < 0: ang += math.pi
-                out.append((cx, cz, ring2, 0, ht, 1, ang, hc, lu_lookup(cx, cz), 0.22, 1))
+                out.append((cx, cz, ring2, 0, ht, 1, ang, hc, lu_lookup(cx, cz), 0.22, 1, [], [], 255))
     log(f'static caravans from the LIDAR: {len(out)} on {nsite} caravan sites')
     return out
 
@@ -758,6 +767,100 @@ def landmark_look(t):
     return 0
 
 
+# ---------------------------------------------------------------- roofs from the LIDAR
+ROOF_FLAT, ROOF_GABLE, ROOF_HIP, ROOF_HALFHIP = 0, 1, 2, 4
+
+
+def roof_fit(r, ang, lidar, ground=None):
+    """Fits roof shapes to the LIDAR surface over a footprint (heights above the ground or the deck): a gable along
+    either axis of the footprint's box, a hip, a half-hip (jerkinhead), or flat. Returns a dict: kind, ridge (axis
+    angle), eaves and ridge heights, rms, plus chimney stacks (small blobs standing 0.7-3.5 m above the fitted roof)
+    and dormers (wider blobs on the slopes), or None where the survey says too little."""
+    fd, ft, fe, fn = lidar.footprint(r, coords=True)
+    if fd is None: return None
+    g = ft if ground is None else np.full(fd.shape, ground, np.float32)
+    ok = np.isfinite(fd) & np.isfinite(g)
+    if ok.sum() < 8: return None
+    H = (fd - g)[ok]; X, Z = lidar.local(fe[ok], fn[ok]); gi = np.floor(fe[ok]).astype(np.int64); gj = np.floor(fn[ok]).astype(np.int64)
+    p15, p95 = np.percentile(H, [15, 95])
+    if p95 < 1.6: return None
+    best = None
+    for a in (ang, ang + math.pi / 2):
+        ca, sa = math.cos(a), math.sin(a)
+        ur = [x * ca + z * sa for x, z in r]; vr = [-x * sa + z * ca for x, z in r]
+        u0, u1, v0, v1 = min(ur), max(ur), min(vr), max(vr); uc, vc, hu, hv = (u0 + u1) / 2, (v0 + v1) / 2, (u1 - u0) / 2, (v1 - v0) / 2
+        if hv < 1.4: continue
+        U = X * ca + Z * sa - uc; V = -X * sa + Z * ca - vc
+        cands = []
+        for vr in np.linspace(-0.3 * hv, 0.3 * hv, 7):          # (the ridge a little off the box's middle: a back extension)
+            cands.append((ROOF_GABLE, np.abs(V - vr)))
+            if hu >= hv - 0.3:
+                cands.append((ROOF_HIP, np.maximum(np.abs(V - vr), np.abs(U) - (hu - hv))))
+                cands.append((ROOF_HALFHIP, np.maximum(np.abs(V - vr), 2.0 * (np.abs(U) - (hu - hv * 0.5)))))
+        for kind, t in cands:
+            A = np.stack([np.ones_like(t), -t], 1); keep = np.ones(t.size, bool)
+            for _ in range(2):                   # (twice: the chimneys, aerials and overhanging trees drop out)
+                sol = np.linalg.lstsq(A[keep], H[keep], rcond=None)[0]
+                res = H - A @ sol; sd = max(0.15, float(np.sqrt(np.mean(res[keep] ** 2))))
+                keep = np.abs(res) < 2.5 * sd
+                if keep.sum() < 6: break
+            R, k = float(sol[0]), float(sol[1]); rms = float(np.sqrt(np.mean(res[keep] ** 2))) if keep.sum() else 9
+            pen = {ROOF_GABLE: 1.0, ROOF_HIP: 1.12, ROOF_HALFHIP: 1.2}[kind]   # (prefer the plainer roof unless clearly worse)
+            if best is None or rms * pen < best['score']:
+                best = dict(kind=kind, ridge=a, R=R, k=k, rms=rms, score=rms * pen, eaves=R - k * hv, hv=hv, hu=hu, uc=uc, vc=vc, ca=ca, sa=sa, res=res, U=U, V=V)
+    flat_rms = float(np.std(H)) if H.size else 9
+    if p95 - p15 < 0.9 and (best is None or best['rms'] > 0.5 * flat_rms):
+        out = dict(kind=ROOF_FLAT, ridge=ang, eaves=float(max(2.4, np.percentile(H, 90))), top=float(np.percentile(H, 90)), rms=flat_rms, sure=True)
+        res = H - out['eaves']; U = V = None
+    elif best is None or best['k'] < 0.25 or best['k'] > 1.6 or best['rms'] > 0.6 * flat_rms:
+        return dict(sure=False)                             # (a roof the simple shapes do not explain: keep the old guess)
+    else:
+        out = dict(kind=best['kind'], ridge=best['ridge'] % math.pi, eaves=float(max(2.4, best['eaves'])), top=float(best['R']), rms=best['rms'], sure=True)
+        res = best['res']; U, V = best['U'], best['V']
+    # blobs above the roof: chimney stacks (small) and dormers (on a slope, wider)
+    chim, dorm = [], []
+    cand = res > 0.5
+    if cand.any():
+        cells = {(int(gi[q]), int(gj[q])): q for q in np.nonzero(cand)[0]}
+        seen = set()
+        for c0 in list(cells):
+            if c0 in seen: continue
+            st = [c0]; comp = []; seen.add(c0)
+            while st:
+                c = st.pop(); comp.append(cells[c])
+                for d in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nb = (c[0] + d[0], c[1] + d[1])
+                    if nb in cells and nb not in seen: seen.add(nb); st.append(nb)
+            qs = np.array(comp); rmax = float(res[qs].max()); qm = qs[np.argmax(res[qs])]
+            if 1 <= len(qs) <= 6 and 0.7 <= rmax <= 3.5 and H[qm] > out['eaves'] + 0.6:
+                chim.append((float(X[qm]), float(Z[qm]), float(H[qm]), min(2.4, 0.6 + 0.35 * len(qs))))
+            elif U is not None and 3 <= len(qs) <= 16 and 0.4 <= rmax <= 2.2 and np.abs(V[qs]).min() > 0.8:
+                uw = float(U[qs].max() - U[qs].min() + 1.0); sd_ = 1 if float(V[qs].mean()) > 0 else -1
+                dorm.append((float(X[qs].mean()), float(Z[qs].mean()), min(6.0, max(1.2, uw)), float(H[qs].max()), sd_))
+    out['chim'] = chim; out['dorm'] = dorm
+    return out
+
+
+def front_edge(r, roadgrid):
+    """index of the footprint edge that faces the nearest road (its outward normal towards it), or 255"""
+    best, bi = 1e9, 255
+    n = len(r)
+    if n > 254: return 255
+    for i in range(n):
+        (ax, az), (bx, bz) = r[i], r[(i + 1) % n]
+        L = math.hypot(bx - ax, bz - az)
+        if L < 1.5: continue
+        nx, nz = (bz - az) / L, -(bx - ax) / L           # (outward for the counter-clockwise rings in x, z)
+        mx, mz = (ax + bx) / 2 + nx * 2.0, (az + bz) / 2 + nz * 2.0
+        dmin = 1e9
+        for sx, sz, ex, ez, _ in roadgrid.near(mx, mz, 30):
+            d, _t = seg_dist(mx, mz, sx, sz, ex, ez)
+            if d < dmin: dmin = d
+        score = dmin - 0.15 * L
+        if dmin < 40 and score < best: best, bi = score, i
+    return bi
+
+
 def bake_buildings(buildings, roadgrid, lu_lookup, log, lidar=None, decks=()):
     out = []; nl = 0; towers = []; spires = []; pav = None
     for oid, t, polys in buildings:
@@ -920,11 +1023,27 @@ def bake_buildings(buildings, roadgrid, lu_lookup, log, lidar=None, decks=()):
         if rise is not None:                       # the LIDAR decides flat or pitched
             if rise < 0.05 and roof in (1, 2) and kind not in (4, 8): roof = 0
             elif rise >= 1.2 and roof == 0 and Wd < 22: roof = 1
+        # the roof's shape, axis and heights from the LIDAR surface (where the survey sees it and OSM does not say), its
+        # chimney stacks and dormers, and the side facing the street
+        rf = None
+        if lidar is not None and kind in (0, 1, 2, 3, 5, 6, 7, 10) and area < 4000 and deck is None:
+            rf = roof_fit(r, ang, lidar)
+            if rf is not None and not rf.get('sure'): rf = None
+            if rf is not None:
+                if not shape:
+                    roof = rf['kind']; ridge = rf['ridge']
+                h = float(max(2.4, min(63.0, rf['eaves'])))
+                rise = 0.0 if rf['kind'] == ROOF_FLAT else float(max(0.3, min(12.0, rf['top'] - rf['eaves'])))
+                if roof in (1, 2, 4) and rise < 0.3: roof = 0
+        fe = front_edge(r, roadgrid)
         hc = crc(f'b{oid}')
         look = landmark_look(t)
         if look == 0 and kind in (0, 1) and math.hypot(cx - 1764, cz + 1891) < 330 and hc % 3: look = 4    # Kewstoke's old stone cottages
         if 'New Inn' in t.get('name', ''): look = 4
-        out.append((cx, cz, r, kind, h, roof, ridge, hc, lu, rise, look))
+        out.append((cx, cz, r, kind, h, roof, ridge, hc, lu, rise, look, rf['chim'] if rf else [], rf['dorm'] if rf else [], fe))
+    rk = collections.Counter(b[5] for b in out)
+    log(f'roofs: {rk.get(0, 0)} flat, {rk.get(1, 0)} gabled, {rk.get(2, 0)} hipped, {rk.get(4, 0)} half-hipped, {rk.get(3, 0)} ruins; '
+        f'{sum(len(b[11]) for b in out)} chimney stacks, {sum(len(b[12]) for b in out)} dormers, {sum(1 for b in out if b[13] != 255)} street fronts')
     log(f'buildings: {len(out)}, {nl} with LIDAR heights, {len(spires)} church towers: ' + ', '.join(f'({x:.0f},{z:.0f}) {th:.1f} m, {tw:.1f} m wide' for x, z, th, tw, _ in spires))
     return out, towers, spires, pav
 
@@ -1201,6 +1320,17 @@ def main():
     cnt, st, d = enc_polys([b[2] for b in bl])
     blob.add('bn', cnt); blob.add('b0', st); blob.add('bxz', d)
     blob.add('binfo', np.asarray([[b[3], min(255, int(round(b[4] * 4))), b[5], int(round(b[6] / math.pi * 256)) % 256, b[7] & 255, (b[7] >> 8) & 255, {None: 0, 'residential': 1, 'retail': 2, 'industrial': 3}[b[8]] | (b[10] << 4), 255 if b[9] is None else min(250, int(round(b[9] * 10)))] for b in bl], 'u1').ravel())
+    # per building: the edge facing the street; chimney stacks (x, z cm; building; top dm; size dm); dormers (x, z cm;
+    # building; width dm; top dm; side of the ridge)
+    blob.add('bfront', np.asarray([b[13] for b in bl], 'u1'))
+    ch = [(x, z, bi_, tp, sz) for bi_, b in enumerate(bl) for x, z, tp, sz in b[11]]
+    if ch:
+        blob.add('chxz', np.asarray([[int(round(x * 100)), int(round(z * 100))] for x, z, _, _, _ in ch], '<i4').ravel())
+        blob.add('chb', np.asarray([c[2] for c in ch], '<u2')); blob.add('chh', np.asarray([[min(255, int(round(c[3] * 10))), min(255, int(round(c[4] * 10)))] for c in ch], 'u1').ravel())
+    dm = [(x, z, bi_, wd, tp, sd) for bi_, b in enumerate(bl) for x, z, wd, tp, sd in b[12]]
+    if dm:
+        blob.add('dmxz', np.asarray([[int(round(x * 100)), int(round(z * 100))] for x, z, _, _, _, _ in dm], '<i4').ravel())
+        blob.add('dmb', np.asarray([d[2] for d in dm], '<u2')); blob.add('dmh', np.asarray([[min(255, int(round(d[3] * 10))), min(255, int(round(d[4] * 10))), 1 if d[5] > 0 else 0] for d in dm], 'u1').ravel())
     if pav is not None: blob.add('pavroof', pav['grid'].ravel())
     # spires: x, z (cm), top above the ground (dm), tower width (dm) + 65536 x the church's axis (degrees)
     blob.add('spires', np.asarray([[int(round(x * 100)), int(round(z * 100)), int(round(th * 10)), int(round(tw * 10)) + 65536 * (int(round(math.degrees(an))) % 180)] for x, z, th, tw, an in spires] or [[0, 0, 0, 0]], '<i4').ravel())

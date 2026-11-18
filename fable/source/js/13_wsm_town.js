@@ -23,7 +23,9 @@ const TOWN = {
 // surface codes of the 1 m raster; TZZ = game zone (ZONE), TZH = height above the terrain for the physics (kerb stones)
 const TZ = { NONE: 0, ROAD: 1, PAVE: 2, HARD: 3, GRASS: 4, SAND: 5, MUD: 6, WOOD: 7, WATER: 8, KERB: 9, PATH: 10, TRACK: 11, GARDEN: 12, FIELD: 13, BLD: 14, OUT: 15, WALL: 16, DUNE: 17 };
 const TZZ = new Uint8Array([2, 0, 6, 6, 2, 3, 4, 4, 4, 1, 6, 3, 2, 2, 6, 4, 6, 3]);
-const TZH = new Float64Array([0, 0, 0.12, 0, 0, 0, 0, 0, 0, 0.02, 0, 0, 0, 0, 0, 0, 0, 0]);
+// (height of the drawn surface above the heightfield: the road ribbon 6 cm, the pavement slabs 19 cm, paths 5 cm; the car
+// drives on what is drawn, and the values blend between 1 m cells so a kerb is a short ramp, never a step to snag on)
+const TZH = new Float64Array([0, 0.06, 0.19, 0, 0, 0, 0, 0, 0, 0.08, 0.05, 0.05, 0, 0, 0, 0, 0, 0]);
 // land cover classes of the bake (tools/osm/bake_wsm.py, LC) → surface code
 const TOWN_LC = [TZ.NONE, TZ.GARDEN, TZ.GRASS, TZ.FIELD, TZ.WOOD, TZ.WOOD, TZ.SAND, TZ.MUD, TZ.WATER, TZ.HARD, TZ.NONE, TZ.GRASS, TZ.GRASS, TZ.GRASS, TZ.DUNE];
 const ROAD_PAVE = [0, 3.0, 2.8, 2.6, 2.6, 2.2, 2.0, 1.6, 0, 0, 0, 0, 0];   // pavement width by road class (m)
@@ -68,6 +70,10 @@ async function townLoad() {
   T.cedge = A.cedge; T.croom = A.croom; T.towers = A.towers || null; T.spires = A.spires || null;
   T.pav = M.pavilion && A.pavroof ? Object.assign({ grid: A.pavroof }, M.pavilion) : null;   // the pavilion's roof heights (DSM)
   T.rh = A.rh || null;                   // road heights at the vertices (LIDAR DTM, dm; -32768: none)
+  // per building (bake, LIDAR): the edge facing the street (255: none); chimney stacks and dormers, by building
+  T.bfront = A.bfront || null;
+  T.chim = A.chxz ? { xz: A.chxz, b: A.chb, h: A.chh, n: A.chb.length } : null;
+  T.dorm = A.dmxz ? { xz: A.dmxz, b: A.dmb, h: A.dmh, n: A.dmb.length } : null;
   if (A.ltn) {                           // LIDAR tree crowns: x, z, height
     const P = townPolys(A.ltn, A.lt0, A.ltd, q), n = P.off[P.n], L = T.ltrees = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) { L[i * 3] = P.p[i * 2]; L[i * 3 + 1] = P.p[i * 2 + 1]; L[i * 3 + 2] = A.lth[i] * 0.25; }
@@ -156,6 +162,153 @@ function townTrackBuild() {
 }
 
 // ---------- height field, surface raster, collisions ----------
+// ---------------------------------------------------------------- the carriageways' surface
+// Every drivable road (classes 1-9, not bridges) gets a smooth height profile along its centre line, sampled every 2 m:
+// the LIDAR ground heights at its vertices (medians of 3 x 3 m), with spikes removed (a 7-sample median) and smoothed
+// (Gaussian, sigma 8 m on streets, 5 m on service roads and lanes). At each junction (road ends that meet, or a road
+// ending on another) all the roads take the same height, the mean of theirs, and each profile is corrected towards it
+// linearly between junctions. The heightfield then takes the road's height across its whole width and its pavements
+// (level across, no cross-slope), the corridors of roads that overlap at a junction blend by inverse distance (no seams),
+// and the ground beside them returns to the natural slope over a few metres (cut and fill).
+const _med7 = new Float32Array(7);
+function townRoadSurface(D, w, h, res) {
+  const T = TOWN, R = T.rd, ri = T.rinfo, RH = T.rh, n = R.n, STEP = 2;
+  const prof = new Array(n).fill(null);     // per road: {x, z, s, h} at STEP spacing
+  const natural = (x, z) => { const fi = (x - T.x0) / res, fj = (z - T.z0) / res, i = Math.max(0, Math.min(w - 2, fi | 0)), j = Math.max(0, Math.min(h - 2, fj | 0)), u = fi - i, v = fj - j, k = j * w + i; return (D[k] * (1 - u) + D[k + 1] * u) * (1 - v) + (D[k + w] * (1 - u) + D[k + w + 1] * u) * v; };
+  for (let r = 0; r < n; r++) {
+    const cls = ri[r * 4]; if (cls > 9 || (ri[r * 4 + 2] & 1)) continue;
+    const k0 = R.off[r], k1 = R.off[r + 1]; if (k1 - k0 < 2) continue;
+    let L = 0; for (let k = k0; k < k1 - 1; k++) L += Math.hypot(R.p[k * 2 + 2] - R.p[k * 2], R.p[k * 2 + 3] - R.p[k * 2 + 1]);
+    const m = Math.max(2, Math.ceil(L / STEP) + 1), X = new Float32Array(m), Z = new Float32Array(m), S = new Float32Array(m), H = new Float32Array(m);
+    let k = k0, acc = 0, segL = Math.hypot(R.p[k * 2 + 2] - R.p[k * 2], R.p[k * 2 + 3] - R.p[k * 2 + 1]);
+    for (let q = 0; q < m; q++) {
+      const sq = Math.min(L, q * L / (m - 1));
+      while (k < k1 - 2 && acc + segL < sq) { acc += segL; k++; segL = Math.hypot(R.p[k * 2 + 2] - R.p[k * 2], R.p[k * 2 + 3] - R.p[k * 2 + 1]); }
+      const f = segL > 1e-6 ? Math.max(0, Math.min(1, (sq - acc) / segL)) : 0;
+      X[q] = R.p[k * 2] + (R.p[k * 2 + 2] - R.p[k * 2]) * f; Z[q] = R.p[k * 2 + 1] + (R.p[k * 2 + 3] - R.p[k * 2 + 1]) * f; S[q] = sq;
+      const ha = RH[k], hb = RH[k + 1];
+      H[q] = ha !== -32768 && hb !== -32768 ? (ha + (hb - ha) * f) * 0.1 : natural(X[q], Z[q]);
+    }
+    // spikes out (a 7-sample median), then a Gaussian along the road
+    const M = new Float32Array(m);
+    for (let q = 0; q < m; q++) {
+      for (let e = 0; e < 7; e++) { const v = H[Math.max(0, Math.min(m - 1, q + e - 3))]; let k = e; while (k > 0 && _med7[k - 1] > v) { _med7[k] = _med7[k - 1]; k--; } _med7[k] = v; }
+      M[q] = _med7[3];
+    }
+    const sg = (cls <= 6 ? 8 : 5) / STEP, rad = Math.ceil(sg * 2.5);
+    for (let q = 0; q < m; q++) { let sw = 0, sh = 0; for (let e = -rad; e <= rad; e++) { const g = Math.exp(-e * e / (2 * sg * sg)), qq = Math.max(0, Math.min(m - 1, q + e)); sw += g; sh += M[qq] * g; } H[q] = sh / sw; }
+    prof[r] = { x: X, z: Z, s: S, h: H, L, cls, pins: [] };
+  }
+  // junctions: road ends meeting (within 1.2 m), and road ends on another road's centre line (T-junctions)
+  const G = new Map(), cell = 24, key = (x, z) => Math.floor(x / cell) + ',' + Math.floor(z / cell);   // segments, by 24 m cells
+  for (let r = 0; r < n; r++) { const P = prof[r]; if (!P) continue; for (let q = 0; q < P.x.length - 1; q++) { const kk = key(P.x[q], P.z[q]); let l = G.get(kk); if (!l) G.set(kk, l = []); l.push(r, q); } }
+  const nodes = [], NG = new Map(), nkey = (x, z) => Math.round(x / 2) + ',' + Math.round(z / 2);   // nodes: {x, z, m: [r, q, f]...}
+  for (let r = 0; r < n; r++) {
+    const P = prof[r]; if (!P) continue;
+    for (const q of [0, P.x.length - 1]) {
+      const x = P.x[q], z = P.z[q]; let node = null;
+      for (let dz = -1; dz <= 1 && !node; dz++) for (let dx = -1; dx <= 1 && !node; dx++) {
+        const l = NG.get((Math.round(x / 2) + dx) + ',' + (Math.round(z / 2) + dz)); if (!l) continue;
+        for (const nd of l) if (Math.abs(nd.x - x) < 1.2 && Math.abs(nd.z - z) < 1.2) { node = nd; break; }
+      }
+      if (!node) { node = { x, z, m: [] }; nodes.push(node); const kk = nkey(x, z); let l = NG.get(kk); if (!l) NG.set(kk, l = []); l.push(node); }
+      node.m.push(r, q, 0);
+    }
+  }
+  // a road that ends on another one's centre line (a T-junction whose shared vertex the other road no longer keeps)
+  for (const nd of nodes) {
+    if (nd.m.length !== 3) continue;
+    const r0 = nd.m[0]; let best = 1e9, br = -1, bq = 0, bf = 0;
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const l = G.get((Math.floor(nd.x / cell) + dx) + ',' + (Math.floor(nd.z / cell) + dz)); if (!l) continue;
+      for (let e = 0; e < l.length; e += 2) {
+        const r = l[e], q = l[e + 1]; if (r === r0) continue; const P = prof[r];
+        const ax = P.x[q], az = P.z[q], bx = P.x[q + 1], bz = P.z[q + 1], ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez + 1e-9;
+        const f = Math.max(0, Math.min(1, ((nd.x - ax) * ex + (nd.z - az) * ez) / l2)), d = Math.hypot(nd.x - ax - ex * f, nd.z - az - ez * f);
+        if (d < Math.max(1.5, ri[r * 4 + 1] * 0.05 + 0.5) && d < best) { best = d; br = r; bq = q; bf = f; }
+      }
+    }
+    if (br >= 0) nd.m.push(br, bq, bf);
+  }
+  // node heights: the mean of the members' heights there; each member pinned to it
+  const hAt = (P, q, f) => P.h[q] + (P.h[Math.min(P.h.length - 1, q + 1)] - P.h[q]) * f;
+  for (const nd of nodes) {
+    if (nd.m.length < 6) continue;   // (a dead end: free)
+    let sh = 0, c = 0; for (let e = 0; e < nd.m.length; e += 3) { sh += hAt(prof[nd.m[e]], nd.m[e + 1], nd.m[e + 2]); c++; }
+    nd.y = sh / c;
+    for (let e = 0; e < nd.m.length; e += 3) { const P = prof[nd.m[e]], q = nd.m[e + 1], f = nd.m[e + 2]; P.pins.push(P.s[q] + (P.s[Math.min(P.s.length - 1, q + 1)] - P.s[q]) * f, nd.y - hAt(P, q, f)); }
+  }
+  // corrections: linear between pins along each road, fading out over 40 m beyond the outermost ones
+  for (let r = 0; r < n; r++) {
+    const P = prof[r]; if (!P || !P.pins.length) continue;
+    const pins = []; for (let e = 0; e < P.pins.length; e += 2) pins.push([P.pins[e], P.pins[e + 1]]); pins.sort((a, b) => a[0] - b[0]);
+    for (let q = 0; q < P.h.length; q++) {
+      const s = P.s[q]; let dh;
+      if (s <= pins[0][0]) dh = pins[0][1] * Math.max(0, 1 - (pins[0][0] - s) / 40);
+      else if (s >= pins[pins.length - 1][0]) { const p = pins[pins.length - 1]; dh = p[1] * Math.max(0, 1 - (s - p[0]) / 40); }
+      else { let e = 0; while (e < pins.length - 2 && pins[e + 1][0] < s) e++; const a = pins[e], b = pins[e + 1], f = (s - a[0]) / Math.max(1e-6, b[0] - a[0]); dh = a[1] + (b[1] - a[1]) * f; }
+      P.h[q] += dh;
+    }
+  }
+  // The heightfield, rank by rank (main roads first): each road takes its height across its carriageway and pavements
+  // (level across), the ground beside it returns to the natural slope (cut and fill). A lesser road that runs into the
+  // carriageway of a more important one is first re-pinned where it meets that carriageway's edge, to the height
+  // already laid there (a side street joins a main road at the main road's own level, with no step); inside it, the more
+  // important road keeps its surface. Roads of the same rank that overlap blend by inverse distance.
+  const rank = c => c <= 3 ? 0 : c === 4 ? 1 : c <= 6 ? 2 : c === 7 ? 3 : c === 8 ? 4 : 5;
+  const wsum = new Float32Array(w * h), hsum = new Float32Array(w * h), blend = new Float32Array(w * h), owner = new Uint8Array(w * h).fill(255), surf = new Float32Array(w * h);
+  const cellOf = (x, z) => { const i = Math.round((x - T.x0) / res), j = Math.round((z - T.z0) / res); return i < 0 || j < 0 || i >= w || j >= h ? -1 : j * w + i; };
+  const correct = (P, pins) => {   // piecewise-linear corrections between pins, fading out over 40 m beyond the outermost
+    pins.sort((a, b) => a[0] - b[0]);
+    for (let q = 0; q < P.h.length; q++) {
+      const s0 = P.s[q]; let dh;
+      if (s0 <= pins[0][0]) dh = pins[0][1] * Math.max(0, 1 - (pins[0][0] - s0) / 40);
+      else if (s0 >= pins[pins.length - 1][0]) { const p = pins[pins.length - 1]; dh = p[1] * Math.max(0, 1 - (s0 - p[0]) / 40); }
+      else { let e = 0; while (e < pins.length - 2 && pins[e + 1][0] < s0) e++; const pa = pins[e], pb = pins[e + 1], f = (s0 - pa[0]) / Math.max(1e-6, pb[0] - pa[0]); dh = pa[1] + (pb[1] - pa[1]) * f; }
+      P.h[q] += dh;
+    }
+  };
+  for (let rk = 0; rk <= 5; rk++) {
+    // (1) re-pin where this rank's roads meet the carriageways already laid
+    if (rk > 0) for (let r = 0; r < n; r++) {
+      const P = prof[r]; if (!P || rank(P.cls) !== rk) continue;
+      const m = P.x.length, pins = []; let prevIn = -1;
+      for (let q = 0; q < m; q++) {
+        const o = cellOf(P.x[q], P.z[q]), inside = o >= 0 && owner[o] < rk ? 1 : 0;
+        if (prevIn >= 0 && inside !== prevIn) {
+          const qo = inside ? q - 1 : q, qi = inside ? q : q - 1, oi = cellOf(P.x[qi], P.z[qi]);
+          if (oi >= 0) pins.push([P.s[qo], surf[oi] - P.h[qo]]);
+        }
+        prevIn = inside;
+      }
+      if (pins.length) correct(P, pins);
+    }
+    // (2) lay this rank's roads outside the carriageways already laid
+    for (let r = 0; r < n; r++) {
+      const P = prof[r]; if (!P || rank(P.cls) !== rk) continue;
+      const cls = P.cls, core = ri[r * 4 + 1] * 0.05 + 0.7 + ((ri[r * 4 + 2] & 32) ? 0 : ROAD_PAVE[cls] || 0), fall = cls <= 7 ? 3.5 : 2.5, rad = core + fall;
+      for (let q = 0; q < P.x.length - 1; q++) {
+        const ax = P.x[q], az = P.z[q], bx = P.x[q + 1], bz = P.z[q + 1], ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez + 1e-9;
+        const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - rad - T.x0) / res)), i1 = Math.min(w - 1, Math.ceil((Math.max(ax, bx) + rad - T.x0) / res));
+        const j0 = Math.max(0, Math.floor((Math.min(az, bz) - rad - T.z0) / res)), j1 = Math.min(h - 1, Math.ceil((Math.max(az, bz) + rad - T.z0) / res));
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+          const o = j * w + i; if (owner[o] < rk) continue;
+          const px = T.x0 + i * res, pz = T.z0 + j * res; let t = ((px - ax) * ex + (pz - az) * ez) / l2;
+          if ((t < -0.5 && q > 0) || (t > 1.5 && q < P.x.length - 2)) continue;   // (neighbouring segments overlap at bends)
+          const tc = t < 0 ? 0 : t > 1 ? 1 : t, d = Math.hypot(px - ax - ex * tc, pz - az - ez * tc); if (d >= rad) continue;
+          let wg = d <= core ? 1 : 1 - (d - core) / fall; wg = wg * wg * (3 - 2 * wg);
+          const hr = P.h[q] + (P.h[q + 1] - P.h[q]) * tc, wi = wg / (0.5 + d * d);
+          wsum[o] += wi; hsum[o] += wi * hr; if (wg > blend[o]) blend[o] = wg;
+          if (wg >= 1 && owner[o] === 255) owner[o] = 254;   // (this rank's carriageway: committed below)
+        }
+      }
+    }
+    // (3) commit this rank's carriageways
+    for (let o = 0; o < w * h; o++) if (owner[o] === 254) { owner[o] = rk; surf[o] = hsum[o] / wsum[o]; }
+  }
+  for (let o = 0; o < w * h; o++) if (blend[o] > 0) D[o] += ((owner[o] < 255 ? surf[o] : hsum[o] / wsum[o]) - D[o]) * blend[o];
+  T.rprof = prof; T.roadNodes = nodes.length;
+}
 function townHeightsBuild() {
   const T = TOWN, res = 2, w = Math.round((T.x1 - T.x0) / res) + 1, h = Math.round((T.z1 - T.z0) / res) + 1;
   HF.x0 = T.x0; HF.z0 = T.z0; HF.w = w; HF.h = h; HF.ir = 1 / res; HF.res = res;
@@ -178,29 +331,8 @@ function townHeightsBuild() {
     const x = T.x0 + i * res, z = T.z0 + j * res, e = Math.min(x - T.x0, T.x1 - x, z - T.z0, T.z1 - z);
     if (e < 150) { const s = smooth(0, 150, e); D[j * w + i] = townFarH(x, z) * (1 - s) + D[j * w + i] * s; }
   }
-  // roads on their own surface: the corridor takes the heights measured along the road, the ground beside it blends
-  // back to the slope within a few metres (a cut on the uphill side, a bank on the downhill side)
-  if (T.rh) {
-    const R = T.rd, ri = T.rinfo, RH = T.rh, wb = new Float32Array(w * h), ht = new Float32Array(w * h);
-    for (let r = 0; r < R.n; r++) {
-      const cls = ri[r * 4]; if (cls > 9 || (ri[r * 4 + 2] & 1)) continue;
-      // (the pavements too: they stay level across instead of tilting with the hillside)
-      const hw = ri[r * 4 + 1] * 0.05 + 0.7 + ((ri[r * 4 + 2] & 32) ? 0 : ROAD_PAVE[cls] || 0), fall = cls <= 7 ? 3.5 : 2.5;
-      for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) {
-        const ha = RH[k], hb = RH[k + 1]; if (ha === -32768 || hb === -32768) continue;
-        const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], ex = bx - ax, ez = bz - az, l2 = ex * ex + ez * ez + 1e-9, rad = hw + fall;
-        const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - rad - T.x0) / res)), i1 = Math.min(w - 1, Math.ceil((Math.max(ax, bx) + rad - T.x0) / res));
-        const j0 = Math.max(0, Math.floor((Math.min(az, bz) - rad - T.z0) / res)), j1 = Math.min(h - 1, Math.ceil((Math.max(az, bz) + rad - T.z0) / res));
-        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-          const px = T.x0 + i * res, pz = T.z0 + j * res; let t = ((px - ax) * ex + (pz - az) * ez) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t;
-          const d = Math.hypot(px - ax - ex * t, pz - az - ez * t); if (d >= rad) continue;
-          let wgt = d <= hw ? 1 : 1 - (d - hw) / fall; wgt = wgt * wgt * (3 - 2 * wgt);
-          const o = j * w + i; if (wgt > wb[o]) { wb[o] = wgt; ht[o] = (ha + (hb - ha) * t) * 0.1; }
-        }
-      }
-    }
-    for (let o = 0; o < w * h; o++) if (wb[o] > 0) D[o] += (ht[o] - D[o]) * wb[o];
-  }
+  // roads on their own surface: smooth profiles, level across, one height at each junction (townRoadSurface)
+  if (T.rh) townRoadSurface(D, w, h, res);
   // bridges: straight decks between the heights at their ends (the terrain model has no bridges)
   const R = T.rd, ri = T.rinfo;
   for (let r = 0; r < R.n; r++) {
@@ -224,6 +356,21 @@ function townHeightsBuild() {
   townRasterBuild();
   townBuildingGrid();
   townSdfBuild();
+  townAiRoom();
+}
+// The autopilot's room on each side of the circuit, kept a metre inside the carriageway as drawn (the 1 m raster), so its
+// wheels stay off the kerbs (the baked room came from a coarser road mask)
+function townAiRoom() {
+  const T = TOWN, N = TRK.N, o = new Float64Array(5), L = TRK.aiL, Rr = TRK.aiR, e2 = new Float32Array(N * 2);
+  const road = (x, z) => { const i = (x - T.x0) | 0, j = (z - T.z0) | 0; if (i < 0 || j < 0 || i >= T.zw || j >= T.zh) return false; const c = T.zone[j * T.zw + i]; return c === TZ.ROAD || c === TZ.KERB; };
+  for (let i = 0; i < N; i++) {
+    trackPos(i * TRK.ds, 0, o); const x = o[0], z = o[2], nx = -o[4], nz = o[3];
+    for (let sd = 0; sd < 2; sd++) { const sg = sd ? 1 : -1; let e = 0; while (e < 15 && road(x + nx * e * sg, z + nz * e * sg)) e += 0.1; e2[i * 2 + sd] = e; }
+  }
+  for (let i = 0; i < N; i++) {
+    let mL = 1e9, mR = 1e9; for (let q = -6; q <= 6; q++) { const k = ((i + q) % N + N) % N; mL = Math.min(mL, e2[k * 2]); mR = Math.min(mR, e2[k * 2 + 1]); }
+    L[i] = Math.max(0.3, Math.min(L[i], mL - 1.05)); Rr[i] = Math.max(0.3, Math.min(Rr[i], mR - 1.05));
+  }
 }
 // scanline fill (even-odd, with holes) of rings [k0, k1) of a polygon set into the 1 m raster
 const _xs = new Float64Array(4096);
@@ -314,7 +461,7 @@ function townRasterBuild() {
     const sd = kb[i * 2]; if (!sd) continue; const e = kb[i * 2 + 1], nx = -TRK.tz[i] * sd, nz = TRK.tx[i] * sd;
     townCapsule(TRK.x[i] + nx * (e - 0.45), TRK.z[i] + nz * (e - 0.45), TRK.x[(i + 1) % N] + nx * (e - 0.45), TRK.z[(i + 1) % N] + nz * (e - 0.45), 0.5, TZ.KERB, ov);
   }
-  townTollFurniture(); {
+  townTollFurniture(); townCapsBuild(); {
     const B = T.tollRails, W = T.tollWalls, ov = new Uint8Array(18).fill(1); ov[TZ.WATER] = 0; ov[TZ.OUT] = 0; ov[TZ.ROAD] = 0;
     for (let i = 0; i < B.length; i += 5) townCapsule(B[i], B[i + 1], B[i + 2], B[i + 3], 0.35, TZ.WALL, ov);
     for (let i = 0; i < W.length; i += 6) townCapsule(W[i], W[i + 1], W[i + 2], W[i + 3], 0.3, TZ.WALL, ov);
@@ -393,7 +540,27 @@ function townBuildingGrid() {
   const T = TOWN, c = T.bcell, gw = T.bgw = Math.ceil((T.x1 - T.x0) / c), gh = T.bgh = Math.ceil((T.z1 - T.z0) / c), bb = T.bbox, n = T.bd.n;
   const cnt = new Int32Array(gw * gh + 1);
   const each = (b, f) => { const i0 = Math.max(0, Math.floor((bb[b * 4] - T.x0) / c)), i1 = Math.min(gw - 1, Math.floor((bb[b * 4 + 2] - T.x0) / c)), j0 = Math.max(0, Math.floor((bb[b * 4 + 1] - T.z0) / c)), j1 = Math.min(gh - 1, Math.floor((bb[b * 4 + 3] - T.z0) / c)); for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) f(j * gw + i); };
-  const solid = b => T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11;   // (the pier pavilion stands on the deck above the beach; shelters are open)
+  // a building a drivable road runs through for 3 m or more is a passage (an archway, a covered yard, or a mapping slip):
+  // it stays drawn but the cars pass
+  const pass = T.bpass = new Uint8Array(n), hit = new Uint16Array(n), tg = new Map();
+  for (let b = 0; b < n; b++) each(b, k => { let l = tg.get(k); if (!l) tg.set(k, l = []); l.push(b); });
+  const R = T.rd, ri = T.rinfo, Pp = T.bd.p, off = T.bd.off;
+  for (let r = 0; r < R.n; r++) {
+    if (ri[r * 4] > 9 || (ri[r * 4 + 2] & 1)) continue;
+    for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) {
+      const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az), m = Math.ceil(L);
+      for (let q = 0; q < m; q++) {
+        const x = ax + (bx - ax) * (q + 0.5) / m, z = az + (bz - az) * (q + 0.5) / m, l = tg.get(Math.floor((z - T.z0) / c) * gw + Math.floor((x - T.x0) / c)); if (!l) continue;
+        for (const b of l) {
+          if (x < bb[b * 4] || x > bb[b * 4 + 2] || z < bb[b * 4 + 1] || z > bb[b * 4 + 3]) continue;
+          let inside = false; for (let i = off[b], j = off[b + 1] - 1; i < off[b + 1]; j = i++) { const zi = Pp[i * 2 + 1], zj = Pp[j * 2 + 1]; if ((zi > z) !== (zj > z) && x < (Pp[j * 2] - Pp[i * 2]) * (z - zi) / (zj - zi) + Pp[i * 2]) inside = !inside; }
+          if (inside && ++hit[b] >= 3) pass[b] = 1;
+        }
+      }
+    }
+  }
+  let np = 0; for (let b = 0; b < n; b++) np += pass[b]; T.nPass = np;
+  const solid = b => T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11 && !pass[b];   // (the pier pavilion stands on the deck above the beach; shelters are open)
   for (let b = 0; b < n; b++) if (solid(b)) each(b, k => cnt[k + 1]++);
   for (let k = 0; k < gw * gh; k++) cnt[k + 1] += cnt[k];
   const items = T.bitems = new Int32Array(cnt[gw * gh]), fill = cnt.slice(); T.bstart = cnt;
@@ -404,7 +571,7 @@ function townSdfBuild() {
   const T = TOWN, w = HF.w, h = HF.h, Z = T.zone, zw = T.zw, zh = T.zh, d = new Float32Array(w * h);
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
     const zi = Math.min(zw - 1, i * 2), zj = Math.min(zh - 1, j * 2), c = Z[zj * zw + zi];
-    d[j * w + i] = c === TZ.WATER || c === TZ.OUT || c === TZ.WALL ? 1e9 : 0;
+    d[j * w + i] = c === TZ.WATER || c === TZ.OUT ? 1e9 : 0;   // (walls and barriers: exact capsules, townCapsQ)
   }
   const a = 2, b = 2 * Math.SQRT2;
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
@@ -420,15 +587,62 @@ function townSdfBuild() {
   const s = T.sdf = new Uint8Array(w * h); for (let k = 0; k < w * h; k++) s[k] = Math.min(255, Math.round(d[k] * 4));
 }
 
+// Walls and barriers the cars can hit, as capsules [ax, az, bx, bz, radius]: the Toll Road's steel barriers (on their
+// line) and retaining walls, the sea wall (its face to the beach). Gridded by 16 m cells; queried exactly (the 2 m
+// distance field would blur a 30 cm wall into the lane next to it).
+function townCapsBuild() {
+  const T = TOWN, c = 16, gw = Math.ceil((T.x1 - T.x0) / c), gh = Math.ceil((T.z1 - T.z0) / c), C = [];
+  const B = T.tollRails || [], Wt = T.tollWalls || [], Ws = T.walls || [];
+  for (let i = 0; i < B.length; i += 5) C.push(B[i], B[i + 1], B[i + 2], B[i + 3], 0.15);
+  for (let i = 0; i < Wt.length; i += 6) C.push(Wt[i], Wt[i + 1], Wt[i + 2], Wt[i + 3], 0.3);
+  for (let i = 0; i < Ws.length; i += 6) C.push(Ws[i], Ws[i + 1], Ws[i + 2], Ws[i + 3], 0.45);
+  const n = C.length / 5, cnt = new Int32Array(gw * gh + 1), cells = [];
+  for (let q = 0; q < n; q++) {
+    const r = C[q * 5 + 4] + 0.1, i0 = Math.max(0, Math.floor((Math.min(C[q * 5], C[q * 5 + 2]) - r - T.x0) / c)), i1 = Math.min(gw - 1, Math.floor((Math.max(C[q * 5], C[q * 5 + 2]) + r - T.x0) / c));
+    const j0 = Math.max(0, Math.floor((Math.min(C[q * 5 + 1], C[q * 5 + 3]) - r - T.z0) / c)), j1 = Math.min(gh - 1, Math.floor((Math.max(C[q * 5 + 1], C[q * 5 + 3]) + r - T.z0) / c));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { cells.push(j * gw + i, q); cnt[j * gw + i + 1]++; }
+  }
+  for (let k = 0; k < gw * gh; k++) cnt[k + 1] += cnt[k];
+  const it = new Int32Array(cnt[gw * gh]), fill = cnt.slice(); for (let e = 0; e < cells.length; e += 2) it[fill[cells[e]]++] = cells[e + 1];
+  T.caps = new Float32Array(C); T.capStart = cnt; T.capItems = it; T.capW = gw; T.capH = gh;
+}
+function townOnRoad(x, z) {
+  const T = TOWN, i = (x - T.x0) | 0, j = (z - T.z0) | 0;
+  return i >= 0 && j >= 0 && i < T.zw && j < T.zh && T.zone[j * T.zw + i] === TZ.ROAD;
+}
+function townCapsQ(x, z) {
+  const T = TOWN; CQ[2] = 0; if (!T.caps) return false;
+  const gi = ((x - T.x0) / 16) | 0, gj = ((z - T.z0) / 16) | 0; if (gi < 0 || gj < 0 || gi >= T.capW || gj >= T.capH) return false;
+  const k = gj * T.capW + gi, st = T.capStart, it = T.capItems, C = T.caps; let found = false;
+  for (let m = st[k]; m < st[k + 1]; m++) {
+    const q = it[m] * 5, ax = C[q], az = C[q + 1], ex = C[q + 2] - ax, ez = C[q + 3] - az, r = C[q + 4];
+    let t = ((x - ax) * ex + (z - az) * ez) / (ex * ex + ez * ez + 1e-9); t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = x - ax - ex * t, dz = z - az - ez * t, d = Math.sqrt(dx * dx + dz * dz);
+    if (d < r && r - d > CQ[2]) { CQ[0] = d > 1e-6 ? dx / d : 1; CQ[1] = d > 1e-6 ? dz / d : 0; CQ[2] = r - d + 0.02; found = true; }   // (pushed away from the wall's axis)
+  }
+  return found;
+}
+
 // ---------- physics (no allocation: registers and typed arrays only) ----------
 // ground under q = _gq (q[0] = x, q[1] = z): q[8] = height, returns the game zone. wi < 0: the car's centre, which also
 // finds the car on the circuit (V.s, V.d); far from the circuit (a side street) s stays where the car left it.
 function townGroundQ(wi) {
   const q = _gq, T = TOWN, x = q[0], z = q[1];
   if (wi < 0) townLocate();
-  let c = TZ.OUT;
-  if (x >= T.x0 && z >= T.z0) { const i = (x - T.x0) | 0, j = (z - T.z0) | 0; if (i < T.zw && j < T.zh) c = T.zone[j * T.zw + i]; }
-  hfAtQ(q); q[8] = q[6] + TZH[c];
+  let c = TZ.OUT, off = 0;
+  if (x >= T.x0 && z >= T.z0) {
+    const fx = x - T.x0, fz = z - T.z0, i = fx | 0, j = fz | 0, zw = T.zw;
+    if (i < zw && j < T.zh) {
+      // the surface's height above the heightfield, blended between the 1 m cells (a kerb is a short ramp, never a step)
+      const Z = T.zone; c = Z[j * zw + i];
+      const gx = fx - 0.5, gz = fz - 0.5, i0 = Math.floor(gx), j0 = Math.floor(gz);
+      if (i0 >= 0 && j0 >= 0 && i0 < zw - 1 && j0 < T.zh - 1) {
+        const u = gx - i0, v = gz - j0, o = j0 * zw + i0;
+        off = (TZH[Z[o]] * (1 - u) + TZH[Z[o + 1]] * u) * (1 - v) + (TZH[Z[o + zw]] * (1 - u) + TZH[Z[o + zw + 1]] * u) * v;
+      } else off = TZH[c];
+    }
+  }
+  hfAtQ(q); q[8] = q[6] + off;
   return TZZ[c];
 }
 function townLocate() {
@@ -482,7 +696,8 @@ function townCollide() {
     const c = Math.cos(V.yaw), s = Math.sin(V.yaw);
     const lx = k < 2 ? P.front : k < 4 ? -P.rear : k < 6 ? P.front * 0.35 : -P.rear * 0.35, lz = (k & 1) ? P.halfW : -P.halfW;
     const px = V.x + c * lx - s * lz, pz = V.z + s * lx + c * lz;
-    if (!townBuildingQ(px, pz) && !townBlockedQ(px, pz)) continue;
+    // (a building never blocks the carriageway: where a mapped footprint pokes into a road, the road wins)
+    if ((townOnRoad(px, pz) || !townBuildingQ(px, pz)) && !townBlockedQ(px, pz) && !townCapsQ(px, pz)) continue;
     townImpact(CQ[0], CQ[1], CQ[2], c * lx - s * lz, s * lx + c * lz);
   }
   // building corners inside the car's box
@@ -496,7 +711,7 @@ function townCollide() {
       const b = it[m]; if (V.x + rad < bb[b * 4] || V.x - rad > bb[b * 4 + 2] || V.z + rad < bb[b * 4 + 1] || V.z - rad > bb[b * 4 + 3]) continue;
       for (let i = off[b]; i < off[b + 1]; i++) {
         const dx = Pp[i * 2] - V.x, dz = Pp[i * 2 + 1] - V.z, lx = dx * c + dz * s, lz = -dx * s + dz * c;
-        if (lx > P.front || lx < -P.rear || lz > P.halfW || lz < -P.halfW) continue;
+        if (lx > P.front || lx < -P.rear || lz > P.halfW || lz < -P.halfW || townOnRoad(Pp[i * 2], Pp[i * 2 + 1])) continue;
         // shortest way out of the box for this corner: through a side or the front/back
         const pzs = P.halfW - Math.abs(lz), pxs = lx > 0 ? P.front - lx : lx + P.rear;
         let nx, nz, d;
