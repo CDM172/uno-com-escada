@@ -112,6 +112,78 @@ function townTerrainBuild(rs) {
     for (let dz = -40; dz <= 40; dz += 20) for (let dx = -40; dx <= 40; dx += 20) tollCell.add(Math.floor((x + dx) / 64) + ',' + Math.floor((z + dz) / 64));
   }
   const nearToll = (x, z, size) => { for (let zz = z; zz < z + size; zz += 64) for (let xx = x; xx < x + size; xx += 64) if (tollCell.has(Math.floor(xx / 64) + ',' + Math.floor(zz / 64))) return true; return false; };
+  // The 2 m detail patches (townDetailAdd: Kewstoke, the Toll Road, Sand Bay): leaves down to 32 m (2 m quads) wherever a
+  // leaf's own grid would stray more than DTOL (12 cm) from the heightfield at its 2 m nodes (dune crests, the banks of the cutting,
+  // the rhynes); elsewhere in the patches the coarser leaves stay.
+  const DTOL = 0.12, dT = T.dtlTile, dS = T.dtlSize, hv = new Float32Array((NQ + 1) * (NQ + 1));
+  const inDetail = (x, z, size) => {
+    if (!dT) return false;
+    const i0 = Math.max(0, Math.floor((x - T.x0) / dS)), i1 = Math.min(T.dtlTw - 1, Math.floor((x + size - 0.01 - T.x0) / dS));
+    const j0 = Math.max(0, Math.floor((z - T.z0) / dS)), j1 = Math.min(T.dtlTh - 1, Math.floor((z + size - 0.01 - T.z0) / dS));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (dT[j * T.dtlTw + i]) return true;
+    return false;
+  };
+  const leafErr = (x, z, size) => {
+    const st = size / NQ, k = Math.round(st / HF.res), n = Math.round(size / HF.res); let e = 0;
+    for (let j = 0; j <= NQ; j++) for (let i = 0; i <= NQ; i++) hv[j * (NQ + 1) + i] = H(x + i * st, z + j * st);
+    for (let b = 0; b <= n; b++) for (let a = 0; a <= n; a++) {
+      const px = x + a * HF.res, pz = z + b * HF.res; if (px < HF.x0 || pz < HF.z0 || px > hx1 || pz > hz1) continue;
+      const ia = Math.min(NQ - 1, Math.floor(a / k)), jb = Math.min(NQ - 1, Math.floor(b / k)), u = a / k - ia, v = b / k - jb, q = jb * (NQ + 1) + ia;
+      const s = (hv[q] * (1 - u) + hv[q + 1] * u) * (1 - v) + (hv[q + NQ + 1] * (1 - u) + hv[q + NQ + 2] * u) * v, d = Math.abs(s - H(px, pz));
+      if (d > e) { e = d; if (e > DTOL) return e; }
+    }
+    return e;
+  };
+  // Adaptive leaves (64 m leaves in the detail patches whose 4 m grid would stray more than DTOL): a restricted quadtree
+  // triangulation of the leaf's 2 m nodes (longest-edge bisection with nested errors, after Lindstrom and Pascucci): a node is
+  // used where the surface without it would stray more than DTOL from the heightfield, or where a finer node needs it. The
+  // border keeps the 4 m vertices of a regular 64 m leaf (and snaps them to a coarser neighbour), so the leaves still meet.
+  const RN = 32, RW = RN + 1, rh = new Float32Array(RW * RW), rE = new Float32Array(RW * RW), rV = new Int32Array(RW * RW);
+  const rqtLeaf = (x, z, size, nb) => {
+    const sp = size / RN, cst0 = size / NQ;
+    for (let b = 0; b <= RN; b++) for (let a = 0; a <= RN; a++) rh[b * RW + a] = H(x + a * sp, z + b * sp);
+    const snapB = (a, b, alongX, ns) => {   // (as snap() below: a border node onto a coarser neighbour's edge)
+      const cst = ns / NQ, t = alongX ? x + a * sp : z + b * sp, t0 = Math.floor((t - (alongX ? rx0 : rz0)) / cst) * cst + (alongX ? rx0 : rz0); if (Math.abs(t0 - t) < 1e-6) return;
+      const h0 = alongX ? H(t0, z + b * sp) : H(x + a * sp, t0), h1 = alongX ? H(t0 + cst, z + b * sp) : H(x + a * sp, t0 + cst);
+      rh[b * RW + a] = h0 + (h1 - h0) * (t - t0) / cst;
+    };
+    for (let q = 1; q < RN; q++) {
+      if (nb[0] > size) snapB(0, q, false, nb[0]); if (nb[1] > size) snapB(RN, q, false, nb[1]);
+      if (nb[2] > size) snapB(q, 0, true, nb[2]); if (nb[3] > size) snapB(q, RN, true, nb[3]);
+    }
+    // nested errors, finest first: axis(s) nodes (mid-edges of 2s squares; children: the diag(s/2) nodes around them), then
+    // diag(s) nodes (centres of 2s squares; children: the axis(s) nodes around them; their diagonal alternates)
+    const bstep = Math.round(cst0 / sp);
+    for (let s2 = 1; s2 <= RN / 2; s2 *= 2) {
+      for (let b = 0; b <= RN; b += s2) for (let a = 0; a <= RN; a += s2) {
+        const hx = a % (2 * s2) === s2 && b % (2 * s2) === 0, vz = a % (2 * s2) === 0 && b % (2 * s2) === s2; if (!hx && !vz) continue;
+        const k = b * RW + a; let e = hx ? Math.abs(rh[k] - (rh[k - s2] + rh[k + s2]) / 2) : Math.abs(rh[k] - (rh[k - s2 * RW] + rh[k + s2 * RW]) / 2);
+        if (s2 > 1) { const h2 = s2 / 2; for (const [da, db] of [[-h2, -h2], [h2, -h2], [-h2, h2], [h2, h2]]) { const ca = a + da, cb = b + db; if (ca >= 0 && cb >= 0 && ca <= RN && cb <= RN) e = Math.max(e, rE[cb * RW + ca]); } }
+        if ((hx && (b === 0 || b === RN)) || (vz && (a === 0 || a === RN))) e = (hx ? a : b) % bstep === 0 ? 1e9 : 0;   // (the border: the 4 m nodes always, no others)
+        rE[k] = e;
+      }
+      for (let b = s2; b < RN; b += 2 * s2) for (let a = s2; a < RN; a += 2 * s2) {
+        const k = b * RW + a, even = (((a / (2 * s2)) | 0) + ((b / (2 * s2)) | 0)) % 2 === 0;
+        const e = even ? Math.abs(rh[k] - (rh[k - s2 * RW - s2] + rh[k + s2 * RW + s2]) / 2) : Math.abs(rh[k] - (rh[k - s2 * RW + s2] + rh[k + s2 * RW - s2]) / 2);
+        rE[k] = Math.max(e, rE[k - s2], rE[k + s2], rE[k - s2 * RW], rE[k + s2 * RW]);
+      }
+    }
+    rV.fill(-1);
+    const vtx = (a, b) => {
+      const k = b * RW + a; if (rV[k] >= 0) return rV[k];
+      const px = x + a * sp, pz = z + b * sp;
+      return rV[k] = mb.v(px, rh[k], pz, H(px - sp, pz) - H(px + sp, pz), 2 * sp, H(px, pz - sp) - H(px, pz + sp), px, pz);
+    };
+    const tri = (ax, az, lx, lz, rx, rz) => {   // apex, left, right (nodes): split at the hypotenuse's middle where it is used
+      if (((lx + rx) & 1) === 0 && ((lz + rz) & 1) === 0 && Math.abs(lx - rx) + Math.abs(lz - rz) >= 2) {
+        const mx = (lx + rx) >> 1, mz = (lz + rz) >> 1;
+        if (rE[mz * RW + mx] > DTOL) { tri(mx, mz, ax, az, lx, lz); tri(mx, mz, rx, rz, ax, az); return; }
+      }
+      townTri(mb, vtx(ax, az), vtx(lx, lz), vtx(rx, rz), 0, 1, 0);
+    };
+    tri(RN, 0, 0, 0, RN, RN); tri(0, RN, RN, RN, 0, 0);
+    TOWNW.stats.rqtLeaves = (TOWNW.stats.rqtLeaves || 0) + 1;
+  };
   const boxD = (x, z, size) => { const dx = Math.max(T.x0 - (x + size), x - T.x1, 0), dz = Math.max(T.z0 - (z + size), z - T.z1, 0); return Math.hypot(dx, dz); };
   const cache = new Map();
   const split = (x, z, size) => {
@@ -119,7 +191,7 @@ function townTerrainBuild(rs) {
     const key = x + ',' + z + ',' + size; let v = cache.get(key);
     if (v === undefined) {
       const d = boxD(x, z, size);
-      if (d <= 0) v = size > 256 || (size > 128 && hasRoads0(x, z, size)) || (size > 64 && (hasRoads(x, z, size) || nearToll(x, z, size)));
+      if (d <= 0) v = size > 256 || (size > 128 && hasRoads0(x, z, size)) || (size > 64 && (hasRoads(x, z, size) || nearToll(x, z, size))) || (inDetail(x, z, size) && leafErr(x, z, size) > DTOL);
       else v = d < size * 1.0;
       cache.set(key, v);
     }
@@ -145,8 +217,12 @@ function townTerrainBuild(rs) {
     const x = leaves[li * 3], z = leaves[li * 3 + 1], size = leaves[li * 3 + 2], st = size / NQ;
     for (let j = -1; j <= NQ + 1; j++) for (let i = -1; i <= NQ + 1; i++) hg[(j + 1) * W + i + 1] = H(x + i * st, z + j * st);
     let hmax = -1e9; for (let k = 0; k < W * W; k++) if (hg[k] > hmax) hmax = hg[k];
-    if (hmax < T.sea - 0.6) continue;   // all under the sea (the water hides it)
+    if (hmax < T.sea - 0.6) {           // all under the sea (the water hides it), unless some of it is dry land below the tide
+      let all = true; for (let j = 0; j <= NQ && all; j += 2) for (let i = 0; i <= NQ && all; i += 2) all = townWetAt(x + i * st, z + j * st);
+      if (all) continue;
+    }
     const nb = [sizeAt(x - 1, z + size / 2), sizeAt(x + size + 1, z + size / 2), sizeAt(x + size / 2, z - 1), sizeAt(x + size / 2, z + size + 1)];
+    if (size === 64 && inDetail(x, z, size) && leafErr(x, z, size) > DTOL) { rqtLeaf(x, z, size, nb); continue; }
     const snap = (i, j, alongX, ns) => {
       const cst = ns / NQ, t = alongX ? x + i * st : z + j * st, t0 = Math.floor((t - (alongX ? rx0 : rz0)) / cst) * cst + (alongX ? rx0 : rz0); if (Math.abs(t0 - t) < 1e-6) return;
       const a = alongX ? H(t0, z + j * st) : H(x + i * st, t0), b = alongX ? H(t0 + cst, z + j * st) : H(x + i * st, t0 + cst);
@@ -712,7 +788,7 @@ function townPiersBuild(mb, rs) {
   for (let q = 0; q < RD.n; q++) {
     if (ri[q * 4] !== 12) continue;
     const k0 = RD.off[q], k1 = RD.off[q + 1] - 1, wd = ri[q * 4 + 1] * 0.1, hw = wd / 2;
-    const ya = hfAt(RD.p[k0 * 2], RD.p[k0 * 2 + 1]), yb = hfAt(RD.p[k1 * 2], RD.p[k1 * 2 + 1]), y = Math.max(ya, yb, TOWN.sea + 7) + 0.8;
+    const ya = hfAt(RD.p[k0 * 2], RD.p[k0 * 2 + 1]), yb = hfAt(RD.p[k1 * 2], RD.p[k1 * 2 + 1]), y = Math.max(ya, yb, TOWN.seaMid + 7) + 0.8;   // (not the tide's level: the deck stays put)
     const i0 = mb.ni;
     for (let k = k0; k < k1; k++) {
       const ax = RD.p[k * 2], az = RD.p[k * 2 + 1], bx = RD.p[k * 2 + 2], bz = RD.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.1) continue;
@@ -1003,15 +1079,29 @@ function townCircuitBuild(mb, rs) {
 // ---------------------------------------------------------------- water
 function townWaterBuild(rs) {
   const T = TOWN, mb = new MeshBuilder(1 << 16), sea = T.sea, st = 25;
-  // the sea: a grid where the ground can be under water (depth as colour), big quads beyond, out to the horizon
+  // the sea at the tide's level: a grid where the ground can be under water (depth as colour), big quads beyond, out to
+  // the horizon. The shader keeps only what the sea reaches at this tide (T.wet, T.wetFar: the land below the tide that it
+  // cannot flow to stays dry), so the grid covers just the 25 m cells that hold some of it.
   const gx0 = T.x0 - 1200, gz0 = T.z0 - 800, gx1 = T.x1, gz1 = T.z1 + 800, nx = Math.round((gx1 - gx0) / st), nz = Math.round((gz1 - gz0) / st);
   const i0 = mb.ni, vid = new Int32Array((nx + 1) * (nz + 1)).fill(-1), dep = new Float32Array((nx + 1) * (nz + 1));
   for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) { const x = gx0 + i * st, z = gz0 + j * st; dep[j * (nx + 1) + i] = sea - (x > T.x0 && z > T.z0 && x < T.x1 && z < T.z1 ? hfAt(x, z) : townH(x, z)); }
+  const any = new Uint8Array(nx * nz), any2 = new Uint8Array(nx * nz);
+  for (let j = 0; j < HF.h; j++) for (let i = 0; i < HF.w; i++) if (T.wet[j * HF.w + i]) {
+    const ci = Math.floor((HF.x0 + i * HF.res - gx0) / st), cj = Math.floor((HF.z0 + j * HF.res - gz0) / st); if (ci >= 0 && cj >= 0 && ci < nx && cj < nz) any[cj * nx + ci] = 1;
+  }
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const x = gx0 + i * st, z = gz0 + j * st;
+    if ((x + st <= HF.x0 || z + st <= HF.z0 || x >= HF.x0 + (HF.w - 1) * HF.res || z >= HF.z0 + (HF.h - 1) * HF.res) &&
+      (townWetAt(x, z) || townWetAt(x + st, z) || townWetAt(x, z + st) || townWetAt(x + st, z + st) || townWetAt(x + st / 2, z + st / 2))) any[j * nx + i] = 1;
+  }
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {   // (and the cells around them: a node on a cell's edge)
+    let a = 0; for (let b = Math.max(0, j - 1); b <= Math.min(nz - 1, j + 1) && !a; b++) for (let c = Math.max(0, i - 1); c <= Math.min(nx - 1, i + 1) && !a; c++) a = any[b * nx + c];
+    any2[j * nx + i] = a;
+  }
   const V = (i, j) => { const k = j * (nx + 1) + i; if (vid[k] < 0) { mb.color(sat(dep[k] / 7), 0, 0, 1); vid[k] = mb.v(gx0 + i * st, sea, gz0 + j * st, 0, 1, 0, 0, 0); } return vid[k]; };
   mb.mat(1);
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-    const k = j * (nx + 1) + i, m = Math.max(dep[k], dep[k + 1], dep[k + nx + 1], dep[k + nx + 2]);
-    if (m < -1.5) continue;
+    if (!any2[j * nx + i]) continue;
     townQuad(mb, V(i, j), V(i + 1, j), V(i + 1, j + 1), V(i, j + 1), 0, 1, 0);
   }
   rs.addRange(mb, i0, mb.ni, 7);
@@ -1030,7 +1120,9 @@ function townWaterBuild(rs) {
       for (let k = 0; k < n; k++) { us.push(A.p[(k0 + k) * 2]); vs.push(A.p[(k0 + k) * 2 + 1]); }
       for (let k = 0; k < n; k++) { const j = (k + 1) % n; ar += us[k] * vs[j] - us[j] * vs[k]; }
       if (ar < 0) { us.reverse(); vs.reverse(); }
-      if (Math.abs(ar) > 40 && lvl > sea + 0.3) {
+      // (a lake keeps its own level unless the sea is over it at this tide: the Marine Lake under a high tide that tops its
+      // causeway; tidal waters have no level of their own, -3276.8: the sea draws them)
+      if (Math.abs(ar) > 40 && lvl > -3000 && (lvl > sea + 0.3 || !townWetAt(us.reduce((a, b) => a + b) / n, vs.reduce((a, b) => a + b) / n))) {
         const tris = [], i2 = mb.ni; townEarClip(us, vs, n, tris); mb.color(0.5, 1, 0, 1);
         const v0 = mb.nv; for (let k = 0; k < n; k++) mb.v(us[k], lvl, vs[k], 0, 1, 0, 0, 0);
         for (let k = 0; k < tris.length; k += 3) townTri(mb, v0 + tris[k], v0 + tris[k + 1], v0 + tris[k + 2], 0, 1, 0);
@@ -1038,6 +1130,45 @@ function townWaterBuild(rs) {
       }
     }
     r += nr;
+  }
+  // rhynes, ditches and streams (T.ww): a ribbon of still water along each, laid in the lowest ground within 3 m of the
+  // mapped line (the channel the 2 m terrain shows in the detail patches; elsewhere the water lies just above the ground),
+  // broken where a road, a path or a building crosses it (a culvert or a bridge)
+  const WW = T.ww;
+  if (WW) {
+    const Z = T.zone, zw = T.zw, i3 = mb.ni, dry = new Uint8Array(18); let nq = 0;
+    for (const c of [TZ.ROAD, TZ.PAVE, TZ.KERB, TZ.BLD, TZ.PATH, TZ.TRACK, TZ.HARD, TZ.WALL, TZ.WATER, TZ.OUT]) dry[c] = 1;
+    const zoneAt = (x, z) => { const i = Math.floor(x - T.x0), j = Math.floor(z - T.z0); return i < 0 || j < 0 || i >= zw || j >= T.zh ? TZ.OUT : Z[j * zw + i]; };
+    mb.color(0.1, 1, 0, 1);
+    for (let r2 = 0; r2 < WW.n; r2++) {
+      if (WW.info[r2 * 2] === 1) continue;   // (rivers: their water areas and the tide)
+      const hw = Math.max(0.5, WW.info[r2 * 2 + 1] * 0.05 - 0.15), P = [];
+      for (let k = WW.off[r2]; k < WW.off[r2 + 1] - 1; k++) {
+        const ax = WW.p[k * 2], az = WW.p[k * 2 + 1], bx = WW.p[k * 2 + 2], bz = WW.p[k * 2 + 3], m = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
+        for (let q = 0; q < m; q++) P.push(ax + (bx - ax) * q / m, az + (bz - az) * q / m);
+      }
+      const kl = WW.off[r2 + 1] - 1; P.push(WW.p[kl * 2], WW.p[kl * 2 + 1]);
+      const n = P.length / 2, NX = new Float32Array(n), NZ = new Float32Array(n), O = new Float32Array(n), O2 = new Float32Array(n);
+      for (let q = 0; q < n; q++) {
+        const a = Math.max(0, q - 1), b = Math.min(n - 1, q + 1), tx = P[b * 2] - P[a * 2], tz = P[b * 2 + 1] - P[a * 2 + 1], l = Math.hypot(tx, tz) || 1;
+        NX[q] = -tz / l; NZ[q] = tx / l;
+        let best = hfAt(P[q * 2], P[q * 2 + 1]) - 0.15, bo = 0;   // (the mapped line, unless the ground 15 cm lower lies beside it)
+        for (let d = -3; d <= 3; d += 0.5) { const y = hfAt(P[q * 2] + NX[q] * d, P[q * 2 + 1] + NZ[q] * d); if (y < best) { best = y; bo = d; } }
+        O[q] = bo;
+      }
+      for (let q = 0; q < n; q++) { let s = 0, c = 0; for (let e = -2; e <= 2; e++) { const qq = q + e; if (qq >= 0 && qq < n) { s += O[qq]; c++; } } O2[q] = s / c; }
+      let prev = null;
+      for (let q = 0; q < n; q++) {
+        const x = P[q * 2] + NX[q] * O2[q], z = P[q * 2 + 1] + NZ[q] * O2[q];
+        if (dry[zoneAt(x, z)]) { prev = null; continue; }
+        const y = hfAt(x, z) + 0.06;
+        const L0 = mb.v(x + NX[q] * hw, y, z + NZ[q] * hw, 0, 1, 0, 0, 0), R0 = mb.v(x - NX[q] * hw, y, z - NZ[q] * hw, 0, 1, 0, 0, 0);
+        if (prev) { townQuad(mb, prev[0], prev[1], R0, L0, 0, 1, 0); nq++; }
+        prev = [L0, R0];
+      }
+    }
+    if (mb.ni > i3) rs.addRange(mb, i3, mb.ni, 5, 1500);
+    TOWNW.stats.ditches = nq;
   }
   rs.upload(mb);
 }
@@ -1781,12 +1912,18 @@ function townGroundsBuild(mb, rs) {
 
 // ---------------------------------------------------------------- all together
 function townWorldBuild() {
-  const T = TOWN, defs = { SEA_LVL: T.sea.toFixed(3) };
+  // (SEA_LVL: the tide's level; HW_LVL: spring high water, the top of the wet shore; FAR_*: the far grid of the sea's mask)
+  const T = TOWN, defs = { SEA_LVL: T.sea.toFixed(3), SEA_MID: T.seaMid.toFixed(3), HW_LVL: Math.max(T.sea, T.tides.high).toFixed(3), FAR_X0: T.fx0.toFixed(3), FAR_Z0: T.fz0.toFixed(3), FAR_RES: T.fres.toFixed(3) };
   const famG = mkFamily('townGround', { src: 'mat_town_ground', defs, shadowBias: 4, shadowSlope: 3 });
   const famT = mkFamily('town', { src: 'mat_town', defs, shadowBias: 3, shadowSlope: 2.5 });
   const famW = mkFamily('townWater', { src: 'mat_water', defs, noShadow: true });
   const atlas = townAtlas();
-  TOWNW.ground = new RangeSet(famG); TOWNW.water = new RangeSet(famW);
+  // the sea's masks at this tide (townWetBuild): the town's 2 m nodes and the far grid
+  const wtx = mkTex(HF.w, HF.h, 'r8unorm', TU.TB | TU.CD), ftx = mkTex(T.fw, T.fh, 'r8unorm', TU.TB | TU.CD);
+  G.dev.queue.writeTexture({ texture: wtx }, T.wet, { bytesPerRow: HF.w }, [HF.w, HF.h]);
+  G.dev.queue.writeTexture({ texture: ftx }, T.wetFar, { bytesPerRow: T.fw }, [T.fw, T.fh]);
+  TOWNW.ground = new RangeSet(famG);
+  TOWNW.water = new RangeSet(famW, G.dev.createBindGroup({ layout: famW.bgl3, entries: [{ binding: 0, resource: wtx.createView() }, { binding: 1, resource: ftx.createView() }] }));
   TOWNW.town = new RangeSet(famT, G.dev.createBindGroup({ layout: famT.bgl3, entries: [{ binding: 0, resource: atlas.createView() }] }));
   townTerrainBuild(TOWNW.ground);
   // piers first (the pier pavilion stands on its deck), then the town tile by tile
