@@ -68,7 +68,7 @@ const UKT = {
 const UK_TW = 8, UK_TH = 4, UK_TS = 512;
 const ukTileUV = t => [(t % UK_TW) / UK_TW, Math.floor(t / UK_TW) / UK_TH, 1 / UK_TW, 1 / UK_TH];
 // shared state of a planting run (set by ukBegin from vegPlace)
-const UKV = { push: null, n: 0, stats: { trees: 0, shrubs: 0, ground: 0, hedge: 0, hedgeM: 0 }, dims: null };
+const UKV = { push: null, n: 0, stats: { trees: 0, shrubs: 0, ground: 0, hedge: 0, hedgeM: 0 }, time: {}, tris: null, leaves: null };
 
 // ------------------------------------------------------------------------------------------------ leaf layer buffer
 // Same vertex layout as VegLeafBuf (veg_leaf / veg_uk_leaf), corner offsets over a 1.2 m range.
@@ -93,7 +93,7 @@ class UKLeafBuf extends VegLeafBuf {
 // Painted with canvas 2D paths in 512² tiles, each from the base (bottom centre: the end of the card at the branch) up.
 // The leaves are drawn at a little over life size relative to a card of ~0.8-1.2 m.
 function ukAtlasBuild() {
-  const TS = UK_TS, W = TS * UK_TW, H = TS * UK_TH;
+  const TS = UK_TS, W = TS * UK_TW, H = TS * UK_TH, t0 = performance.now();
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const g = cv.getContext('2d', { willReadFrequently: true });
   const rnd = mkRng(4417), rr = (a, b) => a + (b - a) * rnd();
@@ -370,7 +370,8 @@ function ukAtlasBuild() {
     g.fillStyle = hsl(28, 30, 12); g.fillRect(0, 0, TS, TS);
     for (let k = 0; k < 2400; k++) leaf(rr(-10, 522), rr(-10, 522), rr(0, TAU), rr(16, 30), rr(6, 11), jit([30, 38, 22], 10, 10, 8), rnd() < 0.5 ? 'oak' : 'beech');
   });
-  return ukAtlasFinish(g, W, H);
+  const t1 = performance.now(), tex = ukAtlasFinish(g, W, H); UKV.time.atlasPaint = t1 - t0; UKV.time.atlasMips = performance.now() - t1;
+  return tex;
 }
 // pixels → linear premultiplied colour, colour bled into the transparent areas, mips that keep the alpha coverage, a
 // smoothed alpha at level 0 (as vegAtlasBuild in 33_veg_a_atlas.js)
@@ -794,7 +795,7 @@ const UK_ARCH = [
 ];
 // builds the British archetypes (meshes + leaf layers), the shader tables and the size info the planting API uses
 function ukArchetypes() {
-  VEG_NT = UK_NT; VEG_NA = UK_NA;
+  const t0 = performance.now(); VEG_NT = UK_NT; VEG_NA = UK_NA;
   VEG.dims = new Float32Array(UK_NA * 4);
   const out = [], H = UKV.H = new Float32Array(UK_NA), Rr = UKV.R = new Float32Array(UK_NA);
   for (let i = 0; i < UK_NA; i++) {
@@ -810,6 +811,7 @@ function ukArchetypes() {
     `const VEG_H = array<f32, ${UK_NA}>(${Array.from(H).map(x => (x * 1.03).toFixed(2)).join(', ')});\n` +
     `const VEG_UKV = array<vec4f, ${UK_NA}>(${UK_ARCH.map(a => f4([a.v[0], a.v[1], (a.P && a.P.flutter) || a.v[2], a.v[3]])).join(', ')});\n` +
     `const VEG_UKM = array<vec4f, ${UK_NA}>(${UK_ARCH.map(a => f4(a.m)).join(', ')});\n`;
+  UKV.time.meshes = performance.now() - t0; UKV.tris = out.map(m => m.ni / 3); UKV.leaves = out.map(m => m.leaves ? m.leaves.n : 0);
   return out;
 }
 
@@ -929,7 +931,7 @@ function ukHedge(pts, kind, opt) {
   UKV.stats.hedge += n; UKV.stats.hedgeM += along;
   return n;
 }
-function ukBegin(push) { UKV.push = push; UKV.stats.trees = UKV.stats.shrubs = UKV.stats.ground = UKV.stats.hedge = UKV.stats.hedgeM = 0; }
+function ukBegin(push) { UKV.push = push; UKV.stats.trees = UKV.stats.shrubs = UKV.stats.ground = UKV.stats.hedge = UKV.stats.hedgeM = 0; UKV.t0 = performance.now(); if (window.__cap) window.__cap.ukv = UKV; }
 
 // ------------------------------------------------------------------------- the old archetype roles on the town map
 // townVegPlace pushes archetypes 0..8 of the Serra's set; here they become British species chosen from the zone under
@@ -1078,4 +1080,4 @@ function ukZoneHedges() {
   return n;
 }
 // end of the town's planting: the zone hedges if the map code laid none
-function ukEnd() { if (TOWN.on && !UKV.stats.hedge && !Q.has('nohedge')) ukZoneHedges(); }
+function ukEnd() { const t = performance.now(); if (TOWN.on && !UKV.stats.hedge && !Q.has('nohedge')) ukZoneHedges(); UKV.time.zoneHedges = performance.now() - t; UKV.time.place = performance.now() - UKV.t0; }

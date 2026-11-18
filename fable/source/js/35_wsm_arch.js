@@ -472,6 +472,7 @@ function archLook(r) {
 const AG = { S: null, P: null, rec: null, nrec: 0 };
 const APR = { BOX: 0, WEDGE: 1, POT: 2, CYL: 3, DISH: 4, RAIL: 5, N: 6 };   // prototypes (RAIL: alpha-tested family)
 const ACLS = { BIG: 0, SMALL: 1 };                                             // detail drawn within 200 m / 120 m
+const ARAIL = { IRON: 0, PICKET: 1, GLASS: 2, BARS: 3, TIMBER: 4, ORNATE: 5 };  // railing patterns (RAIL colour alpha x 15)
 class ArchInst {
   constructor() { this.cap = 1 << 15; this.n = 0; this._mk(null); }
   _mk(old) {
@@ -1270,7 +1271,98 @@ function archPorches(B) {
     for (const [s0, s1] of [[0.1, gs - 0.6], [gs + 0.6, F.L - 0.1]]) {
       if (s1 - s0 < 0.4) continue;
       const mx = F.ax + F.dx * (s0 + s1) / 2 + F.nx * (dp - 0.1), mz = F.az + F.dz * (s0 + s1) / 2 + F.nz * (dp - 0.1);
-      aPropYaw(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, mx, y0, mz, F.dx, F.dz, s1 - s0, 0.9, 1, [0.78, 0.78, 0.75], 0.25);
+      aPropYaw(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, mx, y0, mz, F.dx, F.dz, s1 - s0, 0.9, 1, [0.78, 0.78, 0.75], ARAIL.TIMBER / 15);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- shop fronts: fascia with its sign, pilasters and
+// consoles, a cornice, sometimes a canvas awning
+function archShopfronts(B) {
+  const st = B.st, mb = AG.S;
+  for (const e of B.E) {
+    if (e.role !== 'F') continue;
+    // runs of shop columns, one per house unit
+    const runs = []; let cur = null;
+    for (const c of e.cols) {
+      if (c.g !== AC.GSHOP) { cur = null; continue; }
+      if (cur && cur.unit === c.unit) cur.b = c.b; else runs.push(cur = { a: c.a, b: c.b, unit: c.unit });
+    }
+    for (const rn of runs) {
+      const W = rn.b - rn.a; if (W < 1.5) continue;
+      const yB = B.yf + st.shopTop, fh = Math.max(0.42, Math.min(0.78, st.gH - st.shopTop - 0.06)), sc = (rn.a + rn.b) / 2;
+      const P = (sx, d) => [e.ax + e.dx * sx + e.nx * d, e.az + e.dz * sx + e.nz * d], m = P(sc, 0.08);
+      const bg = AP.shopBg[st.signBg % AP.shopBg.length];
+      aSolid(mb, AM.PAINT, B.rec, ASC.SMOOTH, bg);
+      aBox(mb, m[0], yB, m[1], e.dx, e.dz, W - 0.1, fh, 0.16, 1 | 2 | 4 | 8);
+      // the sign: uv in metres across the fascia (the shader fits the word from the sign atlas)
+      aSetMat(mb, AM.SIGN, B.rec, 0, 0, 0, 0);
+      const f0 = P(rn.a + 0.05, 0.16), f1 = P(rn.b - 0.05, 0.16);
+      const i0 = mb.v(f0[0], yB, f0[1], e.nx, 0, e.nz, 0, 0), i1 = mb.v(f1[0], yB, f1[1], e.nx, 0, e.nz, W - 0.1, 0), i2 = mb.v(f1[0], yB + fh, f1[1], e.nx, 0, e.nz, W - 0.1, fh), i3 = mb.v(f0[0], yB + fh, f0[1], e.nx, 0, e.nz, 0, fh);
+      aQ(mb, i0, i1, i2, i3, e.nx, 0, e.nz);
+      const stoneCol = st.dress === AD.BATH ? st.dressCol : [0.74, 0.73, 0.7];
+      aPropYaw(APR.BOX, ACLS.BIG, AM.STONE, B.rec, m[0] + e.nx * 0.03, yB + fh, m[1] + e.nz * 0.03, e.dx, e.dz, W + 0.2, 0.1, 0.28, stoneCol, ASC.SMOOTH / 15);
+      for (const sx of [rn.a + 0.16, rn.b - 0.16]) {
+        const q = P(sx, 0.06);
+        aPropYaw(APR.BOX, ACLS.BIG, AM.STONE, B.rec, q[0], B.yf - 0.15, q[1], e.dx, e.dz, 0.32, st.shopTop + 0.15, 0.12, stoneCol, ASC.SMOOTH / 15);
+        const k = P(sx, 0.13); aPropYaw(APR.BOX, ACLS.BIG, AM.STONE, B.rec, k[0], yB - 0.08, k[1], e.dx, e.dz, 0.26, fh + 0.12, 0.26, stoneCol, ASC.SMOOTH / 15);
+      }
+      if (st.awning) {
+        // a canvas awning: sloping out 1.4 m from under the fascia, a scalloped valance, side cheeks
+        const ac = archPick(AP.awning, ((st.hash >> 17) & 7) / 8), y1 = yB - 0.02, dO = 1.45, y2 = y1 - 0.62;
+        aSetMat(mb, AM.AWNING, B.rec, Math.round(ac[0] * 255), Math.round(ac[1] * 255), Math.round(ac[2] * 255), 255);
+        const a0 = P(rn.a + 0.2, 0.1), a1 = P(rn.b - 0.2, 0.1), b1 = P(rn.b - 0.2, dO), b0 = P(rn.a + 0.2, dO);
+        const sl = Math.hypot(dO, y1 - y2), ny = dO / sl, nn = (y1 - y2) / sl;
+        const j0 = mb.v(a0[0], y1, a0[1], e.nx * nn, ny, e.nz * nn, 0, 0), j1 = mb.v(a1[0], y1, a1[1], e.nx * nn, ny, e.nz * nn, W - 0.4, 0), j2 = mb.v(b1[0], y2, b1[1], e.nx * nn, ny, e.nz * nn, W - 0.4, sl), j3 = mb.v(b0[0], y2, b0[1], e.nx * nn, ny, e.nz * nn, 0, sl);
+        aQ(mb, j0, j1, j2, j3, e.nx * nn, ny, e.nz * nn); aQ(mb, j0, j3, j2, j1, -e.nx * nn, -ny, -e.nz * nn);
+        const k0 = mb.v(b0[0], y2, b0[1], e.nx, 0, e.nz, 0, 0), k1 = mb.v(b1[0], y2, b1[1], e.nx, 0, e.nz, W - 0.4, 0), k2 = mb.v(b1[0], y2 - 0.26, b1[1], e.nx, 0, e.nz, W - 0.4, -0.26), k3 = mb.v(b0[0], y2 - 0.26, b0[1], e.nx, 0, e.nz, 0, -0.26);
+        aQ(mb, k0, k1, k2, k3, e.nx, 0, e.nz); aQ(mb, k0, k3, k2, k1, -e.nx, 0, -e.nz);
+        for (const [p0, p1, sg] of [[a0, b0, -1], [a1, b1, 1]]) { const t0 = mb.v(p0[0], y1, p0[1], e.dx * sg, 0, e.dz * sg, 0, 0), t1 = mb.v(p1[0], y2, p1[1], e.dx * sg, 0, e.dz * sg, dO, 0), t2 = mb.v(p1[0], y2 - 0.26, p1[1], e.dx * sg, 0, e.dz * sg, dO, -0.26); aT(mb, t0, t1, t2, e.dx * sg, 0, e.dz * sg); aT(mb, t0, t2, t1, -e.dx * sg, 0, -e.dz * sg); }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- balconies and verandas on the seafront hotels, and on
+// blocks of flats
+function archBalconies(B) {
+  const st = B.st, mb = AG.S; if (!st.balcony || st.storeys < 2) return;
+  const S = ARCH_S, F = B.E[B.f];
+  if (st.style === S.HOTEL) {
+    if (F.cols.some(c => c.bay)) return;
+    // a first-floor veranda the width of the front: a slab on slim posts, a railing, French windows behind it
+    const y = B.yf + st.gH - 0.12, dp = 1.35, s0 = 0.15, s1 = F.L - 0.15, m = [F.ax + F.dx * (s0 + s1) / 2 + F.nx * dp / 2, F.az + F.dz * (s0 + s1) / 2 + F.nz * dp / 2];
+    aSolid(mb, AM.STONE, B.rec, ASC.SMOOTH, [0.78, 0.78, 0.75]);
+    aBox(mb, m[0], y, m[1], F.dx, F.dz, s1 - s0, 0.22, dp, 63);
+    const np = Math.max(2, Math.round((s1 - s0) / 2.6) + 1);
+    for (let i = 0; i < np; i++) {
+      const t = s0 + 0.12 + (s1 - s0 - 0.24) * i / (np - 1), px = F.ax + F.dx * t + F.nx * (dp - 0.12), pz = F.az + F.dz * t + F.nz * (dp - 0.12), g = B.G(px, pz);
+      aPropYaw(APR.CYL, ACLS.BIG, AM.PAINT, B.rec, px, g - 0.05, pz, F.dx, F.dz, 0.13, y - g + 0.05, 0.13, [0.05, 0.08, 0.07], 0.6);
+    }
+    const rx = F.ax + F.dx * (s0 + s1) / 2 + F.nx * (dp - 0.06), rz = F.az + F.dz * (s0 + s1) / 2 + F.nz * (dp - 0.06);
+    aPropYaw(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, rx, y + 0.22, rz, F.dx, F.dz, s1 - s0, 0.95, 1, [0.05, 0.08, 0.07], ARAIL.ORNATE / 15);
+    for (const c of F.cols) if (c.up === AC.UWIN) c.up = AC.UFRENCH;
+    if (st.storeys >= 3) {   // the veranda's own canopy over the first floor
+      const y2 = B.yf + st.gH + st.uH - 0.35;
+      aSolid(mb, AM.LEAD, B.rec, ASC.LEAD, [0.2, 0.22, 0.22]);
+      aBox(mb, m[0], y2, m[1], F.dx, F.dz, s1 - s0, 0.12, dp, 63);
+      for (let i = 0; i < np; i++) { const t = s0 + 0.12 + (s1 - s0 - 0.24) * i / (np - 1), px = F.ax + F.dx * t + F.nx * (dp - 0.12), pz = F.az + F.dz * t + F.nz * (dp - 0.12); aPropYaw(APR.CYL, ACLS.BIG, AM.PAINT, B.rec, px, y + 0.2, pz, F.dx, F.dz, 0.09, y2 - y - 0.2, 0.09, [0.05, 0.08, 0.07], 0.6); }
+    }
+    return;
+  }
+  // flats: a balcony on some columns of every upper floor
+  for (const e of B.E) {
+    if (e.role !== 'F' && e.role !== 'B') continue;
+    for (const c of e.cols) {
+      if (c.up !== AC.UWIN || ((st.hash >> ((c.unit | 0) % 13)) & 1)) continue;
+      const w = Math.min(2.6, c.b - c.a - 0.3), px = e.ax + e.dx * c.c + e.nx * 0.6, pz = e.az + e.dz * c.c + e.nz * 0.6;
+      for (let k = 1; k < st.storeys; k++) {
+        const y = B.yf + st.gH + (k - 1) * st.uH - 0.1;
+        aSolid(mb, AM.STONE, B.rec, ASC.CONCRETE, [0.55, 0.55, 0.52]);
+        aBox(mb, px, y, pz, e.dx, e.dz, w, 0.16, 1.2, 63);
+        aPropYaw(APR.RAIL, ACLS.BIG, AM.PAINT, B.rec, px + e.nx * 0.57, y + 0.16, pz + e.nz * 0.57, e.dx, e.dz, w, 1.05, 1, [0.6, 0.62, 0.62], (st.hash & 1 ? ARAIL.GLASS : ARAIL.BARS) / 15);
+        c.up = AC.UFRENCH;
+      }
     }
   }
 }
