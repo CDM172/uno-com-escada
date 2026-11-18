@@ -639,7 +639,8 @@ def lane_no_pavement(t, cls, pts):
 # ---------------------------------------------------------------- the road survey (tools/osm/road_survey.py), optional
 # Kerb lines measured from the LIDAR per OSM way: every 10 m along each exported road the nearest survey station's kerb
 # offsets, pavement widths and edge types, turned into the road's own direction. Junction corners with a measured radius.
-SURVEY_STEP = 10.0
+SURVEY_STEP = 5.0
+SURVEY_Q = 0.5          # (a measured edge: LIDAR or interpolated between LIDAR values, with at least this confidence)
 SURVEY_EDGE = {'u': 0, 'K': 1, 'k': 2, 'S': 3, 'D': 4, 'O': 5, 'H': 6, 'W': 7, 'V': 8}
 
 
@@ -649,16 +650,22 @@ def load_survey(path, log):
         S = json.load(f)
     if S.get('format') != 'road_survey':
         raise ValueError(f'{path}: not a road survey')
-    ways = {}
+    ways, summ = {}, {}
     for wid, parts in S.get('ways', {}).items():
         st = []
         for p in parts:
             for i in range(len(p['x'])):
                 g = lambda k, d=None: (p[k][i] if k in p and p[k] is not None and i < len(p[k]) else d)
-                st.append((p['x'][i], p['z'][i], g('hd', 0.0), g('kl'), g('kr'), g('pl', 0.0) or 0.0, g('pr', 0.0) or 0.0,
-                           g('el', 'u') or 'u', g('er', 'u') or 'u', g('cl', 'D') or 'D', g('cr', 'D') or 'D'))
+                okl = g('cl', 'D') in ('L', 'I') and (g('ql', 0) or 0) >= SURVEY_Q and g('kl') is not None
+                okr = g('cr', 'D') in ('L', 'I') and (g('qr', 0) or 0) >= SURVEY_Q and g('kr') is not None
+                st.append((p['x'][i], p['z'][i], g('hd', 0.0), g('kl') if okl else None, g('kr') if okr else None, g('pl', 0.0) or 0.0, g('pr', 0.0) or 0.0,
+                           g('el', 'u') or 'u', g('er', 'u') or 'u', 'L' if okl else 'D', 'L' if okr else 'D'))
         if st:
+            # the way's summary: its measured width (median where both edges are measured), its pavements (each side:
+            # present along at least a quarter of it)
+            wm = sorted(q[4] - q[3] for q in st if q[3] is not None and q[4] is not None)
             ways[int(wid)] = st
+            summ[int(wid)] = (wm[len(wm) // 2] if len(wm) >= 3 else None, sum(1 for q in st if q[5] > 0.3) / len(st), sum(1 for q in st if q[6] > 0.3) / len(st))
     corners = []
     for j in S.get('junctions', []):
         arms = j.get('arms', [])
@@ -668,7 +675,7 @@ def load_survey(path, log):
                 continue
             corners.append((j['x'], j['z'], arms[a]['hd'], arms[b]['hd'], c['r']))
     log(f'road survey {path}: {len(ways)} ways, {sum(len(v) for v in ways.values())} stations, {len(corners)} measured corners')
-    return ways, corners
+    return ways, corners, summ
 
 
 def survey_samples(part, st):
@@ -1359,7 +1366,16 @@ def main():
             lanes |= (16 if rb else 0) | (32 if side_none & 1 else 0) | (64 if side_none & 2 else 0)
             if cls <= 7:
                 for (ax, az), (bx, bz) in zip(part, part[1:]): roadgrid.add(ax, az, bx, bz, cls)
-            rd.append((part, cls, w if toll or steps else lane_width(t, cls, part, w), flags, lanes, oid))
+            wp = w if toll or steps else lane_width(t, cls, part, w)
+            sm = survey[2].get(oid) if survey is not None and cls <= 9 and not steps else None
+            if sm and t.get('oneway') == '-1': sm = (sm[0], sm[2], sm[1])     # (the way turned round: its sides swap)
+            if sm:     # (the road survey's measured width and pavements, where it has them, instead of the estimates)
+                if sm[0] and 2.4 <= sm[0] <= 20: wp = sm[0]
+                if not toll:
+                    flags &= ~32; lanes &= ~(32 | 64)
+                    if sm[1] < 0.25 and sm[2] < 0.25: flags |= 32
+                    else: lanes |= (32 if sm[1] < 0.25 else 0) | (64 if sm[2] < 0.25 else 0)
+            rd.append((part, cls, wp, flags, lanes, oid))
     for oid, t, pts in piers:                       # pier decks (Birnbeck Pier and its jetty)
         for part in clip_polyline(pts, 0):
             if len(part) >= 2:
@@ -1492,7 +1508,7 @@ def main():
     blob.add('rinfo', np.asarray([[r[1], min(255, int(round(r[2] * 10))), r[3], r[4]] for r in rd], 'u1').ravel())
     if rhs: blob.add('rh', np.asarray(rhs, '<i2'))
     if survey is not None:    # the road survey: samples per road (count, then kl, kr, pl, pr, edges each), measured corners
-        sw, sc = survey
+        sw, sc, _ = survey
         sn, sv = [], []
         for r in rd:
             st = sw.get(r[5]) if len(r) > 5 and r[1] <= 9 else None
