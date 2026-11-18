@@ -1037,7 +1037,9 @@ function townWaterBuild(rs) {
       for (let k = 0; k < n; k++) { us.push(A.p[(k0 + k) * 2]); vs.push(A.p[(k0 + k) * 2 + 1]); }
       for (let k = 0; k < n; k++) { const j = (k + 1) % n; ar += us[k] * vs[j] - us[j] * vs[k]; }
       if (ar < 0) { us.reverse(); vs.reverse(); }
-      if (Math.abs(ar) > 40 && lvl > sea + 0.3) {
+      // (a lake keeps its own level unless the sea is over it at this tide: the Marine Lake under a high tide that tops its
+      // causeway; tidal waters have no level of their own, -3276.8: the sea draws them)
+      if (Math.abs(ar) > 40 && lvl > -3000 && (lvl > sea + 0.3 || !townWetAt(us.reduce((a, b) => a + b) / n, vs.reduce((a, b) => a + b) / n))) {
         const tris = [], i2 = mb.ni; townEarClip(us, vs, n, tris); mb.color(0.5, 1, 0, 1);
         const v0 = mb.nv; for (let k = 0; k < n; k++) mb.v(us[k], lvl, vs[k], 0, 1, 0, 0, 0);
         for (let k = 0; k < tris.length; k += 3) townTri(mb, v0 + tris[k], v0 + tris[k + 1], v0 + tris[k + 2], 0, 1, 0);
@@ -1045,6 +1047,45 @@ function townWaterBuild(rs) {
       }
     }
     r += nr;
+  }
+  // rhynes, ditches and streams (T.ww): a ribbon of still water along each, laid in the lowest ground within 3 m of the
+  // mapped line (the channel the 2 m terrain shows in the detail patches; elsewhere the water lies just above the ground),
+  // broken where a road, a path or a building crosses it (a culvert or a bridge)
+  const WW = T.ww;
+  if (WW) {
+    const Z = T.zone, zw = T.zw, i3 = mb.ni, dry = new Uint8Array(18); let nq = 0;
+    for (const c of [TZ.ROAD, TZ.PAVE, TZ.KERB, TZ.BLD, TZ.PATH, TZ.TRACK, TZ.HARD, TZ.WALL, TZ.WATER, TZ.OUT]) dry[c] = 1;
+    const zoneAt = (x, z) => { const i = Math.floor(x - T.x0), j = Math.floor(z - T.z0); return i < 0 || j < 0 || i >= zw || j >= T.zh ? TZ.OUT : Z[j * zw + i]; };
+    mb.color(0.1, 1, 0, 1);
+    for (let r2 = 0; r2 < WW.n; r2++) {
+      if (WW.info[r2 * 2] === 1) continue;   // (rivers: their water areas and the tide)
+      const hw = Math.max(0.5, WW.info[r2 * 2 + 1] * 0.05 - 0.15), P = [];
+      for (let k = WW.off[r2]; k < WW.off[r2 + 1] - 1; k++) {
+        const ax = WW.p[k * 2], az = WW.p[k * 2 + 1], bx = WW.p[k * 2 + 2], bz = WW.p[k * 2 + 3], m = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
+        for (let q = 0; q < m; q++) P.push(ax + (bx - ax) * q / m, az + (bz - az) * q / m);
+      }
+      const kl = WW.off[r2 + 1] - 1; P.push(WW.p[kl * 2], WW.p[kl * 2 + 1]);
+      const n = P.length / 2, NX = new Float32Array(n), NZ = new Float32Array(n), O = new Float32Array(n), O2 = new Float32Array(n);
+      for (let q = 0; q < n; q++) {
+        const a = Math.max(0, q - 1), b = Math.min(n - 1, q + 1), tx = P[b * 2] - P[a * 2], tz = P[b * 2 + 1] - P[a * 2 + 1], l = Math.hypot(tx, tz) || 1;
+        NX[q] = -tz / l; NZ[q] = tx / l;
+        let best = hfAt(P[q * 2], P[q * 2 + 1]) - 0.15, bo = 0;   // (the mapped line, unless the ground 15 cm lower lies beside it)
+        for (let d = -3; d <= 3; d += 0.5) { const y = hfAt(P[q * 2] + NX[q] * d, P[q * 2 + 1] + NZ[q] * d); if (y < best) { best = y; bo = d; } }
+        O[q] = bo;
+      }
+      for (let q = 0; q < n; q++) { let s = 0, c = 0; for (let e = -2; e <= 2; e++) { const qq = q + e; if (qq >= 0 && qq < n) { s += O[qq]; c++; } } O2[q] = s / c; }
+      let prev = null;
+      for (let q = 0; q < n; q++) {
+        const x = P[q * 2] + NX[q] * O2[q], z = P[q * 2 + 1] + NZ[q] * O2[q];
+        if (dry[zoneAt(x, z)]) { prev = null; continue; }
+        const y = hfAt(x, z) + 0.06;
+        const L0 = mb.v(x + NX[q] * hw, y, z + NZ[q] * hw, 0, 1, 0, 0, 0), R0 = mb.v(x - NX[q] * hw, y, z - NZ[q] * hw, 0, 1, 0, 0, 0);
+        if (prev) { townQuad(mb, prev[0], prev[1], R0, L0, 0, 1, 0); nq++; }
+        prev = [L0, R0];
+      }
+    }
+    if (mb.ni > i3) rs.addRange(mb, i3, mb.ni, 5, 1500);
+    TOWNW.stats.ditches = nq;
   }
   rs.upload(mb);
 }

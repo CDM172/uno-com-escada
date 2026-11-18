@@ -1274,8 +1274,14 @@ def main():
         dij, dtl, base2 = terrain_wsm.bake_detail(TOWN, Hn, NEAR_RES, NEAR_Q, lidar, [r[0] for r in rd if r[3] & 128], log)
     else:
         w2, h2 = terrain_wsm.grid_nodes(TOWN); base2 = terrain_wsm.catrom_up(np.round(Hn / NEAR_Q) * NEAR_Q, NEAR_RES, terrain_wsm.DETAIL_RES, w2, h2)
+    # ---- rhynes, ditches and streams (OSM waterway lines, culverts left out; cached next to the OSM pickle)
+    wways = terrain_wsm.read_waterways(a.pbf, TOWN, proj, unproj, (a.osm_pickle + '.waterways.pkl') if a.osm_pickle else None)
+    wlines, winfo_w = terrain_wsm.waterway_lines(wways, clip_polyline, dp_simplify, dedupe)
+    log(f'waterways: {len(wlines)} lines, {sum(1 for i in winfo_w if i[0] == 3)} rhynes and ditches, {sum(1 for i in winfo_w if i[0] == 2)} streams, '
+        f'{sum(1 for i in winfo_w if i[0] == 1)} rivers; {sum(len(l) for l in wlines)} points')
     # ---- spill levels on that 2 m heightfield (the tide: the sea reaches only what it can flow to over the ground)
-    spill = terrain_wsm.bake_spill(terrain_wsm.with_detail(base2, dij, dtl), log); del base2
+    H2 = terrain_wsm.with_detail(base2, dij, dtl); del base2
+    spill = terrain_wsm.bake_spill(H2, log)
 
     # ---- buildings
     # pier decks: their height from the DSM (the most common level over the deck outline: the deck, not the pavilion)
@@ -1325,12 +1331,16 @@ def main():
                 # level: the terrain at the shore, lower quartile (the LIDAR sees the water surface)
                 hs = dem.sample(xs, zs, 15)
                 lvl = float(np.percentile(hs, 25)) - 0.4
+                if lidar is not None:            # the DTM's water surface inside; a tidal water (the sea reaches it at mid tide)
+                    wl = terrain_wsm.water_level(lidar, rings[0], H2, spill, TOWN, SEA_LEVEL, point_in_ring)   # has no level of its own
+                    if wl is not None: lvl = wl
             ac.append((c, rings, lvl))
     # painter's order: by class priority then id order (stable)
     ORDER = {1: 0, 3: 1, 2: 2, 12: 2, 13: 3, 11: 3, 15: 3, 5: 4, 4: 5, 9: 6, 7: 7, 6: 8, 14: 8, 16: 8, 10: 9, 8: 10}
     ac.sort(key=lambda a: ORDER.get(a[0], 5))
     log(f'land cover rings: {sum(len(a[1]) for a in ac)} in {len(ac)} polygons')
 
+    del H2
     # ---- trees: nodes and tree rows (every 9 m)
     tp = [(x, z) for _, x, z in trees]
     for _, pts in tree_rows:
@@ -1389,9 +1399,12 @@ def main():
     blob = Blob()
     blob.add('near', predict_encode(Hn, NEAR_Q))
     blob.add('far', predict_encode(Hf, FAR_Q))
-    if len(dij):                     # 2 m detail tiles: (tile row, tile column) pairs, int8 residuals (DETAIL_Q m), row by row
+    if len(dij):                     # 2 m detail tiles: (tile row, tile column) pairs, int8 residual codes (terrain_wsm.detail_encode), row by row
         blob.add('dtlij', np.ascontiguousarray(dij, '<u2').ravel()); blob.add('dtl', np.ascontiguousarray(dtl, np.int8).ravel())
     blob.add('spill', np.ascontiguousarray(spill, np.uint8).ravel())   # per 2 m node (terrain_wsm.spill_bytes)
+    if wlines:                       # waterways: polylines + (type: 1 river, 2 stream, 3 rhyne/drain/ditch; width dm)
+        cnt4, st4, d4 = enc_polys(wlines)
+        blob.add('wwn', cnt4); blob.add('ww0', st4); blob.add('wwxz', d4); blob.add('wwinfo', np.asarray(winfo_w, 'u1').ravel())
     blob.add('cxz', np.round(Q * 100).astype('<i4').ravel())            # circuit centre line, cm
     blob.add('cedge', np.clip(np.round(cedge * 10), 0, 255).astype('u1').ravel())
     blob.add('croom', np.clip(np.round(room * 10), 0, 255).astype('u1').ravel())
@@ -1472,7 +1485,7 @@ def main():
         'v': 1, 'origin': [ORIGIN_LAT, ORIGIN_LON], 'q': QXY, 'town': list(TOWN), 'sea': SEA_LEVEL,
         'near': {'x0': TOWN[0], 'z0': TOWN[1], 'res': NEAR_RES, 'w': nw, 'h': nh, 'q': NEAR_Q},
         'far': {'x0': fx0, 'z0': fz0, 'res': FAR_RES, 'w': fw, 'h': fw, 'q': FAR_Q},
-        'detail': {'res': terrain_wsm.DETAIL_RES, 'ts': terrain_wsm.DETAIL_TS, 'q': terrain_wsm.DETAIL_Q, 'n': int(len(dij))},
+        'detail': {'res': terrain_wsm.DETAIL_RES, 'ts': terrain_wsm.DETAIL_TS, 'q': terrain_wsm.DETAIL_Q, 'knee': terrain_wsm.DETAIL_KNEE, 'q2': terrain_wsm.DETAIL_Q2, 'n': int(len(dij))},
         'tides': terrain_wsm.TIDES, 'spill': {'res': terrain_wsm.DETAIL_RES, 'q': terrain_wsm.SPILL_Q, 'cap': terrain_wsm.SPILL_CAP},
         'circuit': {'n': int(len(Q)), 'length': round(float(clen), 1), 'streets': cseq},
         'counts': {'roads': len(rd), 'buildings': len(bl), 'areas': len(ac), 'trees': len(tp)},

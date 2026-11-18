@@ -73,7 +73,7 @@ async function townLoad() {
   T.nw = n.w; T.nh = n.h; T.nres = n.res; T.nx0 = n.x0; T.nz0 = n.z0; T.near = townGrid(A.near, n.w, n.h, n.q);
   T.fw = f.w; T.fh = f.h; T.fres = f.res; T.fx0 = f.x0; T.fz0 = f.z0; T.far = townGrid(A.far, f.w, f.h, f.q);
   // 2 m detail patches of the terrain (Kewstoke, the Toll Road, Sand Bay): tiles of ts x ts residuals on the 2 m grid
-  const dm = M.detail; T.dtl = dm && dm.n && A.dtl ? { ij: A.dtlij, r: A.dtl, n: dm.n, ts: dm.ts, q: dm.q, res: dm.res } : null;
+  const dm = M.detail; T.dtl = dm && dm.n && A.dtl ? { ij: A.dtlij, r: A.dtl, n: dm.n, ts: dm.ts, q: dm.q, knee: dm.knee || 127, q2: dm.q2 || dm.q, res: dm.res } : null;
   const q = M.q;
   T.rd = townPolys(A.rn, A.r0, A.rxz, q); T.rinfo = A.rinfo;
   T.bd = townPolys(A.bn, A.b0, A.bxz, q); T.binfo = A.binfo;
@@ -90,6 +90,8 @@ async function townLoad() {
   // polylines + code, height dm, material)
   T.furn = A.fnxz ? { xz: A.fnxz, c: A.fnc, n: A.fnc.length / 2 } : null;
   T.bnd = A.wn ? Object.assign(townPolys(A.wn, A.w0, A.wxz, q), { info: A.winfo }) : null;
+  // rhynes, ditches and streams (OSM waterway lines, no culverts): polylines + (type: 1 river, 2 stream, 3 rhyne or ditch; width dm)
+  T.ww = A.wwn ? Object.assign(townPolys(A.wwn, A.ww0, A.wwxz, q), { info: A.wwinfo }) : null;
   T.dorm = A.dmxz ? { xz: A.dmxz, b: A.dmb, h: A.dmh, n: A.dmb.length } : null;
   if (A.ltn) {                           // LIDAR tree crowns: x, z, height
     const P = townPolys(A.ltn, A.lt0, A.ltd, q), n = P.off[P.n], L = T.ltrees = new Float32Array(n * 3);
@@ -417,11 +419,13 @@ function townWetAt(x, z) {
 // from each patch's edge in the bake). T.dtlTile marks the tiles (for the terrain mesh's refinement).
 function townDetailAdd(D, w, h) {
   const T = TOWN, P = T.dtl; if (!P || P.res !== HF.res) return;
-  const ts = P.ts, q = P.q, ij = P.ij, r = P.r, tw = Math.ceil(w / ts), th = Math.ceil(h / ts), mk = T.dtlTile = new Uint8Array(tw * th);
+  const ts = P.ts, ij = P.ij, r = P.r, tw = Math.ceil(w / ts), th = Math.ceil(h / ts), mk = T.dtlTile = new Uint8Array(tw * th);
   T.dtlTw = tw; T.dtlTh = th; T.dtlSize = ts * HF.res;
+  const lut = new Float32Array(256);   // int8 code -> metres: P.q steps up to the knee, P.q2 beyond (quarry faces)
+  for (let c = -128; c < 128; c++) { const a = Math.abs(c); lut[c & 255] = Math.sign(c) * (a <= P.knee ? a * P.q : P.knee * P.q + (a - P.knee) * P.q2); }
   for (let t = 0; t < P.n; t++) {
     const tj = ij[t * 2], ti = ij[t * 2 + 1], j0 = tj * ts, i0 = ti * ts, o = t * ts * ts; mk[tj * tw + ti] = 1;
-    for (let j = 0; j < ts && j0 + j < h; j++) { const row = (j0 + j) * w + i0, rr = o + j * ts; for (let i = 0; i < ts && i0 + i < w; i++) D[row + i] += r[rr + i] * q; }
+    for (let j = 0; j < ts && j0 + j < h; j++) { const row = (j0 + j) * w + i0, rr = o + j * ts; for (let i = 0; i < ts && i0 + i < w; i++) D[row + i] += lut[r[rr + i] & 255]; }
   }
 }
 // The autopilot's room on each side of the circuit, kept a metre inside the carriageway as drawn (the 1 m raster), so its
@@ -494,6 +498,18 @@ function townRasterBuild() {
       const rr = Math.min(6, Math.max(2.5, L[q + 2] * 0.4)), ci = (L[q] - T.x0) | 0, cj = (L[q + 1] - T.z0) | 0, n = Math.ceil(rr);
       for (let j = Math.max(0, cj - n); j <= Math.min(zh - 1, cj + n); j++) for (let i = Math.max(0, ci - n); i <= Math.min(zw - 1, ci + n); i++)
         if ((i - ci) * (i - ci) + (j - cj) * (j - cj) <= rr * rr && Z[j * zw + i] === TZ.NONE) Z[j * zw + i] = TZ.WOOD;
+    }
+  }
+  // rhynes and ditches: a soft muddy channel (the water is drawn in it, 34_wsm_world.js) between grassy banks
+  if (T.ww) {
+    const W = T.ww, bank = new Uint8Array(18), bed = new Uint8Array(18);
+    for (const c of [TZ.NONE, TZ.FIELD, TZ.GARDEN]) bank[c] = 1;
+    for (const c of [TZ.NONE, TZ.FIELD, TZ.GARDEN, TZ.GRASS, TZ.DUNE, TZ.WOOD, TZ.SAND, TZ.MUD]) bed[c] = 1;
+    for (let r = 0; r < W.n; r++) {
+      if (W.info[r * 2] === 1) continue;   // (rivers: their own water areas and the tide)
+      const hw = W.info[r * 2 + 1] * 0.05;
+      for (let k = W.off[r]; k < W.off[r + 1] - 1; k++) townCapsule(W.p[k * 2], W.p[k * 2 + 1], W.p[k * 2 + 2], W.p[k * 2 + 3], hw + 1.6, TZ.GRASS, bank);
+      for (let k = W.off[r]; k < W.off[r + 1] - 1; k++) townCapsule(W.p[k * 2], W.p[k * 2 + 1], W.p[k * 2 + 2], W.p[k * 2 + 3], hw, TZ.MUD, bed);
     }
   }
   // the sea at the tide's level, over the ground it can flow to (the bake's spill levels: the fields behind Sand Bay's dunes
