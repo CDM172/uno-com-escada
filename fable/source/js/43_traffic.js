@@ -10,7 +10,7 @@
 //   moving   one object slot each (the 64-slot budget: TRAF_N of them, after the player's car), one model each from a pool of
 //            decoded garage cars (white paint: the colour is the slot's parameter, wgsl/mat_car.wgsl with TRAFFIC). They
 //            follow their lane, slow for bends, stop behind the player's car or another car, turn at junctions, turn
-//            round where the road ends or meets the circuit, and are moved to somewhere out of sight when they get far.
+//            round where the road ends or meets the circuit, and are moved somewhere behind the player's car when they get far.
 // Physics runs in gameStep (trafficStep, 120 Hz, deterministic: its own random numbers, reset by gameRestart); the player
 // collides with both kinds in vehicleCollide (trafficCollide). No allocation in the game loop.
 const TRAF_N = 16;                     // moving cars
@@ -200,7 +200,7 @@ function trafPlace(i, cx, cz, rMin, rMax, tries) {
     const q = lo; if (TRAF.kind[q] !== 1 || k >= RD.off[q + 1] - 1) continue;
     const u = trafRnd() * TRAF.segLen[k], x = P[k * 2] + TRAF.segTx[k] * u, z = P[k * 2 + 1] + TRAF.segTz[k] * u, d = Math.hypot(x - cx, z - cz);
     if (d < rMin || d > rMax) continue;
-    if (TQ[12] && (x - cx) * R.cam.fwd[0] + (z - cz) * R.cam.fwd[2] > d * 0.2) continue;   // (moving one on: not in front of the camera)
+    if (TQ[12] && (x - cx) * Math.cos(VEH.yaw) + (z - cz) * Math.sin(VEH.yaw) > d * 0.2) continue;   // (moving one on: not ahead of the player's car, where the camera looks; not the camera itself, so that the laps repeat)
     let clear = true; for (let j = 0; j < TRAF_N && clear; j++) if (j !== i && TRAF.slot[j] !== -2) { const o = j * 6; if (Math.hypot(TRAF.pose[o] - x, TRAF.pose[o + 1] - z) < 12) clear = false; }
     if (!clear) continue;
     const oneway = (TOWN.rinfo[q * 4 + 2] & 2) !== 0;
@@ -286,7 +286,8 @@ function trafficStep() {
     // the player's car ahead in the lane (or crossing it): stop short of it
     {
       const fwd = -(dpx * hx + dpz * hz), lz = dpx * hz - dpz * hx, side = lz < 0 ? -lz : lz;   // the player's car from this one: ahead, to the side
-      if (fwd > 0 && fwd < 32 && side < 2.6 + VP.halfW) { const vb = Math.max(0, (fwd - hl - VP.front - 2.5) * 0.7); if (vb < vt) vt = vb; }
+      // (in the lane ahead, or anywhere just ahead: the road may bend towards it)
+      if (fwd > 0 && ((fwd < 32 && side < 2.6 + VP.halfW) || (fwd < 16 && side < 5))) { const vb = Math.max(0, (fwd - hl - VP.front - 2.5) * 0.7); if (vb < vt) vt = vb; }
     }
     // another moving car ahead, going the same way
     for (let j = 0; j < TRAF_N; j++) {
@@ -309,7 +310,7 @@ function trafficReset() {
   if (!TRAF.ready) return;
   TRAF.rng = 0x2545f491; TRAF.stepN = 0;
   const V = VEH;
-  for (let i = 0; i < TRAF_N; i++) TRAF.slot[i] = TRAF.slot[i] === -2 ? -2 : TRAF.slot[i];
+  for (let i = 0; i < TRAF_N; i++) { TRAF.pose[i * 6] = 1e9; TRAF.pose[i * 6 + 1] = 1e9; }   // (nobody placed yet: the places do not depend on the last run)
   for (let i = 0; i < TRAF_N; i++) if (!trafPlace(i, V.x, V.z, 40 + i * 12, 320, 400)) trafPlace(i, V.x, V.z, 0, 1e9, 4000);
 }
 
