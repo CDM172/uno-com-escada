@@ -315,13 +315,13 @@ function townRoadSurface(D, w, h, res) {
   for (let o = 0; o < w * h; o++) if (blend[o] > 0) D[o] += ((owner[o] < 255 ? surf[o] : hsum[o] / wsum[o]) - D[o]) * blend[o];
   // junctions where a lesser road meets a more important one: [minor road, its end (0 first / 1 last), the major road's
   // half width] (for the give-way lines)
-  const J = T.junc = [];
+  const J = T.junc = [], rankJ = r => rank(prof[r].cls) + ((ri[r * 4 + 2] & 128) ? 0.5 : 0);   // (the Toll Road gives way at its ends)
   for (const nd of nodes) {
     if (nd.m.length < 6) continue;
-    let rmin = 9, hwMaj = 0; for (let e = 0; e < nd.m.length; e += 3) { const rk = rank(prof[nd.m[e]].cls); if (rk < rmin) rmin = rk; }
-    for (let e = 0; e < nd.m.length; e += 3) { const r = nd.m[e]; if (rank(prof[r].cls) === rmin) hwMaj = Math.max(hwMaj, ri[r * 4 + 1] * 0.05); }
+    let rmin = 9, hwMaj = 0; for (let e = 0; e < nd.m.length; e += 3) { const rk = rankJ(nd.m[e]); if (rk < rmin) rmin = rk; }
+    for (let e = 0; e < nd.m.length; e += 3) { const r = nd.m[e]; if (rankJ(r) === rmin) hwMaj = Math.max(hwMaj, ri[r * 4 + 1] * 0.05); }
     for (let e = 0; e < nd.m.length; e += 3) {
-      const r = nd.m[e], q = nd.m[e + 1], P = prof[r]; if (rank(P.cls) <= rmin || P.cls > 8) continue;
+      const r = nd.m[e], q = nd.m[e + 1], P = prof[r]; if (rankJ(r) <= rmin || P.cls > 8) continue;
       if (q !== 0 && q !== P.x.length - 1) continue;
       J.push(r, q === 0 ? 0 : 1, hwMaj);
     }

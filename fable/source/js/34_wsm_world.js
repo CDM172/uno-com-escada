@@ -198,11 +198,54 @@ function townInOtherRoad(G, x, z, self) {
   }
   return false;
 }
+// A flight of stone steps (Monk's Steps up through the woods from Kewstoke church, the town's steps): worn limestone
+// treads and risers climbing the ground, a rise of about 0.16 m, longer goings where it eases (up to a 1.6 m landing);
+// each tread level, just clear of the ground across its width, skirted down to the ground at its sides
+const _stp = new Float64Array(8192);
+function townSteps(mb, r) {
+  const T = TOWN, R = T.rd, ri = T.rinfo, hw = Math.max(0.55, ri[r * 4 + 1] * 0.05), k0 = R.off[r], k1 = R.off[r + 1];
+  // the centre line resampled every 0.1 m: x, z, ground (the highest across the width)
+  const S = _stp; let n = 0;
+  for (let k = k0; k < k1 - 1 && n < 2700; k++) {
+    const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.01) continue;
+    const m = Math.max(1, Math.ceil(L / 0.1)), nx = -(bz - az) / L * hw, nz = (bx - ax) / L * hw;
+    for (let q = (n ? 1 : 0); q <= m && n < 2700; q++) { const x = ax + (bx - ax) * q / m, z = az + (bz - az) * q / m; S[n * 3] = x; S[n * 3 + 1] = z; S[n * 3 + 2] = Math.max(hfAt(x, z), hfAt(x + nx, z + nz), hfAt(x - nx, z - nz)); n++; }
+  }
+  if (n < 4) return;
+  const up = S[(n - 1) * 3 + 2] >= S[2], at = i => up ? i : n - 1 - i;   // (always built climbing)
+  let i0 = 0, y = S[at(0) * 3 + 2] + 0.03, hp = hash2(r, 77);
+  const tread = (ia, ib, yt, ynext) => {
+    const a = at(ia), b = at(ib), ax = S[a * 3], az = S[a * 3 + 1], bx = S[b * 3], bz = S[b * 3 + 1], L = Math.hypot(bx - ax, bz - az) || 1e-3;
+    const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz * hw, nz = tx * hw, h = hash2(ia, r);
+    mb.mat(15).color(0.33 + h * 0.05, 0.325 + h * 0.05, 0.3 + h * 0.04, 1);
+    const A = mb.v(ax - nx, yt, az - nz, 0, 1, 0, 0, 0), B = mb.v(bx - nx, yt, bz - nz, 0, 1, 0, 0, 0), C = mb.v(bx + nx, yt, bz + nz, 0, 1, 0, 0, 0), D = mb.v(ax + nx, yt, az + nz, 0, 1, 0, 0, 0);
+    townQuad(mb, A, B, C, D, 0, 1, 0);
+    // the riser up to the next tread (facing down the flight), the skirts at both sides
+    mb.color(0.27 + h * 0.04, 0.265 + h * 0.04, 0.245 + h * 0.03, 1);
+    if (!ia) { const g0 = Math.min(hfAt(ax - nx, az - nz), hfAt(ax + nx, az + nz)) - 0.1, E = mb.v(ax - nx, g0, az - nz, -tx, 0, -tz, 0, 0), F = mb.v(ax + nx, g0, az + nz, -tx, 0, -tz, 0, 0), G = mb.v(ax + nx, yt, az + nz, -tx, 0, -tz, 0, 0), H = mb.v(ax - nx, yt, az - nz, -tx, 0, -tz, 0, 0); townQuad(mb, E, F, G, H, -tx, 0, -tz); }   // (the first riser, from the ground)
+    if (ynext > yt + 0.01) { const E = mb.v(bx - nx, yt, bz - nz, -tx, 0, -tz, 0, 0), F = mb.v(bx + nx, yt, bz + nz, -tx, 0, -tz, 0, 0), G = mb.v(bx + nx, ynext, bz + nz, -tx, 0, -tz, 0, 0), H = mb.v(bx - nx, ynext, bz - nz, -tx, 0, -tz, 0, 0); townQuad(mb, E, F, G, H, -tx, 0, -tz); }
+    for (const sd of [-1, 1]) {
+      const px = sd * nx, pz = sd * nz, ga = hfAt(ax + px, az + pz) - 0.15, gb = hfAt(bx + px, bz + pz) - 0.15; if (ga > yt - 0.04 && gb > yt - 0.04) continue;
+      const E = mb.v(ax + px, Math.min(ga, yt), az + pz, px, 0, pz, 0, 0), F = mb.v(bx + px, Math.min(gb, yt), bz + pz, px, 0, pz, 0, 0), G = mb.v(bx + px, Math.max(yt, ynext), bz + pz, px, 0, pz, 0, 0), H = mb.v(ax + px, yt, az + pz, px, 0, pz, 0, 0);
+      townQuad(mb, E, F, G, H, px, 0, pz);
+    }
+  };
+  const ST = [];   // [i0, i1, tread height]: level, clear of the ground, never lower than the one below
+  for (let i = 1; i < n; i++) {
+    const g = S[at(i) * 3 + 2], going = (i - i0) * 0.1;
+    if ((g + 0.03 - y >= 0.15 + hp * 0.03 && going >= 0.28) || going >= 1.6 || i === n - 1) {
+      let yt = y; for (let j = i0; j <= i; j++) yt = Math.max(yt, S[at(j) * 3 + 2] + 0.03);
+      ST.push(i0, i, yt); y = yt + 0.005; i0 = i;
+    }
+  }
+  for (let q = 0; q < ST.length; q += 3) tread(ST[q], ST[q + 1], ST[q + 2], q + 3 < ST.length ? ST[q + 5] : ST[q + 2]);
+}
 const _rp = { x: new Float64Array(4096), z: new Float64Array(4096), s: new Float64Array(4096), nx: new Float64Array(4096), nz: new Float64Array(4096), m: new Float64Array(4096), ok: new Uint8Array(4096), jn: new Float64Array(4096) };
 const _tn = new Float64Array(3);
 function townRoad(mb, r, G) {
   const T = TOWN, R = T.rd, ri = T.rinfo, cls = ri[r * 4], wd = ri[r * 4 + 1] * 0.1, fl = ri[r * 4 + 2], lanes = ri[r * 4 + 3] & 15;   // (the high bits: roundabout, no pavement left or right)
   if (cls === 12) return;
+  if (cls === 10 && (fl & 16)) { townSteps(mb, r); return; }   // (a flight of steps: treads and risers)
   const P = _rp, k0 = R.off[r], k1 = R.off[r + 1]; let n = 0;
   // densify (6 m) so the ribbon follows the ground
   for (let k = k0; k < k1; k++) {
@@ -240,6 +283,11 @@ function townRoad(mb, r, G) {
     if (cls >= 2 && cls <= 6 && wd >= 5 && dc < 1100 && !(fl & 4)) fla |= 4;
     if (fl & 64) fla |= 8;              // white edge lines (the Toll Road)
     if (fl & 128) fla |= 16;            // a lane through the woods: leaf litter, worn edges
+    else if (cls >= 4 && P.x[0] > 1300 && P.z[0] < -1450) {   // (Kewstoke and Sand Bay: the lanes under Worlebury's trees too)
+      let wd = 0, nn = 0;
+      for (let i = 0; i < n; i += 2) for (const sd of [-1, 1]) { const x = P.x[i] + P.nx[i] * sd * (hw + 3), z = P.z[i] + P.nz[i] * sd * (hw + 3), ii = (x - T.x0) | 0, jj = (z - T.z0) | 0; nn++; if (ii >= 0 && jj >= 0 && ii < T.zw && jj < T.zh && T.zone[jj * T.zw + ii] === TZ.WOOD) wd++; }
+      if (wd > nn * 0.55) fla |= 16;
+    }
   }
   if (cls === 10 && (fl & 16)) fla |= 32;  // steps
   if (fl & 8) fla |= 64;                    // block paving (drives, car park aisles, setts)
@@ -869,6 +917,30 @@ function townTollBuild(mb, rs) {
       }
     }
   }
+  // the toll booth at the Kewstoke end (by the Kewstoke Toll Gate bus stop): a white timber hut on the hill side with
+  // its window to the road and a felted roof, the barrier's red and white arm raised beside it
+  for (let r = 0; r < R.n; r++) {
+    if (!(ri[r * 4 + 2] & 128)) continue;
+    const k0 = R.off[r], k1 = R.off[r + 1] - 1, d0 = Math.hypot(R.p[k0 * 2] - 1421, R.p[k0 * 2 + 1] + 1690), d1 = Math.hypot(R.p[k1 * 2] - 1421, R.p[k1 * 2 + 1] + 1690);
+    if (Math.min(d0, d1) > 80) continue;
+    const k = d0 < d1 ? k0 : k1, kn = d0 < d1 ? k0 + 1 : k1 - 1, hw = ri[r * 4 + 1] * 0.05, x0 = R.p[k * 2], z0 = R.p[k * 2 + 1];
+    const dx = R.p[kn * 2] - x0, dz = R.p[kn * 2 + 1] - z0, L = Math.hypot(dx, dz) || 1, tx = dx / L, tz = dz / L, s = Math.min(16, L * 0.8), cx = x0 + tx * s, cz = z0 + tz * s;
+    const sd = hfAt(cx - tz * 6, cz + tx * 6) > hfAt(cx + tz * 6, cz - tx * 6) ? 1 : -1, o = hw + 2.1, bx = cx - tz * sd * o, bz = cz + tx * sd * o, y = hfAt(bx, bz) + 0.05;
+    mb.push(m4mul(m4(), m4translate(m4(), bx, 0, bz), m4rotY(m4(), -Math.atan2(tz, tx))));   // (local x along the road, +z its right)
+    const rz = -sd;   // (towards the road, in the local frame)
+    mb.mat(15).color(0.4, 0.4, 0.38, 1); mb.box(0, y + 0.1, 0, 3.1, 0.3, 2.5);
+    mb.color(0.74, 0.73, 0.69, 1); mb.box(0, y + 1.45, 0, 2.6, 2.4, 2.0);
+    mb.mat(13, 20).color(0.035, 0.045, 0.055, 1); mb.box(0, y + 1.6, rz * 1.005, 1.9, 1.0, 0.04); mb.box(1.305, y + 1.6, 0, 0.04, 0.8, 1.1);
+    mb.mat(15).color(0.8, 0.8, 0.77, 1); mb.box(0, y + 1.08, rz * 1.06, 2.1, 0.06, 0.16);
+    mb.color(0.1, 0.24, 0.14, 1); mb.box(-1.305, y + 1.25, 0, 0.05, 2.0, 0.85);
+    mb.color(0.1, 0.1, 0.11, 1); mb.box(0, y + 2.74, 0, 3.3, 0.14, 2.7); mb.color(0.8, 0.8, 0.78, 1); mb.box(0, y + 2.62, 0, 3.34, 0.12, 2.74);
+    mb.color(0.85, 0.84, 0.8, 1); mb.box(0, y + 2.3, rz * 1.04, 2.0, 0.34, 0.05);
+    // the barrier: a post at the edge of the road, its arm standing up
+    const px = 2.4, pz = rz * (o - hw - 0.5);
+    mb.color(0.8, 0.8, 0.78, 1); mb.box(px, y + 0.5, pz, 0.3, 1.0, 0.3);
+    for (let q = 0; q < 5; q++) { if (q & 1) mb.color(0.85, 0.85, 0.82, 1); else mb.color(0.62, 0.05, 0.04, 1); mb.box(px, y + 1.0 + q * 0.7 + 0.35, pz, 0.1, 0.7, 0.1); }
+    mb.pop();
+  }
   if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 300); }
 }
 
@@ -1469,6 +1541,66 @@ function townFurnitureBuild(mb, rs) {
       acc -= L;
     }
   }
+  // ---- Sand Bay: the timber posts along the dune side of Beach Road and the lanes behind the dunes, every 1.8 m (they
+  // keep the cars off the dunes), with a gap where a path goes through
+  let npo = 0;
+  for (let r = 0; r < R.n; r++) {
+    const cls = ri[r * 4], fl = ri[r * 4 + 2]; if (cls < 4 || cls > 8 || (fl & 128)) continue;
+    const hw = ri[r * 4 + 1] * 0.05; let acc = 0;
+    for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) {
+      const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.1) continue;
+      if (Math.max(az, bz) > -2300) { acc = (acc + L) % 1.8; continue; }
+      const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz, nz = tx;
+      for (let e = 1.8 - acc; e < L; e += 1.8) for (const sd of [-1, 1]) {
+        const cx = ax + tx * e, cz = az + tz * e, x = cx + nx * sd * (hw + 0.8), z = cz + nz * sd * (hw + 0.8), zo = zoneAt(cx + nx * sd * (hw + 3), cz + nz * sd * (hw + 3)), zc = zoneAt(x, z);
+        if ((zo !== TZ.DUNE && zo !== TZ.SAND) || zc === TZ.ROAD || zc === TZ.PAVE || zc === TZ.BLD || zc === TZ.PATH || zc === TZ.WATER) continue;
+        const Y = hfAt(x, z), hh = hash2(Math.round(x * 5), Math.round(z * 5));
+        townJob(x, z, () => { mb.mat(15).color(0.2 + hh * 0.06, 0.17 + hh * 0.05, 0.13 + hh * 0.03, 1); mb.box(x, Y + 0.3, z, 0.15, 1.2, 0.15); }, 250); npo++;
+        if (npo % 26 === 13) {   // (a bench now and then behind the posts, looking out over the dunes to the sea)
+          const bx = cx + nx * sd * (hw + 2.3), bz = cz + nz * sd * (hw + 2.3), zb = zoneAt(bx, bz);
+          if (zb !== TZ.ROAD && zb !== TZ.BLD && zb !== TZ.WATER) { const by = hfAt(bx, bz), a2 = Math.atan2(tz, tx) + (sd > 0 ? PI : 0); put('bench', bx, by, bz, Math.atan2(nz * sd, nx * sd), () => bench(bx, bz, a2, by, true)); }
+        }
+      }
+      acc = (acc + L) % 1.8;
+    }
+  }
+  // ---- telegraph poles along the country lanes round Kewstoke and Sand Bay: creosoted poles every 45 m on one side,
+  // a cross-arm with insulators, two sagging wires from pole to pole
+  let ntp = 0;
+  for (let r = 0; r < R.n; r++) {
+    const cls = ri[r * 4], fl = ri[r * 4 + 2]; if (cls < 4 || cls > 8 || (fl & 129)) continue;
+    const k0 = R.off[r], k1 = R.off[r + 1], mx0 = R.p[((k0 + k1) >> 1) * 2], mz0 = R.p[((k0 + k1) >> 1) * 2 + 1]; if (!(mx0 > 1300 && mz0 < -1450)) continue;
+    const hw = ri[r * 4 + 1] * 0.05, sd = hash2(r, 91) < 0.5 ? -1 : 1, poles = []; let acc = 20;
+    for (let k = k0; k < k1 - 1; k++) {
+      const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.1) continue;
+      const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz, nz = tx;
+      for (; acc < L; acc += 45) {
+        const x = ax + tx * acc + nx * sd * (hw + 1.1), z = az + tz * acc + nz * sd * (hw + 1.1), zc = zoneAt(x, z);
+        if (zc === TZ.ROAD || zc === TZ.PAVE || zc === TZ.BLD || zc === TZ.WATER || zc === TZ.PATH || zc === TZ.OUT || townBuildingQ(x, z)) { poles.push(null); continue; }
+        poles.push([x, hfAt(x, z), z, Math.atan2(tz, tx)]);
+      }
+      acc -= L;
+    }
+    for (let i = 0; i < poles.length; i++) {
+      const p = poles[i]; if (!p) continue; const q = i + 1 < poles.length ? poles[i + 1] : null; ntp++;
+      townJob(p[0], p[2], () => {
+        const [x, y, z, a] = p, ca = Math.cos(a), sa = Math.sin(a), top = y + 7.6;
+        mb.mat(15).color(0.15, 0.115, 0.085, 1); mb.cyl(x, y - 0.3, z, 0.13, top + 0.3, 0.1, 6, false, true);
+        rot(x, z, a + PI / 2); mb.box(0, top, 0, 1.3, 0.1, 0.1); mb.color(0.62, 0.6, 0.55, 1); mb.box(-0.5, top + 0.1, 0, 0.06, 0.12, 0.06); mb.box(0.5, top + 0.1, 0, 0.06, 0.12, 0.06); mb.pop();
+        if (!q) return;
+        const L = Math.hypot(q[0] - x, q[2] - z); if (L > 70 || L < 5) return;
+        mb.mat(13, 60).color(0.04, 0.04, 0.04, 1);
+        for (const o of [-0.5, 0.5]) {   // (the wires: two straight spans to a midpoint 0.5 m lower)
+          const ox = -sa * o, oz = ca * o, qx = q[0] - Math.sin(q[3]) * o, qz = q[2] + Math.cos(q[3]) * o, y0 = top + 0.16, y1 = q[1] + 7.76, mxx = (x + ox + qx) / 2, mzz = (z + oz + qz) / 2, my = (y0 + y1) / 2 - 0.5;
+          for (const [px, py, pz, ex, ey, ez] of [[x + ox, y0, z + oz, mxx, my, mzz], [mxx, my, mzz, qx, y1, qz]]) {
+            const dx = ex - px, dy = ey - py, dz = ez - pz, h = Math.hypot(dx, dz) || 1e-3, l = Math.hypot(h, dy);
+            mb.push(m4mul(m4(), m4mul(m4(), m4translate(m4(), (px + ex) / 2, (py + ey) / 2, (pz + ez) / 2), m4rotY(m4(), -Math.atan2(dz, dx))), m4rotZ(m4(), Math.atan2(dy, h))));
+            mb.box(0, 0, 0, l, 0.022, 0.022); mb.pop();
+          }
+        }
+      }, 450);
+    }
+  }
   // ---- the seafront: ornate lamps every 26 m and railings along the promenade's edge above the sea wall
   const SW = T.walls; let ns = 0;
   for (let i = 0; i < SW.length; i += 6) {
@@ -1489,7 +1621,7 @@ function townFurnitureBuild(mb, rs) {
       mb.pop(); }, 350);
   }
   if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 160); }
-  TOWNW.stats.furniture = { osm: nf, boundarySegments: nb, lamps: nl, seafrontLamps: ns, gardenWalls: T.nGardenWalls || 0, laneWalls: T.nLaneWalls || 0 };
+  TOWNW.stats.furniture = { osm: nf, boundarySegments: nb, lamps: nl, seafrontLamps: ns, gardenWalls: T.nGardenWalls || 0, laneWalls: T.nLaneWalls || 0, dunePosts: npo, telegraphPoles: ntp };
 }
 
 // ---------------------------------------------------------------- road markings laid on the carriageways
@@ -1557,9 +1689,49 @@ function townGroundsBuild(mb, rs) {
   const T = TOWN, A = T.ad, ai = T.ainfo; if (!A || !ai) return;
   const inRing = (k0, k1, x, z) => { let ins = false; for (let i = k0, j = k1 - 1; i < k1; j = i++) { const zi = A.p[i * 2 + 1], zj = A.p[j * 2 + 1]; if ((zi > z) !== (zj > z) && x < (A.p[j * 2] - A.p[i * 2]) * (z - zi) / (zj - zi) + A.p[i * 2]) ins = !ins; } return ins; };
   const quad = (cx, cz, tx, tz, hl, hc, lift) => { const nx = -tz, nz = tx, P = [[-hl, -hc], [hl, -hc], [hl, hc], [-hl, hc]].map(([a, c]) => { const x = cx + tx * a + nx * c, z = cz + tz * a + nz * c; return mb.v(x, hfAt(x, z) + lift, z, 0, 1, 0, 0, 0); }); townQuad(mb, P[0], P[1], P[2], P[3], 0, 1, 0); };
-  let r = 0, np = 0, na = 0;
+  let r = 0, np = 0, na = 0, ng = 0;
+  // churchyards and cemeteries (St Paul's at Kewstoke, St John's, Uphill, Worle, the town cemetery): rows of graves running
+  // north and south, each headstone at the west end of its grave: weathered limestone, slate and granite slabs leaning a
+  // little, crosses, kerbed graves with their chippings, Georgian chest tombs; none on the paths or against the church
+  const zoneAt = (x, z) => { const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i < 0 || j < 0 || i >= T.zw || j >= T.zh ? TZ.OUT : T.zone[j * T.zw + i]; };
+  const turf = (x, z) => { const c = zoneAt(x, z); return c === TZ.GRASS || c === TZ.NONE || c === TZ.GARDEN; };
+  const M1 = m4(), M2 = m4(), M3 = m4(), M4 = m4();
+  const STONE = [[0.4, 0.39, 0.36], [0.45, 0.43, 0.38], [0.33, 0.33, 0.32], [0.16, 0.17, 0.18], [0.29, 0.28, 0.28], [0.5, 0.49, 0.46]];
+  const cemetery = (k0, k1) => {
+    let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, ar = 0;
+    for (let i = k0, j = k1 - 1; i < k1; j = i++) { x0 = Math.min(x0, A.p[i * 2]); x1 = Math.max(x1, A.p[i * 2]); z0 = Math.min(z0, A.p[i * 2 + 1]); z1 = Math.max(z1, A.p[i * 2 + 1]); ar += A.p[j * 2] * A.p[i * 2 + 1] - A.p[i * 2] * A.p[j * 2 + 1]; }
+    const keep = Math.min(1, 1500 / (Math.abs(ar) / 2 * 0.25 + 1));   // (the big town cemetery: its lawns sparser)
+    for (let gx = Math.floor(x0 / 32) * 32; gx < x1; gx += 32) for (let gz = Math.floor(z0 / 32) * 32; gz < z1; gz += 32) {
+      townJob(gx + 16, gz + 16, () => {
+        for (let x = Math.max(gx, x0 + 0.8); x < Math.min(gx + 32, x1 - 1); x += 2.6) for (let z = Math.max(gz, z0 + 0.6); z < Math.min(gz + 32, z1 - 0.5); z += 1.35) {
+          const h = hash2(Math.round(x * 10), Math.round(z * 10)); if (h > 0.8 * keep) continue;                   // (the gaps)
+          const px = x + (hash2(Math.round(z * 7), 5) - 0.5) * 0.35, pz = z + (hash2(Math.round(x * 3), 11) - 0.5) * 0.2;
+          if (!inRing(k0, k1, px, pz) || !inRing(k0, k1, px + 2, pz)) continue;
+          if (!turf(px, pz) || !turf(px + 1.1, pz) || !turf(px + 2.1, pz) || !turf(px, pz - 0.6) || !turf(px, pz + 0.6) || !turf(px - 0.7, pz)) continue;
+          const t = hash2(Math.round(px * 13), Math.round(pz * 3)), u = hash2(Math.round(pz * 17), Math.round(px * 5)), y = Math.min(hfAt(px, pz - 0.3), hfAt(px, pz + 0.3)) - 0.06;
+          const col = STONE[Math.floor(u * STONE.length) % STONE.length], k = 0.82 + 0.3 * t;
+          mb.push(m4mul(M4, m4mul(M3, m4translate(M1, px, y, pz), m4rotY(M2, (t - 0.5) * 0.12)), m4rotZ(m4(), (u - 0.5) * 0.2 * (u > 0.3 ? 1 : 0.2))));
+          mb.mat(15).color(col[0] * k, col[1] * k, col[2] * k, 1);
+          if (t < 0.12) {                                     // a chest tomb
+            mb.box(1.1, 0.42, 0, 1.9, 0.84, 0.86); mb.color(col[0] * k * 1.1, col[1] * k * 1.1, col[2] * k * 1.1, 1); mb.box(1.1, 0.88, 0, 2.02, 0.09, 0.98);
+          } else if (t < 0.24) {                              // a cross on a stepped base
+            mb.box(0, 0.12, 0, 0.42, 0.24, 0.55); mb.box(0, 0.8, 0, 0.11, 1.12, 0.11); mb.box(0, 1.05, 0, 0.11, 0.11, 0.6);
+          } else {                                            // a slab with a shouldered top
+            const w = 0.48 + 0.34 * u, hg = 0.55 + 0.5 * t, th = 0.08 + 0.05 * u;
+            mb.box(0, hg / 2, 0, th, hg, w); mb.box(0, hg + 0.05, 0, th, 0.1, w * 0.62);
+            if (t > 0.7) {                                    // kerbed, with its chippings
+              mb.box(1.1, 0.07, -0.42, 1.9, 0.14, 0.1); mb.box(1.1, 0.07, 0.42, 1.9, 0.14, 0.1); mb.box(2.05, 0.07, 0, 0.1, 0.14, 0.94);
+              mb.color(0.5, 0.5, 0.48, 1); mb.box(1.1, 0.05, 0, 1.8, 0.1, 0.74);
+            }
+          }
+          mb.pop(); ng++;
+        }
+      }, 300);
+    }
+  };
   for (let q = 0; q < ai.length / 2; q++) {
     const c = ai[q * 2], nr = ai[q * 2 + 1], k0 = A.off[r], k1 = A.off[r + 1]; r += nr;
+    if (c === 12) { cemetery(k0, k1); continue; }
     if (c !== 13 && c !== 15) continue;
     // the polygon's axes (principal directions of its vertices) and extents
     let mx = 0, mz = 0; const n = k1 - k0; for (let k = k0; k < k1; k++) { mx += A.p[k * 2] / n; mz += A.p[k * 2 + 1] / n; }
@@ -1604,7 +1776,7 @@ function townGroundsBuild(mb, rs) {
       na++;
     }
   }
-  TOWNW.stats.grounds = { pitches: np, allotments: na };
+  TOWNW.stats.grounds = { pitches: np, allotments: na, get graves() { return ng; } };
 }
 
 // ---------------------------------------------------------------- all together

@@ -625,6 +625,79 @@ def lane_width(t, cls, pts, w):
     return {4: 5.8, 5: 4.4, 6: 5.4, 7: 4.8}.get(cls, w)
 
 
+def lane_no_pavement(t, cls, pts):
+    """the country lanes round Kewstoke and Sand Bay have no pavements (unless OSM says they have)"""
+    if not pts or cls not in (4, 5) or any(k.startswith('sidewalk') for k in t):
+        return False
+    x = sum(p[0] for p in pts) / len(pts); z = sum(p[1] for p in pts) / len(pts)
+    if not (z < -1450 and x > 1300):
+        return False
+    nm = t.get('name', '')
+    return nm not in ('Kewstoke Road', 'Beach Road', 'Sand Road', 'Lower Kewstoke Road', 'Queensway')
+
+
+# ---------------------------------------------------------------- the road survey (tools/osm/road_survey.py), optional
+# Kerb lines measured from the LIDAR per OSM way: every 10 m along each exported road the nearest survey station's kerb
+# offsets, pavement widths and edge types, turned into the road's own direction. Junction corners with a measured radius.
+SURVEY_STEP = 10.0
+SURVEY_EDGE = {'u': 0, 'K': 1, 'k': 2, 'S': 3, 'D': 4, 'O': 5, 'H': 6, 'W': 7, 'V': 8}
+
+
+def load_survey(path, log):
+    import gzip
+    with gzip.open(path, 'rt') as f:
+        S = json.load(f)
+    if S.get('format') != 'road_survey':
+        raise ValueError(f'{path}: not a road survey')
+    ways = {}
+    for wid, parts in S.get('ways', {}).items():
+        st = []
+        for p in parts:
+            for i in range(len(p['x'])):
+                g = lambda k, d=None: (p[k][i] if k in p and p[k] is not None and i < len(p[k]) else d)
+                st.append((p['x'][i], p['z'][i], g('hd', 0.0), g('kl'), g('kr'), g('pl', 0.0) or 0.0, g('pr', 0.0) or 0.0,
+                           g('el', 'u') or 'u', g('er', 'u') or 'u', g('cl', 'D') or 'D', g('cr', 'D') or 'D'))
+        if st:
+            ways[int(wid)] = st
+    corners = []
+    for j in S.get('junctions', []):
+        arms = j.get('arms', [])
+        for c in j.get('corners', []):
+            a, b = c.get('arms', [None, None])
+            if c.get('src') != 'lidar' or a is None or b is None or a >= len(arms) or b >= len(arms) or not c.get('r'):
+                continue
+            corners.append((j['x'], j['z'], arms[a]['hd'], arms[b]['hd'], c['r']))
+    log(f'road survey {path}: {len(ways)} ways, {sum(len(v) for v in ways.values())} stations, {len(corners)} measured corners')
+    return ways, corners
+
+
+def survey_samples(part, st):
+    """[kl, kr, pl, pr (dm; 0 unknown), edges (left | right << 4)] every SURVEY_STEP m along the part"""
+    seg = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(part, part[1:])]
+    L = sum(seg)
+    m = max(2, int(math.ceil(L / SURVEY_STEP)) + 1)
+    sx = np.array([q[0] for q in st]); sz = np.array([q[1] for q in st])
+    out = []; k = 0; acc = 0.0
+    for i in range(m):
+        s = L * i / (m - 1)
+        while k < len(seg) - 1 and acc + seg[k] < s:
+            acc += seg[k]; k += 1
+        f = 0.0 if seg[k] < 1e-6 else min(1.0, max(0.0, (s - acc) / seg[k]))
+        (ax, az), (bx, bz) = part[k], part[k + 1]
+        x = ax + (bx - ax) * f; z = az + (bz - az) * f; tx = (bx - ax) / (seg[k] or 1); tz = (bz - az) / (seg[k] or 1)
+        d2 = (sx - x) ** 2 + (sz - z) ** 2; j = int(np.argmin(d2))
+        if d2[j] > 16.0:
+            out.append((0, 0, 0, 0, 0)); continue
+        _, _, hd, kl, kr, pl, pr, el, er, cl, cr = st[j]
+        rev = tx * math.cos(math.radians(hd)) + tz * math.sin(math.radians(hd)) < 0
+        if rev:
+            kl, kr, pl, pr, el, er, cl, cr = (-kr if kr is not None else None), (-kl if kl is not None else None), pr, pl, er, el, cr, cl
+        L_ = 0 if (kl is None or cl == 'D') else int(min(255, max(1, round(-kl * 10))))
+        R_ = 0 if (kr is None or cr == 'D') else int(min(255, max(1, round(kr * 10))))
+        out.append((L_, R_, int(min(255, round(pl * 10))), int(min(255, round(pr * 10))), SURVEY_EDGE.get(el, 0) | (SURVEY_EDGE.get(er, 0) << 4)))
+    return out
+
+
 def clip_polyline(pts, pad):
     """keeps the runs of a polyline inside the town (with pad): returns a list of polylines"""
     out, cur = [], []
@@ -1200,11 +1273,13 @@ def main():
     ap.add_argument('--preview')
     ap.add_argument('--osm-pickle', help='development: cache of the parsed extract (read if present, else written)')
     ap.add_argument('--split-ways', action='store_true', help='split the roads at their shared nodes (for the road model)')
+    ap.add_argument('--survey', help='road survey (tools/osm/road_survey.py output, .json.gz): measured kerb lines')
     a = ap.parse_args()
     global SPLIT_WAYS; SPLIT_WAYS = a.split_ways
     log = lambda s: print(s, flush=True)
     dem = Terrarium(a.dem_cache, a.fetch)
     lidar = Lidar(a.lidar_cache, a.fetch) if a.lidar_cache else None
+    survey = load_survey(a.survey, log) if a.survey else None
 
     log('reading OSM...')
     if a.osm_pickle and os.path.exists(a.osm_pickle):
@@ -1273,7 +1348,7 @@ def main():
             if len(part) < 2: continue
             flags = (1 if t.get('bridge') == 'yes' else 0) | (2 if t.get('oneway') in ('yes', '1', '-1') or rb else 0)
             if t.get('lane_markings') == 'no': flags |= 4
-            if t.get('sidewalk') in ('no', 'none') or t.get('footway') == 'none': flags |= 32
+            if t.get('sidewalk') in ('no', 'none') or t.get('footway') == 'none' or lane_no_pavement(t, cls, part): flags |= 32
             if toll: flags |= 64 | 128 | 32 | 4
             if steps: flags |= 16
             if t.get('service') in ('driveway', 'parking_aisle') or t.get('surface') in ('paving_stones', 'sett', 'cobblestone', 'unhewn_cobblestone'): flags |= 8   # (block paving)
@@ -1284,7 +1359,7 @@ def main():
             lanes |= (16 if rb else 0) | (32 if side_none & 1 else 0) | (64 if side_none & 2 else 0)
             if cls <= 7:
                 for (ax, az), (bx, bz) in zip(part, part[1:]): roadgrid.add(ax, az, bx, bz, cls)
-            rd.append((part, cls, w if toll or steps else lane_width(t, cls, part, w), flags, lanes))
+            rd.append((part, cls, w if toll or steps else lane_width(t, cls, part, w), flags, lanes, oid))
     for oid, t, pts in piers:                       # pier decks (Birnbeck Pier and its jetty)
         for part in clip_polyline(pts, 0):
             if len(part) >= 2:
@@ -1416,6 +1491,17 @@ def main():
     # pavement on the left / right side). Polylines run from junction to junction (ways split at their shared nodes).
     blob.add('rinfo', np.asarray([[r[1], min(255, int(round(r[2] * 10))), r[3], r[4]] for r in rd], 'u1').ravel())
     if rhs: blob.add('rh', np.asarray(rhs, '<i2'))
+    if survey is not None:    # the road survey: samples per road (count, then kl, kr, pl, pr, edges each), measured corners
+        sw, sc = survey
+        sn, sv = [], []
+        for r in rd:
+            st = sw.get(r[5]) if len(r) > 5 and r[1] <= 9 else None
+            smp = survey_samples(r[0], st) if st else []
+            if smp and not any(q[0] or q[1] for q in smp): smp = []
+            sn.append(len(smp)); sv.extend(v for q in smp for v in q)
+        blob.add('sn', np.asarray(sn, '<u2')); blob.add('sv', np.asarray(sv, 'u1'))
+        if sc: blob.add('sc', np.asarray([[round(x * 100), round(z * 100), round(a * 10), round(b * 10), round(rr * 100)] for x, z, a, b, rr in sc], '<i4').ravel())
+        log(f'survey: {sum(1 for n in sn if n)} roads with kerb lines, {len(sv) // 5} samples, {len(sc)} corners')
     if lt:     # LIDAR tree crowns: absolute start (int32, 1/8 m) per crown would be big: int16 deltas in sorted order
         # (a new run wherever the next crown is too far for an int16 delta: no in-between points, one height per crown)
         chunks = [[]]
@@ -1520,7 +1606,7 @@ def preview(path, Hn, Q, rd, bl, ac, tp):
            7: (120, 105, 80, 170), 8: (50, 100, 220, 220), 9: (150, 150, 150, 120), 10: (120, 80, 60, 255), 11: (110, 190, 90, 150), 12: (110, 150, 100, 150), 13: (70, 160, 60, 160)}
     for c, rings, lvl in ac:
         d.polygon([T(p) for p in rings[0]], fill=COL.get(c, (255, 0, 255, 100)))
-    for part, cls, w, fl, ln in rd:
+    for part, cls, w, fl, ln, *_ in rd:
         d.line([T(p) for p in part], fill=(250, 250, 250, 255) if cls <= 8 else (230, 200, 200, 255), width=max(1, int(w / R)))
     for cx, cz, r, kind, h, roof, ridge, hc, lu, *_ in bl:
         d.polygon([T(p) for p in r], fill=(int(60 + h * 3), 50, 50, 255))
