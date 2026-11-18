@@ -55,6 +55,11 @@ MORE CARS AND HANDLING
   steering, help out of spins). Pick "Realistic handling" in the menu under Graphics
   for the original physics.
 - In Weston-super-Mare, parked cars line the streets and some traffic drives around.
+- Tide (Weston-super-Mare, on the start screen and in the menu): Low, Mid or High.
+  Low tide: the sea goes out a long way and leaves the mud flats.
+  High tide: a spring tide (about 6.2 m) reaches the sea wall and the foot of Sand Bay's
+  dunes. The fields behind the dunes, and the low parts of town, lie below that level but
+  stay dry. As in reality, the sea only floods ground it can actually reach.
 
 
 CONTROLS

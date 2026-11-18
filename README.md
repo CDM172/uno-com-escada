@@ -123,6 +123,8 @@ How the town is built:
   - Kewstoke's limestone cottages, stone walls and church.
   - Windows and doors are parallax recesses.
   - `?arch=0` falls back to plain extruded buildings.
+- **Terrain** ([`tools/osm/terrain_wsm.py`](tools/osm/terrain_wsm.py)): the LIDAR terrain is kept at 2 m detail where it matters: Kewstoke and Monk's Steps, the Toll Road, Sand Bay's dunes and fields, the seafront and its walls, Knightstone, Uphill, Worlebury Hill and Sand Point.
+- **Tide** (Low / Mid / High, or `?tide=`): it runs from spring low water to spring high water. A spill level baked from the terrain lets the sea flood only the ground it can reach, so Sand Bay's fields stay dry behind the dunes at high tide, below the sea.
 - **Modelled in Blender** ([`blender/wsm_props.py`](fable/source/blender/wsm_props.py), [`blender/wsm_landmarks.py`](fable/source/blender/wsm_landmarks.py)):
   - the landmarks: the Town Hall, the Grand Atlantic Hotel, the Winter Gardens, the Art Deco cinema, the Tropicana;
   - the street furniture.
