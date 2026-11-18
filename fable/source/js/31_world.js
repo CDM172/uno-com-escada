@@ -1,7 +1,7 @@
 // Cenário: terreno estático em quadtree (fino junto à pista, grosso longe) e a faixa da pista (asfalto, zebras, acostamento).
 // Tudo estático: nenhum LOD em tempo de execução, portanto nada "pula" à vista.
 const WORLD = {
-  active: !['test', 'car', 'placeholder'].includes(Q.get('scene') || 'game'),
+  active: !['test', 'car', 'placeholder', 'uktrees'].includes(Q.get('scene') || 'game'),   // (uktrees: the British trees' gallery, 33_veg_e_uk.js)
   line: null,            // afastamento lateral da trajetória por amostra (usa TRK.line se existir)
   // trechos molhados: [s inicial, s final, intensidade 0..1]
   wet: [[676, 790, 1.0], [985, 1130, 0.9]],      // reta oposta (contra o sol) e Curvão: refletem céu e carro

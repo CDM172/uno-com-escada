@@ -1,6 +1,6 @@
 // Weston-super-Mare: roads, pavements, buildings, piers and the circuit's dressing (34_wsm_world.js). Material by id:
 //  1 road (uv = along, across; a = class, b = markings: 1 centre line, 2 lane lines, 4 double yellow lines, 8 white edge
-//    lines, 16 woodland lane (leaf litter, mossy edges), 32 steps (on 4: footway); c = half width dm;
+//    lines, 16 woodland lane (leaf litter, mossy edges), 32 steps (on 4: footway), 64 block paving; c = half width dm;
 //    colour r = markings on, away from junctions)   2 pavement slabs   3 kerb stone / skirt   4 footway   5 gravel track
 //  6 pier deck (planks)   7 circuit kerb (red and white)   8 start line (chequers)
 //  10 wall (uv = along the wall, height above the base; a = style, b = storey height dm + 64 x wall material
@@ -67,6 +67,15 @@ fn roadSurf(in: V2F, N: vec3f) -> Surface {
     let lc = mix(vec3f(0.22, 0.12, 0.04), vec3f(0.3, 0.2, 0.06), lf.r) * (0.7 + 0.5 * lf.g);
     s.albedo = mix(s.albedo, lc, leaves * 0.85); s.rough = mix(s.rough, 0.92, max(leaves, edgeW));
     s.albedo *= 0.88 + 0.12 * ln.r;                                                                  // damp under the canopy
+  }
+  if ((fl & 64u) != 0u) {
+    // block paving (drives, car park aisles, setts): 200 x 100 mm red-brown blocks in stretcher bond, sanded joints
+    let bp = in.wpos.xz * vec2f(5.0, 10.0); let row = floor(bp.y); let bu = bp.x + 0.5 * (row % 2.0);
+    let fu = abs(fract(bu) - 0.5); let fv = abs(fract(bp.y) - 0.5);
+    let blk = 1.0 - smoothstep(0.40, 0.47, max(fu, fv));
+    let hb = hash21(vec2f(floor(bu), row));
+    s.albedo = mix(vec3f(0.17, 0.15, 0.12), mix(vec3f(0.3, 0.15, 0.1), vec3f(0.24, 0.2, 0.17), step(0.82, hb)) * (0.78 + 0.4 * hb), blk);
+    s.rough = 0.82;
   }
   s.albedo = mix(s.albedo, vec3f(0.62, 0.62, 0.6), m);
   s.albedo = mix(s.albedo, vec3f(0.6, 0.42, 0.04), y);

@@ -364,7 +364,7 @@ PAVED_PATH = {'pedestrian': 9, 'footway': 10, 'cycleway': 10, 'path': 11, 'track
 DEF_WIDTH = {1: 9.0, 2: 8.0, 3: 7.4, 4: 7.0, 5: 6.4, 6: 6.0, 7: 5.2, 8: 3.6, 9: 7.0, 10: 2.6, 11: 2.4, 12: 6.0}
 
 # land cover classes (painter's order: lower first)
-LC = {'dune': 14, 'residential': 1, 'grass': 2, 'field': 3, 'wood': 4, 'scrub': 5, 'sand': 6, 'mud': 7, 'water': 8,
+LC = {'bunker': 16, 'allotment': 15, 'dune': 14, 'residential': 1, 'grass': 2, 'field': 3, 'wood': 4, 'scrub': 5, 'sand': 6, 'mud': 7, 'water': 8,
       'paved': 9, 'pier': 10, 'garden': 11, 'cemetery': 12, 'pitch': 13}
 
 
@@ -373,6 +373,11 @@ def landcover_class(t):
     if g('man_made') == 'pier':
         return LC['pier']
     n, lu, le = g('natural'), g('landuse'), g('leisure')
+    gf = g('golf')                                       # (Worlebury golf course: bunkers, greens, tees, fairways)
+    if gf == 'bunker': return LC['bunker']
+    if gf == 'water_hazard' or gf == 'lateral_water_hazard': return LC['water']
+    if gf in ('green', 'tee', 'fairway', 'driving_range'): return LC['grass']
+    if lu == 'allotments': return LC['allotment']
     if n == 'water' or lu in ('reservoir', 'basin') or le == 'swimming_pool':
         return LC['water']
     if n in ('beach', 'sand') or (n == 'wetland' and g('wetland') == 'sand'):
@@ -405,8 +410,46 @@ def landcover_class(t):
 DROP_BUILDINGS = {'shed', 'greenhouse', 'hut', 'roof', 'no', 'construction', 'static_caravan', 'carport', 'conservatory'}
 
 
+# street furniture (OSM nodes) -> code; sub-codes in furniture_code
+FURN = {'lamp': 1, 'bench': 2, 'bin': 3, 'bollard': 4, 'bus_stop': 5, 'signals': 6, 'crossing': 7, 'post_box': 8,
+        'telephone': 9, 'guidepost': 10, 'info': 11, 'give_way': 12, 'stop': 13, 'gate': 14, 'cycles': 15,
+        'memorial': 16, 'mini_roundabout': 17, 'life_ring': 18, 'toilets': 19, 'defib': 20, 'cabinet': 21}
+# boundaries (OSM barrier ways) -> code
+BARRIER = {'wall': 1, 'fence': 2, 'hedge': 3, 'retaining_wall': 4, 'railing': 5, 'handrail': 5, 'guard_rail': 6,
+           'gate': 7, 'city_wall': 1, 'hedge_bank': 3, 'kerb': 0, 'yes': 2, 'wire_fence': 2, 'chain': 2}
+
+
+def furniture_code(t):
+    """(code, sub) of a street furniture node, or None"""
+    g = t.get; hw, am, ba = g('highway'), g('amenity'), g('barrier')
+    if hw == 'street_lamp' or g('man_made') == 'lamp': return FURN['lamp'], 0
+    if hw == 'bus_stop' or (g('public_transport') == 'platform' and g('bus') == 'yes'): return FURN['bus_stop'], 1 if g('shelter') == 'yes' else 0
+    if hw == 'traffic_signals': return FURN['signals'], 0
+    if hw == 'crossing' or g('crossing'):
+        c = g('crossing', ''); cr = g('crossing_ref', '')
+        return FURN['crossing'], 1 if (c == 'zebra' or cr == 'zebra') else 2 if c == 'traffic_signals' else 3 if c in ('uncontrolled', 'marked') else 4
+    if hw == 'give_way': return FURN['give_way'], 0
+    if hw == 'stop': return FURN['stop'], 0
+    if hw == 'mini_roundabout': return FURN['mini_roundabout'], 0
+    if am in ('bench',) or g('leisure') == 'picnic_table': return FURN['bench'], 1 if g('leisure') == 'picnic_table' else 0
+    if am in ('waste_basket', 'recycling'): return FURN['bin'], 1 if am == 'recycling' else 0
+    if am == 'post_box': return FURN['post_box'], 0
+    if am == 'telephone': return FURN['telephone'], 0
+    if am == 'bicycle_parking': return FURN['cycles'], 0
+    if am == 'toilets': return FURN['toilets'], 0
+    if ba in ('bollard', 'block'): return FURN['bollard'], 0
+    if ba in ('gate', 'kissing_gate', 'lift_gate', 'swing_gate'): return FURN['gate'], 1 if ba == 'kissing_gate' else 2 if ba == 'lift_gate' else 0
+    if g('information') == 'guidepost': return FURN['guidepost'], 0
+    if g('information') in ('board', 'map') or g('tourism') == 'information': return FURN['info'], 0
+    if g('historic') in ('memorial', 'monument'): return FURN['memorial'], 0
+    if g('emergency') == 'life_ring': return FURN['life_ring'], 0
+    if g('emergency') == 'defibrillator': return FURN['defib'], 0
+    if g('man_made') == 'street_cabinet': return FURN['cabinet'], 0
+    return None
+
+
 def read_osm(pbf):
-    roads, areas, buildings, trees, tree_rows, piers = [], [], [], [], [], []
+    roads, areas, buildings, trees, tree_rows, piers, furn, bars = [], [], [], [], [], [], [], []
     W, S = unproj(TOWN[0] - 600, TOWN[3] + 600); E, N = unproj(TOWN[2] + 600, TOWN[1] - 600)
     def inb(lon, lat): return W <= lon <= E and S <= lat <= N
     fp = osmium.FileProcessor(pbf).with_locations().with_areas()
@@ -420,6 +463,11 @@ def read_osm(pbf):
                 x, z = proj(l.lon, l.lat)
                 if in_town(x, z):
                     trees.append((o.id, x, z))
+            else:
+                fc = furniture_code(t)
+                if fc:
+                    l = o.location; x, z = proj(l.lon, l.lat)
+                    if in_town(x, z, -20): furn.append((o.id, x, z, fc[0], fc[1], dict(t)))
             continue
         if o.is_way():
             try:
@@ -439,6 +487,8 @@ def read_osm(pbf):
                 piers.append((o.id, dict(t), pts))
             elif t.get('natural') == 'tree_row':
                 tree_rows.append((o.id, pts))
+            elif t.get('barrier') in BARRIER and BARRIER[t.get('barrier')]:
+                bars.append((o.id, dict(t), pts))
             continue
         if o.is_area():
             polys = []
@@ -462,8 +512,8 @@ def read_osm(pbf):
                 if c:
                     areas.append((oid, c, dict(t), polys))
     roads.sort(key=lambda r: r[0]); areas.sort(key=lambda a: a[0]); buildings.sort(key=lambda b: b[0])
-    trees.sort(); tree_rows.sort(key=lambda r: r[0]); piers.sort(key=lambda r: r[0])
-    return roads, areas, buildings, trees, tree_rows, piers
+    trees.sort(); tree_rows.sort(key=lambda r: r[0]); piers.sort(key=lambda r: r[0]); furn.sort(key=lambda f: f[0]); bars.sort(key=lambda b: b[0])
+    return roads, areas, buildings, trees, tree_rows, piers, furn, bars
 
 
 # ---------------------------------------------------------------- static caravans
@@ -1118,13 +1168,14 @@ def main():
     log('reading OSM...')
     if a.osm_pickle and os.path.exists(a.osm_pickle):
         import pickle
-        with open(a.osm_pickle, 'rb') as f: roads, areas, buildings, trees, tree_rows, piers = pickle.load(f)
+        with open(a.osm_pickle, 'rb') as f: roads, areas, buildings, trees, tree_rows, piers, furn, bars = pickle.load(f)
     else:
-        roads, areas, buildings, trees, tree_rows, piers = read_osm(a.pbf)
+        roads, areas, buildings, trees, tree_rows, piers, furn, bars = read_osm(a.pbf)
         if a.osm_pickle:
             import pickle
-            with open(a.osm_pickle, 'wb') as f: pickle.dump((roads, areas, buildings, trees, tree_rows, piers), f)
-    log(f'roads {len(roads)}, areas {len(areas)}, buildings {len(buildings)}, trees {len(trees)}, tree rows {len(tree_rows)}, piers {len(piers)}')
+            with open(a.osm_pickle, 'wb') as f: pickle.dump((roads, areas, buildings, trees, tree_rows, piers, furn, bars), f)
+    log(f'roads {len(roads)}, areas {len(areas)}, buildings {len(buildings)}, trees {len(trees)}, tree rows {len(tree_rows)}, piers {len(piers)}, '
+        f'street furniture {len(furn)}, boundaries {len(bars)}')
 
     # ---- terrain
     log('terrain...')
@@ -1170,6 +1221,7 @@ def main():
             if t.get('sidewalk') in ('no', 'none') or t.get('footway') == 'none': flags |= 32
             if toll: flags |= 64 | 128 | 32 | 4
             if steps: flags |= 16
+            if t.get('service') in ('driveway', 'parking_aisle') or t.get('surface') in ('paving_stones', 'sett', 'cobblestone', 'unhewn_cobblestone'): flags |= 8   # (block paving)
             lanes = 0
             try: lanes = min(6, int(t.get('lanes', '0')))
             except ValueError: pass
@@ -1233,7 +1285,7 @@ def main():
                 lvl = float(np.percentile(hs, 25)) - 0.4
             ac.append((c, rings, lvl))
     # painter's order: by class priority then id order (stable)
-    ORDER = {1: 0, 3: 1, 2: 2, 12: 2, 13: 3, 11: 3, 5: 4, 4: 5, 9: 6, 7: 7, 6: 8, 14: 8, 10: 9, 8: 10}
+    ORDER = {1: 0, 3: 1, 2: 2, 12: 2, 13: 3, 11: 3, 15: 3, 5: 4, 4: 5, 9: 6, 7: 7, 6: 8, 14: 8, 16: 8, 10: 9, 8: 10}
     ac.sort(key=lambda a: ORDER.get(a[0], 5))
     log(f'land cover rings: {sum(len(a[1]) for a in ac)} in {len(ac)} polygons')
 
@@ -1302,8 +1354,8 @@ def main():
     rd.sort(key=lambda r: morton_key(*r[0][0]))
     cnt, st, d = enc_polys([r[0] for r in rd])
     blob.add('rn', cnt); blob.add('r0', st); blob.add('rxz', d)
-    # rinfo: class, width (dm), flags (1 bridge, 2 one way, 4 no lane markings, 16 steps, 32 no pavements, 64 white edge
-    # lines, 128 the Toll Road), lanes
+    # rinfo: class, width (dm), flags (1 bridge, 2 one way, 4 no lane markings, 8 block paving (drives, car park aisles,
+    # setts), 16 steps, 32 no pavements, 64 white edge lines, 128 the Toll Road), lanes
     blob.add('rinfo', np.asarray([[r[1], min(255, int(round(r[2] * 10))), r[3], r[4]] for r in rd], 'u1').ravel())
     if rhs: blob.add('rh', np.asarray(rhs, '<i2'))
     if lt:     # LIDAR tree crowns: absolute start (int32, 1/8 m) per crown would be big: int16 deltas in sorted order
@@ -1320,6 +1372,28 @@ def main():
     cnt, st, d = enc_polys([b[2] for b in bl])
     blob.add('bn', cnt); blob.add('b0', st); blob.add('bxz', d)
     blob.add('binfo', np.asarray([[b[3], min(255, int(round(b[4] * 4))), b[5], int(round(b[6] / math.pi * 256)) % 256, b[7] & 255, (b[7] >> 8) & 255, {None: 0, 'residential': 1, 'retail': 2, 'industrial': 3}[b[8]] | (b[10] << 4), 255 if b[9] is None else min(250, int(round(b[9] * 10)))] for b in bl], 'u1').ravel())
+    # street furniture (OSM nodes): x, z (cm); code and sub-code (FURN)
+    if furn:
+        fs = sorted(furn, key=lambda f: morton_key(f[1], f[2]))
+        blob.add('fnxz', np.asarray([[int(round(x * 100)), int(round(z * 100))] for _, x, z, _, _, _ in fs], '<i4').ravel())
+        blob.add('fnc', np.asarray([[c, sb] for _, _, _, c, sb, _ in fs], 'u1').ravel())
+    # boundaries (OSM barrier ways, clipped to the region): polylines + code (BARRIER), height (dm, 0 = default), material
+    # (0 default, 1 stone, 2 brick, 3 concrete, 4 metal, 5 wood)
+    bw = []
+    for oid, t, pts in bars:
+        for part in clip_polyline(pts, 0):
+            part = dedupe(dp_simplify(part, 0.1), 0.1)
+            if len(part) >= 2: bw.append((part, t))
+    if bw:
+        bw.sort(key=lambda b: morton_key(*b[0][0]))
+        cnt3, st3, d3 = enc_polys([b[0] for b in bw])
+        blob.add('wn', cnt3); blob.add('w0', st3); blob.add('wxz', d3)
+        def bh_(t):
+            try: return min(250, int(round(float(t.get('height', '').replace('m', '').strip()) * 10)))
+            except ValueError: return 0
+        mat = {'stone': 1, 'brick': 2, 'concrete': 3, 'metal': 4, 'steel': 4, 'iron': 4, 'wood': 5, 'timber': 5}
+        blob.add('winfo', np.asarray([[BARRIER[t['barrier']], bh_(t), mat.get(t.get('material', t.get('wall', t.get('fence_type', ''))), 0)] for _, t in bw], 'u1').ravel())
+    log(f'street furniture {len(furn)}: ' + ', '.join(f'{k} {sum(1 for f in furn if f[3] == v)}' for k, v in FURN.items() if any(f[3] == v for f in furn)) + f'; boundaries {len(bw)} lines')
     # per building: the edge facing the street; chimney stacks (x, z cm; building; top dm; size dm); dormers (x, z cm;
     # building; width dm; top dm; side of the ridge)
     blob.add('bfront', np.asarray([b[13] for b in bl], 'u1'))

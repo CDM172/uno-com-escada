@@ -11,15 +11,17 @@ function vegPlace() {
   const rnd = mkRng(4711), V = VEG; if (TOWN.on) { V.NS = Math.ceil(Math.max(TOWN.x1 - TOWN.x0, TOWN.z1 - TOWN.z0) / (V.CELL * 4)) + 1; V.NC = V.NS * 4; }   // (the town map is bigger)
   const half = V.NC * V.CELL / 2; V.x0 = (TOWN.on ? (TOWN.x0 + TOWN.x1) / 2 : TRK.cx) - half; V.z0 = (TOWN.on ? (TOWN.z0 + TOWN.z1) / 2 : TRK.cz) - half;
   let cap = 1 << 17, data = new Float32Array(cap * 8), keys = new Uint32Array(cap), n = 0;
-  const push = (x, y, z, s, rot, seed, arch) => {
+  const push = (x, y, z, s, rot, seed, arch, k) => {   // (k: horizontal stretch of the crown, British planting only)
     const cx = Math.floor((x - V.x0) / V.CELL), cz = Math.floor((z - V.z0) / V.CELL); if (cx < 0 || cz < 0 || cx >= V.NC || cz >= V.NC) return;
     if (n >= cap) { cap *= 2; const d2 = new Float32Array(cap * 8); d2.set(data); data = d2; const k2 = new Uint32Array(cap); k2.set(keys); keys = k2; }
-    const o = n * 8; data[o] = x; data[o + 1] = y; data[o + 2] = z; data[o + 3] = s; data[o + 4] = Math.cos(rot); data[o + 5] = Math.sin(rot); data[o + 6] = seed; data[o + 7] = arch;
+    const o = n * 8; data[o] = x; data[o + 1] = y; data[o + 2] = z; data[o + 3] = s; data[o + 4] = Math.cos(rot) * (k || 1); data[o + 5] = Math.sin(rot) * (k || 1); data[o + 6] = seed; data[o + 7] = arch;
     const s16 = (Math.floor((z - V.z0) / 16) & 3) * 4 + (Math.floor((x - V.x0) / 16) & 3);   // subcélula de 16 m dentro da célula (folhas individuais)
     keys[n++] = ((((cz >> 2) * V.NS + (cx >> 2)) * 16 + (cz & 3) * 4 + (cx & 3)) * VEG_NA + arch) * 16 + s16;
   };
   serra: {   // (the town map places its trees from OpenStreetMap: townVegPlace in 34_wsm_world.js)
-  if (TOWN.on) { townVegPlace(push); V.nTrees = n; break serra; }
+  if (VEG_UK) ukBegin(push);   // (British species, hedges and gardens: 33_veg_e_uk.js)
+  if (GAME.mode === 'uktrees') { ukGalleryPlace(V, half); V.nTrees = n; break serra; }
+  if (TOWN.on) { townVegPlace(VEG_UK ? ukLegacyPush : push); if (VEG_UK) ukEnd(); V.nTrees = n; break serra; }
   // câmeras de TV (lente longa): nada de copa perto da torre nem nas linhas de visada entre a câmera e o trecho de pista
   // que ela cobre (de 160 m antes a 60 m depois da torre) — senão uma arvoreta a 25 m tapa o carro inteiro.
   const tv = [];
@@ -136,7 +138,7 @@ function vegPlace() {
 }
 
 function vegBakeImpostors(cpu) {
-  const dev = G.dev, S = 512, layers = VEG_NT * 8, V = VEG;
+  const dev = G.dev, S = VEG_UK ? 256 : 512, layers = VEG_NT * 8, V = VEG;   // (the British set has 28 archetypes: smaller layers)
   const mips = 8;
   V.texA = dev.createTexture({ size: [S, S, layers], format: 'rgba8unorm-srgb', usage: TU.RT | TU.TB, mipLevelCount: mips });
   V.texN = dev.createTexture({ size: [S, S, layers], format: 'rgba8unorm', usage: TU.RT | TU.TB, mipLevelCount: mips });
@@ -260,21 +262,22 @@ const vegDrawable = {
 queueMicrotask(() => BUILD.push(async () => {
   if (GAME.mode === 'test' || GAME.mode === 'car' || Q.has('noveg')) return;
   const V = VEG, dev = G.dev;
-  V.leafTex = vegAtlasBuild(); V.leafView = V.leafTex.createView(); R.view.vegLeaf = V.leafView;
+  V.leafTex = VEG_UK ? ukAtlasBuild() : vegAtlasBuild(); V.leafView = V.leafTex.createView(); R.view.vegLeaf = V.leafView;
   V.sLeaf = dev.createSampler({ minFilter: 'linear', magFilter: 'linear', mipmapFilter: 'linear', maxAnisotropy: 8 });
   V.sImp = dev.createSampler({ minFilter: 'linear', magFilter: 'linear', mipmapFilter: 'linear', maxAnisotropy: 4 });
-  const cpu = vegArchetypes(); V.meshes = cpu.map(m => m.upload());
+  const cpu = VEG_UK ? ukArchetypes() : vegArchetypes(); V.meshes = cpu.map(m => m.upload());
+  const src = VEG_UK ? 'veg_uk_' : 'veg_';
   V.leafMeshes = cpu.map(m => (m.leaves && m.leaves.n) ? m.leaves.upload() : null);
-  V.famLeaf = mkFamily('vegLeaf', { src: 'veg_leaf', buffers: [VEG_LEAF_LAYOUT, VEG_INST], alpha: true, cull: 'none', noCube: true, noShadow: true });
+  V.famLeaf = mkFamily('vegLeaf', { src: src + 'leaf', buffers: [VEG_LEAF_LAYOUT, VEG_INST], alpha: true, cull: 'none', noCube: true, noShadow: true });
   // viés de sombra inclinado maior: cartões grandes e planos quase paralelos ao sol baixo se auto-sombreavam em hachura diagonal
-  V.famTree = mkFamily('vegTree', { src: 'veg_tree', buffers: [VLAYOUT, VEG_INST], alpha: true, cull: 'none', noCube: true, shadowBias: 24, shadowSlope: 7 });
-  V.famImp = mkFamily('vegImp', { src: 'veg_imp', buffers: [VEG_INST], alpha: true, cull: 'none', topology: 'triangle-strip', shadowBias: 4 });
+  V.famTree = mkFamily('vegTree', { src: src + 'tree', buffers: [VLAYOUT, VEG_INST], alpha: true, cull: 'none', noCube: true, shadowBias: 24, shadowSlope: 7 });
+  V.famImp = mkFamily('vegImp', { src: src + 'imp', buffers: [VEG_INST], alpha: true, cull: 'none', topology: 'triangle-strip', shadowBias: 4 });
   vegBakeImpostors(cpu);
   V.viewA = V.texA.createView({ dimension: '2d-array' }); V.viewN = V.texN.createView({ dimension: '2d-array' });
-  V.dimBuf = mkBuf(192, BU.U, V.dims);
+  V.dimBuf = mkBuf(V.dims.byteLength, BU.U, V.dims);
   V.bgTree = dev.createBindGroup({ layout: V.famTree.bgl3, entries: [{ binding: 0, resource: V.leafView }, { binding: 1, resource: V.sLeaf }] });
   V.bgImp = dev.createBindGroup({ layout: V.famImp.bgl3, entries: [{ binding: 0, resource: V.viewA }, { binding: 1, resource: V.viewN }, { binding: 2, resource: V.sImp }, { binding: 3, resource: { buffer: V.dimBuf } }] });
   vegPlace();
   R.drawables.push(vegDrawable); R.veg = V;
-  if (typeof grassBuild === 'function' && !TOWN.on) grassBuild();   // (no grass blades on the town map)
+  if (typeof grassBuild === 'function' && !VEG_UK) grassBuild();   // (no grass blades on the town map)
 }));

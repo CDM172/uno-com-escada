@@ -27,7 +27,8 @@ const TZZ = new Uint8Array([2, 0, 6, 6, 2, 3, 4, 4, 4, 1, 6, 3, 2, 2, 6, 4, 6, 3
 // drives on what is drawn, and the values blend between 1 m cells so a kerb is a short ramp, never a step to snag on)
 const TZH = new Float64Array([0, 0.06, 0.19, 0, 0, 0, 0, 0, 0, 0.08, 0.05, 0.05, 0, 0, 0, 0, 0, 0]);
 // land cover classes of the bake (tools/osm/bake_wsm.py, LC) → surface code
-const TOWN_LC = [TZ.NONE, TZ.GARDEN, TZ.GRASS, TZ.FIELD, TZ.WOOD, TZ.WOOD, TZ.SAND, TZ.MUD, TZ.WATER, TZ.HARD, TZ.NONE, TZ.GRASS, TZ.GRASS, TZ.GRASS, TZ.DUNE];
+// (land cover class of the bake -> raster code: ... 13 pitch, 14 dune, 15 allotment, 16 golf bunker)
+const TOWN_LC = [TZ.NONE, TZ.GARDEN, TZ.GRASS, TZ.FIELD, TZ.WOOD, TZ.WOOD, TZ.SAND, TZ.MUD, TZ.WATER, TZ.HARD, TZ.NONE, TZ.GRASS, TZ.GRASS, TZ.GRASS, TZ.DUNE, TZ.FIELD, TZ.SAND];
 const ROAD_PAVE = [0, 3.0, 2.8, 2.6, 2.6, 2.2, 2.0, 1.6, 0, 0, 0, 0, 0];   // pavement width by road class (m)
 
 // base64 → zlib → bytes
@@ -73,6 +74,10 @@ async function townLoad() {
   // per building (bake, LIDAR): the edge facing the street (255: none); chimney stacks and dormers, by building
   T.bfront = A.bfront || null;
   T.chim = A.chxz ? { xz: A.chxz, b: A.chb, h: A.chh, n: A.chb.length } : null;
+  // street furniture from OSM (x, z cm; code, sub-code: see FURN in the bake) and boundaries (walls, fences, hedges:
+  // polylines + code, height dm, material)
+  T.furn = A.fnxz ? { xz: A.fnxz, c: A.fnc, n: A.fnc.length / 2 } : null;
+  T.bnd = A.wn ? Object.assign(townPolys(A.wn, A.w0, A.wxz, q), { info: A.winfo }) : null;
   T.dorm = A.dmxz ? { xz: A.dmxz, b: A.dmb, h: A.dmh, n: A.dmb.length } : null;
   if (A.ltn) {                           // LIDAR tree crowns: x, z, height
     const P = townPolys(A.ltn, A.lt0, A.ltd, q), n = P.off[P.n], L = T.ltrees = new Float32Array(n * 3);
@@ -307,6 +312,19 @@ function townRoadSurface(D, w, h, res) {
     for (let o = 0; o < w * h; o++) if (owner[o] === 254) { owner[o] = rk; surf[o] = hsum[o] / wsum[o]; }
   }
   for (let o = 0; o < w * h; o++) if (blend[o] > 0) D[o] += ((owner[o] < 255 ? surf[o] : hsum[o] / wsum[o]) - D[o]) * blend[o];
+  // junctions where a lesser road meets a more important one: [minor road, its end (0 first / 1 last), the major road's
+  // half width] (for the give-way lines)
+  const J = T.junc = [];
+  for (const nd of nodes) {
+    if (nd.m.length < 6) continue;
+    let rmin = 9, hwMaj = 0; for (let e = 0; e < nd.m.length; e += 3) { const rk = rank(prof[nd.m[e]].cls); if (rk < rmin) rmin = rk; }
+    for (let e = 0; e < nd.m.length; e += 3) { const r = nd.m[e]; if (rank(prof[r].cls) === rmin) hwMaj = Math.max(hwMaj, ri[r * 4 + 1] * 0.05); }
+    for (let e = 0; e < nd.m.length; e += 3) {
+      const r = nd.m[e], q = nd.m[e + 1], P = prof[r]; if (rank(P.cls) <= rmin || P.cls > 8) continue;
+      if (q !== 0 && q !== P.x.length - 1) continue;
+      J.push(r, q === 0 ? 0 : 1, hwMaj);
+    }
+  }
   T.rprof = prof; T.roadNodes = nodes.length;
 }
 function townHeightsBuild() {
@@ -461,7 +479,7 @@ function townRasterBuild() {
     const sd = kb[i * 2]; if (!sd) continue; const e = kb[i * 2 + 1], nx = -TRK.tz[i] * sd, nz = TRK.tx[i] * sd;
     townCapsule(TRK.x[i] + nx * (e - 0.45), TRK.z[i] + nz * (e - 0.45), TRK.x[(i + 1) % N] + nx * (e - 0.45), TRK.z[(i + 1) % N] + nz * (e - 0.45), 0.5, TZ.KERB, ov);
   }
-  townTollFurniture(); townCapsBuild(); {
+  townTollFurniture(); townBoundaries(); townCapsBuild(); {
     const B = T.tollRails, W = T.tollWalls, ov = new Uint8Array(18).fill(1); ov[TZ.WATER] = 0; ov[TZ.OUT] = 0; ov[TZ.ROAD] = 0;
     for (let i = 0; i < B.length; i += 5) townCapsule(B[i], B[i + 1], B[i + 2], B[i + 3], 0.35, TZ.WALL, ov);
     for (let i = 0; i < W.length; i += 6) townCapsule(W[i], W[i + 1], W[i + 2], W[i + 3], 0.3, TZ.WALL, ov);
@@ -587,6 +605,71 @@ function townSdfBuild() {
   const s = T.sdf = new Uint8Array(w * h); for (let k = 0; k < w * h; k++) s[k] = Math.min(255, Math.round(d[k] * 4));
 }
 
+// Boundaries as straight segments [ax, az, bx, bz, code, height (0 = default), look (0 stone, 2 brick, 3 render)]:
+// OSM's walls (1), fences (2), hedges (3), retaining walls (4), railings (5) and crash barriers (6), then the defaults OSM
+// leaves out: a low wall (or hedge) across each house's street front at the back of the pavement, with a gap for its
+// path; and along the village and country lanes (Kewstoke, Sand Bay, the lanes beyond the town) where there is no
+// pavement, grey stone walls or hedgerows on both sides, broken at junctions, drives and gateways.
+function townBoundaries() {
+  const T = TOWN, Z = T.zone, zw = T.zw, out = T.bsegs = [], R = T.rd, ri = T.rinfo;
+  const zoneAt = (x, z) => { const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i < 0 || j < 0 || i >= zw || j >= T.zh ? TZ.OUT : Z[j * zw + i]; };
+  const B = T.bnd;
+  if (B) for (let w = 0; w < B.n; w++) {
+    const code = B.info[w * 3] === 7 ? 2 : B.info[w * 3], hgt = B.info[w * 3 + 1] * 0.1, matl = B.info[w * 3 + 2];
+    for (let k = B.off[w]; k < B.off[w + 1] - 1; k++) {   // (in pieces of 3 m or less: one that crosses a road is dropped there)
+      const ax = B.p[k * 2], az = B.p[k * 2 + 1], bx = B.p[k * 2 + 2], bz = B.p[k * 2 + 3], m = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 3));
+      for (let q = 0; q < m; q++) out.push(ax + (bx - ax) * q / m, az + (bz - az) * q / m, ax + (bx - ax) * (q + 1) / m, az + (bz - az) * (q + 1) / m, code, hgt, matl === 2 ? 2 : 0);
+    }
+  }
+  // front-garden walls
+  const BD = T.bd, bi = T.binfo, bfr = T.bfront; let nw = 0;
+  if (bfr) for (let b = 0; b < BD.n; b++) {
+    const kind = bi[b * 8]; if (kind !== 0 && kind !== 1 && kind !== 10) continue;
+    const e = bfr[b]; if (e === 255) continue;
+    const k0 = BD.off[b], n = BD.off[b + 1] - k0; if (e >= n) continue;
+    const ax = BD.p[(k0 + e) * 2], az = BD.p[(k0 + e) * 2 + 1], bx = BD.p[(k0 + (e + 1) % n) * 2], bz = BD.p[(k0 + (e + 1) % n) * 2 + 1], L = Math.hypot(bx - ax, bz - az);
+    if (L < 3 || L > 30) continue;
+    const nx = (bz - az) / L, nz = -(bx - ax) / L, mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    let d = 1; for (; d < 12; d += 0.5) { const zc = zoneAt(mx + nx * d, mz + nz * d); if (zc === TZ.PAVE || zc === TZ.ROAD || zc === TZ.BLD) break; }
+    if (d < 1.8 || d >= 12 || zoneAt(mx + nx * d, mz + nz * d) === TZ.BLD) continue;
+    const off = d - 0.3, look = bi[b * 8 + 6] >> 4, h = bi[b * 8 + 4], stone = look === 4 || look === 3 || (h & 3) === 0, hedge = !stone && (bi[b * 8 + 5] & 3) === 1;
+    const tx = (bx - ax) / L, tz = (bz - az) / L, g0 = L / 2 - 0.55, p0x = ax + nx * off, p0z = az + nz * off, p1x = bx + nx * off, p1z = bz + nz * off;
+    const code = hedge ? 3 : 1, hg = hedge ? 1.1 : 0.85, lk = stone ? 0 : 2;
+    out.push(p0x, p0z, p0x + tx * g0, p0z + tz * g0, code, hg, lk, p1x - tx * g0, p1z - tz * g0, p1x, p1z, code, hg, lk); nw++;
+    // the front garden itself: paved (flags, gravel, a parking space) in half the town's terraces, a lawn elsewhere
+    const central = Math.hypot((mx - 250) / 1300, (mz + 150) / 1000) < 1;
+    if ((kind === 1 || central) && ((bi[b * 8 + 4] >> 2) & 1)) {
+      const x0 = Math.floor(Math.min(ax, bx, p0x, p1x) - T.x0), x1 = Math.ceil(Math.max(ax, bx, p0x, p1x) - T.x0), z0 = Math.floor(Math.min(az, bz, p0z, p1z) - T.z0), z1 = Math.ceil(Math.max(az, bz, p0z, p1z) - T.z0);
+      for (let j = Math.max(0, z0); j <= Math.min(T.zh - 1, z1); j++) for (let i = Math.max(0, x0); i <= Math.min(zw - 1, x1); i++) {
+        const px = T.x0 + i + 0.5, pz = T.z0 + j + 0.5, u = (px - ax) * tx + (pz - az) * tz, v = (px - ax) * nx + (pz - az) * nz;
+        if (u > 0.2 && u < L - 0.2 && v > 0.1 && v < off - 0.2) { const o = j * zw + i; if (Z[o] === TZ.GARDEN || Z[o] === TZ.NONE || Z[o] === TZ.GRASS) Z[o] = TZ.HARD; }
+      }
+    }
+  }
+  // village and country lanes
+  let nv = 0;
+  const village = (x, z) => (x > 1300 && x < 2500 && z > -2300 && z < -1450) || z < -2300;
+  for (let r = 0; r < R.n; r++) {
+    const cls = ri[r * 4], fl = ri[r * 4 + 2]; if (cls < 4 || cls > 8 || (fl & 129)) continue;
+    const hw = ri[r * 4 + 1] * 0.05;
+    for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) {
+      const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 2) continue;
+      if (!village((ax + bx) / 2, (az + bz) / 2)) continue;
+      const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz, nz = tx, m = Math.ceil(L / 4);
+      for (const sd of [-1, 1]) {
+        const style = hash2(r * 3 + (sd > 0 ? 1 : 0), 41) < 0.55 ? 1 : 3;
+        for (let q = 0; q < m; q++) {
+          const f0 = q / m, f1 = (q + 1) / m, o = hw + 0.5, x0 = ax + (bx - ax) * f0 + nx * sd * o, z0 = az + (bz - az) * f0 + nz * sd * o, x1 = ax + (bx - ax) * f1 + nx * sd * o, z1 = az + (bz - az) * f1 + nz * sd * o;
+          const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, zc = zoneAt(mx, mz); if (zc !== TZ.GARDEN && zc !== TZ.FIELD && zc !== TZ.NONE && zc !== TZ.GRASS && zc !== TZ.WOOD) continue;
+          const zo = zoneAt(mx + nx * sd * 1.5, mz + nz * sd * 1.5); if (zo === TZ.ROAD || zo === TZ.PATH || zo === TZ.TRACK || zo === TZ.BLD) continue;   // (a junction, a drive, a path)
+          if (hash2(r * 131 + k * 7 + q, sd + 5) < 0.06) continue;                                                                                // (a gateway)
+          out.push(x0, z0, x1, z1, style, style === 1 ? 1.1 + 0.3 * hash2(r, 3) : 1.6, 0); nv++;
+        }
+      }
+    }
+  }
+  T.nGardenWalls = nw; T.nLaneWalls = nv;
+}
 // Walls and barriers the cars can hit, as capsules [ax, az, bx, bz, radius]: the Toll Road's steel barriers (on their
 // line) and retaining walls, the sea wall (its face to the beach). Gridded by 16 m cells; queried exactly (the 2 m
 // distance field would blur a 30 cm wall into the lane next to it).
@@ -596,6 +679,13 @@ function townCapsBuild() {
   for (let i = 0; i < B.length; i += 5) C.push(B[i], B[i + 1], B[i + 2], B[i + 3], 0.15);
   for (let i = 0; i < Wt.length; i += 6) C.push(Wt[i], Wt[i + 1], Wt[i + 2], Wt[i + 3], 0.3);
   for (let i = 0; i < Ws.length; i += 6) C.push(Ws[i], Ws[i + 1], Ws[i + 2], Ws[i + 3], 0.45);
+  const BS = T.bsegs || [], Z = T.zone;   // walls, fences and hedges, except where one would cross a road or a pavement
+  const nearRoad = (x, z) => { for (let dz = -0.8; dz <= 0.8; dz += 0.8) for (let dx = -0.8; dx <= 0.8; dx += 0.8) { const i = (x + dx - T.x0) | 0, j = (z + dz - T.z0) | 0; if (i < 0 || j < 0 || i >= T.zw || j >= T.zh) continue; const c = Z[j * T.zw + i]; if (c === TZ.ROAD || c === TZ.PAVE || c === TZ.KERB) return true; } return false; };
+  for (let i = 0; i < BS.length; i += 7) {
+    const code = BS[i + 4]; if (code === 6 || code === 5) continue;
+    if (nearRoad(BS[i], BS[i + 1]) || nearRoad(BS[i + 2], BS[i + 3]) || nearRoad((BS[i] + BS[i + 2]) / 2, (BS[i + 1] + BS[i + 3]) / 2)) continue;   // (never in a road's way)
+    C.push(BS[i], BS[i + 1], BS[i + 2], BS[i + 3], code === 3 ? 0.45 : 0.2);
+  }
   const n = C.length / 5, cnt = new Int32Array(gw * gh + 1), cells = [];
   for (let q = 0; q < n; q++) {
     const r = C[q * 5 + 4] + 0.1, i0 = Math.max(0, Math.floor((Math.min(C[q * 5], C[q * 5 + 2]) - r - T.x0) / c)), i1 = Math.min(gw - 1, Math.floor((Math.max(C[q * 5], C[q * 5 + 2]) + r - T.x0) / c));

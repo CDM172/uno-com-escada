@@ -125,10 +125,10 @@ fn surf(in: V2F, ff: bool) -> Surface {
     if (style == 3u) {
       // flaking: patches of fresher bark (plane: cream and olive camouflage; sycamore: pinkish-orange scars)
       let pc = textureSample(tNoise, sLin, uvb * sc * 0.7 + 0.31).b; let pid = fract(pc * 7.3 + wr.y);
-      let patch = smoothstep(0.5, 0.56, pc);
+      let flake = smoothstep(0.5, 0.56, pc);
       var pcol = mix(vec3f(1.55, 1.45, 1.05), vec3f(1.05, 1.08, 0.72), step(0.5, pid));
       if (bt != 8u) { pcol = vec3f(1.25, 1.02, 0.85); }
-      col = mix(col, col * pcol, patch * select(0.45, 1.0, bt == 8u));
+      col = mix(col, col * pcol, flake * select(0.45, 1.0, bt == 8u));
       k = mix(k, 1.0, 0.5);
     }
     if (style == 4u) {

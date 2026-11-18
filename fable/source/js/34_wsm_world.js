@@ -242,6 +242,7 @@ function townRoad(mb, r, G) {
     if (fl & 128) fla |= 16;            // a lane through the woods: leaf litter, worn edges
   }
   if (cls === 10 && (fl & 16)) fla |= 32;  // steps
+  if (fl & 8) fla |= 64;                    // block paving (drives, car park aisles, setts)
   const lift = cls <= 9 ? liftR : 0.05;
   const base = mb.nv;
   for (let i = 0; i < n; i++) {
@@ -478,7 +479,20 @@ function townBuilding(mb, b) {
     tris.length = 0; townEarClip(cu, cv, m, tris);
     for (let q = 0; q < tris.length; q += 3) townTri(mb, v0i + tris[q], v0i + tris[q + 1], v0i + tris[q + 2], nx, ny, nz);
   }
-  townRoofExtras(mb, b, gmax, eaveY, fRoof, cr, sr, vc, hv, rise, wall, wmat, rcol, rtile, bh);
+  if ((TOWN.chim || TOWN.dorm) && TOWNW.jobs) townJob(cx, cz, () => townRoofExtras(mb, b, gmax, eaveY, fRoof, cr, sr, vc, hv, rise, wall, wmat, rcol, rtile, bh));
+}
+// small details (chimneys, dormers, street furniture, boundaries, markings) are built in 128 m tiles drawn only near the
+// camera (each tile a range with its own distance limit)
+function townJob(x, z, f, dist) {
+  const k = Math.floor(x / 128) + ',' + Math.floor(z / 128) + ',' + (dist || 600); let l = TOWNW.jobs.get(k); if (!l) TOWNW.jobs.set(k, l = []); l.push(f);
+}
+function townJobsRun(mb, rs) {
+  for (const [k, fs] of TOWNW.jobs) {
+    const d = +k.split(',')[2], a = mb.ni;
+    for (const f of fs) f();
+    if (mb.ni > a) { rs.addRange(mb, a, mb.ni, 3, d); rs.addRange(mb, a, mb.ni, 4, Math.min(d, 150)); }
+  }
+  TOWNW.jobs.clear();
 }
 // The LIDAR's chimney stacks (brick or the house's own walls, with clay pots) and dormers (a box on the slope with a window
 // in its face and a flat lead top) on a pitched roof; in the ridge frame (u along the ridge, v across), fRoof(u, v) is the
@@ -1054,6 +1068,341 @@ function townVegPlace(push) {
   }
 }
 
+// ---------------------------------------------------------------- street furniture and boundaries
+// OSM's street furniture where it is mapped (bus stops, crossings, benches, bins, bollards, post boxes, phone boxes,
+// signals, gates, signposts...), and the defaults the map leaves out: street lamps along every lit street (ornate
+// Victorian lamps and railings on the seafront), low front-garden walls along the terraces, stone walls and hedges along
+// the village and country lanes (Kewstoke, Sand Bay). OSM walls, fences and hedges as drawn. Walls, fences and hedges
+// also stop the cars (capsules), except where they would cross a carriageway.
+const FN = { LAMP: 1, BENCH: 2, BIN: 3, BOLLARD: 4, BUS: 5, SIGNALS: 6, CROSSING: 7, POST: 8, PHONE: 9, GUIDE: 10, INFO: 11, GIVEWAY: 12, STOP: 13, GATE: 14, CYCLES: 15, MEMORIAL: 16, MINI: 17, RING: 18, CABINET: 21 };
+function townFurnitureBuild(mb, rs) {
+  const T = TOWN, R = T.rd, ri = T.rinfo, Z = T.zone, zw = T.zw, rnd = mkRng(9137), i0 = mb.ni;
+  const zoneAt = (x, z) => { const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i < 0 || j < 0 || i >= zw || j >= T.zh ? TZ.OUT : Z[j * zw + i]; };
+  const gy = (x, z) => hfAt(x, z) + TZH[zoneAt(x, z)];
+  // nearest road segment (drivable) to a point: direction, distance, class, half width
+  const SG = new Map(), sc = 24;
+  for (let r = 0; r < R.n; r++) { if (ri[r * 4] > 9) continue; for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) { const kk = Math.floor(R.p[k * 2] / sc) + ',' + Math.floor(R.p[k * 2 + 1] / sc); let l = SG.get(kk); if (!l) SG.set(kk, l = []); l.push(r, k); } }
+  const NR = new Float64Array(6);   // tx, tz, dist, side (+1: the point is on the road's right), class, half width
+  const nearRoad = (x, z, rmax) => {
+    let best = rmax;
+    NR[2] = 1e9;
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const l = SG.get((Math.floor(x / sc) + dx) + ',' + (Math.floor(z / sc) + dz)); if (!l) continue;
+      for (let e = 0; e < l.length; e += 2) {
+        const r = l[e], k = l[e + 1], ax = R.p[k * 2], az = R.p[k * 2 + 1], ex = R.p[k * 2 + 2] - ax, ez = R.p[k * 2 + 3] - az, L2 = ex * ex + ez * ez + 1e-9;
+        const t = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / L2)), px = ax + ex * t - x, pz = az + ez * t - z, d = Math.hypot(px, pz);
+        if (d < best) { best = d; const L = Math.sqrt(L2); NR[0] = ex / L; NR[1] = ez / L; NR[2] = d; NR[3] = (ex * (z - az) - ez * (x - ax)) > 0 ? 1 : -1; NR[4] = ri[r * 4]; NR[5] = ri[r * 4 + 1] * 0.05; }
+      }
+    }
+    return NR[2] < rmax;
+  };
+  const rot = (x, z, a) => mb.push(m4mul(m4(), m4translate(m4(), x, 0, z), m4rotY(m4(), -a)));
+  // ---- the pieces (in a local frame: x along, z across, y up from the ground at y0)
+  const lampModern = (x, z, a, y0) => {          // 8 m galvanised column, a short arm and a flat LED lantern over the road
+    rot(x, z, a); mb.mat(13, 120).color(0.46, 0.47, 0.47, 1); mb.cyl(0, y0, 0, 0.085, y0 + 8, 0.06, 6, false, true);
+    mb.box(0.55, y0 + 7.95, 0, 1.1, 0.08, 0.08); mb.color(0.2, 0.21, 0.22, 1); mb.box(1.15, y0 + 7.9, 0, 0.62, 0.12, 0.26);
+    mb.mat(15).color(0.95, 0.92, 0.8, 1); mb.box(1.15, y0 + 7.83, 0, 0.5, 0.02, 0.2); mb.pop();
+  };
+  const lampVictorian = (x, z, a, y0) => {       // the seafront's cast-iron lamps: fluted column, scrolled arms, two lanterns
+    rot(x, z, a); mb.mat(13, 90).color(0.09, 0.16, 0.13, 1);
+    mb.box(0, y0 + 0.35, 0, 0.42, 0.7, 0.42); mb.cyl(0, y0 + 0.7, 0, 0.16, y0 + 1.2, 0.12, 8, false, false); mb.cyl(0, y0 + 1.2, 0, 0.1, y0 + 4.2, 0.075, 8, false, false);
+    mb.box(0, y0 + 4.25, 0, 0.24, 0.12, 0.24);
+    for (const sd of [-1, 1]) {
+      mb.box(sd * 0.35, y0 + 4.32, 0, 0.7, 0.07, 0.07); mb.box(sd * 0.55, y0 + 4.15, 0, 0.06, 0.35, 0.06);
+      mb.mat(15).color(0.98, 0.93, 0.75, 1); mb.cyl(sd * 0.7, y0 + 3.85, 0, 0.13, y0 + 4.25, 0.17, 6, true, false);
+      mb.mat(13, 90).color(0.09, 0.16, 0.13, 1); mb.cyl(sd * 0.7, y0 + 4.25, 0, 0.19, y0 + 4.45, 0.03, 6, true, false);
+    }
+    mb.cyl(0, y0 + 4.3, 0, 0.05, y0 + 4.75, 0.02, 4, false, false); mb.pop();
+  };
+  const bench = (x, z, a, y0, seaside) => {      // timber slats on cast-iron ends (the seafront's are green)
+    rot(x, z, a);
+    mb.mat(13, 100).color(seaside ? 0.08 : 0.06, seaside ? 0.17 : 0.06, seaside ? 0.13 : 0.06, 1);
+    for (const sx of [-0.85, 0.85]) { mb.box(sx, y0 + 0.24, 0.05, 0.06, 0.48, 0.5); mb.box(sx, y0 + 0.62, -0.18, 0.06, 0.4, 0.06); }
+    mb.mat(15).color(0.38, 0.27, 0.16, 1);
+    for (const sz of [0.18, 0.02, -0.14]) mb.box(0, y0 + 0.46, sz, 1.9, 0.04, 0.13);
+    for (const sy of [0.62, 0.78]) mb.box(0, y0 + sy, -0.21, 1.9, 0.11, 0.035);
+    mb.pop();
+  };
+  const bin = (x, z, y0) => { mb.mat(13, 140).color(0.05, 0.06, 0.06, 1); mb.cyl(x, y0, z, 0.26, y0 + 0.85, 0.28, 8, false, true); mb.color(0.62, 0.55, 0.25, 1); mb.cyl(x, y0 + 0.72, z, 0.285, y0 + 0.78, 0.285, 8, false, false); };
+  const bollard = (x, z, y0) => { mb.mat(13, 150).color(0.06, 0.06, 0.06, 1); mb.cyl(x, y0, z, 0.1, y0 + 0.95, 0.09, 6, false, true); mb.mat(15).color(0.85, 0.85, 0.82, 1); mb.cyl(x, y0 + 0.75, z, 0.095, y0 + 0.85, 0.093, 6, false, false); };
+  const postBox = (x, z, y0) => {                // a red pillar box with its cap and black base
+    mb.mat(13, 70).color(0.06, 0.06, 0.06, 1); mb.cyl(x, y0, z, 0.31, y0 + 0.12, 0.31, 10, false, false);
+    mb.color(0.62, 0.03, 0.02, 1); mb.cyl(x, y0 + 0.12, z, 0.27, y0 + 1.4, 0.27, 10, false, false); mb.cyl(x, y0 + 1.4, z, 0.31, y0 + 1.48, 0.31, 10, true, true);
+    mb.cyl(x, y0 + 1.48, z, 0.28, y0 + 1.62, 0.1, 10, false, true); mb.color(0.04, 0.04, 0.04, 1); mb.box(x, y0 + 1.15, z, 0.3, 0.05, 0.56);
+  };
+  const phoneBox = (x, z, a, y0) => {            // the red K6 kiosk: glazed sides, domed top, a white crown sign band
+    rot(x, z, a); mb.mat(13, 60).color(0.62, 0.03, 0.02, 1); mb.box(0, y0 + 0.08, 0, 1.0, 0.16, 1.0);
+    for (const [cx, cz] of [[-0.43, -0.43], [0.43, -0.43], [0.43, 0.43], [-0.43, 0.43]]) mb.box(cx, y0 + 1.3, cz, 0.14, 2.3, 0.14);
+    mb.mat(13, 10).color(0.12, 0.16, 0.2, 1); for (const [cx, cz, sx, sz] of [[0, -0.45, 0.72, 0.04], [0, 0.45, 0.72, 0.04], [-0.45, 0, 0.04, 0.72], [0.45, 0, 0.04, 0.72]]) mb.box(cx, y0 + 1.25, cz, sx, 1.9, sz);
+    mb.mat(15).color(0.9, 0.9, 0.86, 1); mb.box(0, y0 + 2.32, 0, 0.92, 0.16, 0.92);
+    mb.mat(13, 60).color(0.62, 0.03, 0.02, 1); mb.box(0, y0 + 2.48, 0, 1.02, 0.16, 1.02); mb.cyl(0, y0 + 2.56, 0, 0.5, y0 + 2.75, 0.2, 8, false, true); mb.pop();
+  };
+  const busStop = (x, z, a, y0, shelter) => {    // a flag on a pole; a glazed shelter where OSM says so
+    rot(x, z, a); mb.mat(13, 120).color(0.42, 0.43, 0.43, 1); mb.cyl(0, y0, 0, 0.045, y0 + 2.9, 0.045, 6, false, true);
+    mb.mat(15).color(0.92, 0.92, 0.9, 1); mb.box(0, y0 + 2.55, 0.24, 0.03, 0.42, 0.42); mb.color(0.7, 0.05, 0.04, 1); mb.box(0.005, y0 + 2.62, 0.24, 0.035, 0.2, 0.2);
+    mb.color(0.95, 0.85, 0.15, 1); mb.box(0, y0 + 1.6, 0.06, 0.05, 0.45, 0.3);
+    if (shelter) {
+      mb.mat(13, 100).color(0.3, 0.32, 0.33, 1);
+      for (const [cx, cz] of [[-1.5, -1.0], [1.5, -1.0], [-1.5, 0.2], [1.5, 0.2]]) mb.box(cx, y0 + 1.2, cz, 0.08, 2.4, 0.08);
+      mb.box(0, y0 + 2.45, -0.4, 3.2, 0.08, 1.6);
+      mb.mat(13, 5).color(0.16, 0.2, 0.22, 1); mb.box(0, y0 + 1.25, -1.0, 2.9, 1.9, 0.02); mb.box(-1.5, y0 + 1.25, -0.4, 0.02, 1.9, 1.1); mb.box(1.5, y0 + 1.25, -0.4, 0.02, 1.9, 1.1);
+      mb.mat(15).color(0.35, 0.25, 0.15, 1); mb.box(0, y0 + 0.48, -0.75, 2.4, 0.05, 0.3);
+    }
+    mb.pop();
+  };
+  const signalHead = (x, z, a, y0, h) => {       // a black pole and a three-aspect head facing the traffic (red lit)
+    rot(x, z, a); mb.mat(13, 130).color(0.08, 0.08, 0.08, 1); mb.cyl(0, y0, 0, 0.065, y0 + h, 0.06, 6, false, true); mb.box(0, y0 + h - 0.35, 0.1, 0.3, 0.95, 0.24);
+    mb.mat(15).color(1.0, 0.12, 0.05, 1); mb.box(0, y0 + h - 0.06, 0.23, 0.2, 0.2, 0.02); mb.color(0.35, 0.22, 0.05, 1); mb.box(0, y0 + h - 0.35, 0.23, 0.2, 0.2, 0.02); mb.color(0.05, 0.25, 0.12, 1); mb.box(0, y0 + h - 0.64, 0.23, 0.2, 0.2, 0.02);
+    mb.pop();
+  };
+  const belisha = (x, z, y0) => {                // black and white striped pole, amber globe
+    for (let q = 0; q < 6; q++) { mb.mat(13, 100).color(q & 1 ? 0.9 : 0.05, q & 1 ? 0.9 : 0.05, q & 1 ? 0.88 : 0.05, 1); mb.cyl(x, y0 + q * 0.4, z, 0.055, y0 + q * 0.4 + 0.4, 0.055, 6, false, q === 5); }
+    mb.mat(15).color(1.0, 0.6, 0.08, 1); const g = y0 + 2.55, pr = []; for (let q = 0; q <= 6; q++) { const t = q / 6 * PI; pr.push([g - Math.cos(t) * 0.16, Math.sin(t) * 0.16 + 0.01]); }
+    mb.push(m4mul(m4(), m4translate(m4(), x, 0, z), m4rotZ(m4(), PI / 2))); mb.lathe(pr, 8); mb.pop();
+  };
+  const signPost = (x, z, a, y0, kind) => {      // give way (triangle) or stop (octagon) on a grey post, facing the traffic
+    rot(x, z, a); mb.mat(13, 120).color(0.42, 0.43, 0.43, 1); mb.cyl(0, y0, 0, 0.04, y0 + 2.2, 0.04, 6, false, true);
+    if (kind === 13) { mb.mat(15).color(0.75, 0.04, 0.03, 1); mb.push(m4mul(m4(), m4translate(m4(), 0, y0 + 1.95, 0.05), m4rotX(m4(), PI / 2))); mb.cyl(0, -0.015, 0, 0.36, 0.015, 0.36, 8, true, true); mb.pop(); }
+    else { mb.mat(15).color(0.8, 0.05, 0.04, 1); const yb = y0 + 1.7, s3 = 0.42; const a1 = mb.v(-s3, yb + 0.6, 0.06, 0, 0, 1, 0, 0), a2 = mb.v(s3, yb + 0.6, 0.06, 0, 0, 1, 0, 0), a3 = mb.v(0, yb - 0.12, 0.06, 0, 0, 1, 0, 0); townTri(mb, a1, a2, a3, 0, 0, 1); mb.color(0.95, 0.95, 0.92, 1); const b1 = mb.v(-s3 * 0.7, yb + 0.5, 0.065, 0, 0, 1, 0, 0), b2 = mb.v(s3 * 0.7, yb + 0.5, 0.065, 0, 0, 1, 0, 0), b3 = mb.v(0, yb + 0.02, 0.065, 0, 0, 1, 0, 0); townTri(mb, b1, b2, b3, 0, 0, 1); }
+    mb.pop();
+  };
+  const fieldGate = (x, z, a, y0, w) => {        // a five-bar gate between two posts
+    rot(x, z, a); mb.mat(15).color(0.32, 0.26, 0.18, 1); mb.box(-w / 2 - 0.1, y0 + 0.65, 0, 0.18, 1.3, 0.18); mb.box(w / 2 + 0.1, y0 + 0.65, 0, 0.18, 1.3, 0.18);
+    mb.mat(13, 110).color(0.52, 0.53, 0.52, 1); for (let q = 0; q < 5; q++) mb.box(0, y0 + 0.25 + q * 0.21, 0, w, 0.045, 0.045);
+    mb.box(-w / 2 + 0.05, y0 + 0.66, 0, 0.06, 0.95, 0.05); mb.box(w / 2 - 0.05, y0 + 0.66, 0, 0.06, 0.95, 0.05);
+    mb.push(m4mul(m4(), m4translate(m4(), 0, y0 + 0.66, 0), m4rotZ(m4(), Math.atan2(0.85, w)))); mb.box(0, 0, 0, Math.hypot(w, 0.85), 0.045, 0.04); mb.pop();
+    mb.pop();
+  };
+  const guidepost = (x, z, a, y0) => { rot(x, z, a); mb.mat(15).color(0.9, 0.9, 0.88, 1); mb.box(0, y0 + 1.3, 0, 0.12, 2.6, 0.12); mb.box(0.45, y0 + 2.3, 0, 0.8, 0.16, 0.04); mb.box(-0.4, y0 + 2.05, 0, 0.7, 0.16, 0.04); mb.color(0.85, 0.15, 0.1, 1); mb.box(0, y0 + 2.65, 0, 0.16, 0.12, 0.16); mb.pop(); };
+  const cycles = (x, z, a, y0) => { rot(x, z, a); mb.mat(13, 100).color(0.15, 0.15, 0.15, 1); for (let q = -1; q <= 1; q++) { mb.box(q * 0.9, y0 + 0.45, -0.35, 0.05, 0.9, 0.05); mb.box(q * 0.9, y0 + 0.45, 0.35, 0.05, 0.9, 0.05); mb.box(q * 0.9, y0 + 0.9, 0, 0.05, 0.05, 0.75); } mb.pop(); };
+  const memorial = (x, z, y0) => { mb.mat(15).color(0.62, 0.6, 0.55, 1); mb.box(x, y0 + 0.3, z, 1.6, 0.6, 1.6); mb.box(x, y0 + 1.1, z, 0.9, 1.0, 0.9); mb.cyl(x, y0 + 1.6, z, 0.4, y0 + 4.2, 0.06, 4, false, false); };
+  const cabinet = (x, z, a, y0) => { rot(x, z, a); mb.mat(13, 120).color(0.12, 0.2, 0.15, 1); mb.box(0, y0 + 0.6, 0, 1.1, 1.2, 0.45); mb.pop(); };
+  const lifeRing = (x, z, a, y0) => { rot(x, z, a); mb.mat(15).color(0.3, 0.3, 0.3, 1); mb.box(0, y0 + 0.7, 0, 0.1, 1.4, 0.1); mb.color(0.95, 0.45, 0.05, 1); mb.box(0, y0 + 1.1, 0.08, 0.7, 0.7, 0.06); mb.pop(); };
+  // a straight wall, fence, hedge or railing from (ax, az) to (bx, bz), on the ground
+  const boundary = (ax, az, bx, bz, code, hgt, matl, look) => {
+    const L = Math.hypot(bx - ax, bz - az); if (L < 0.3) return; const tx = (bx - ax) / L, tz = (bz - az) / L, a = Math.atan2(tz, tx);
+    const dg = Math.abs(hfAt(ax, az) - hfAt(bx, bz)), m = Math.max(1, Math.ceil(L / (dg < 0.25 ? 9 : 3)));
+    for (let q = 0; q < m; q++) {
+      const f0 = q / m, f1 = (q + 1) / m, x0 = ax + (bx - ax) * f0, z0 = az + (bz - az) * f0, x1 = ax + (bx - ax) * f1, z1 = az + (bz - az) * f1, l = L / m;
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, y = Math.min(hfAt(x0, z0), hfAt(x1, z1), hfAt(mx, mz));
+      rot(mx, mz, a);
+      if (code === 1 || code === 4) {          // wall: grey limestone rubble, red brick or render, with a coping
+        const h = hgt || (code === 4 ? 1.2 : 1.5), c = look === 2 ? [0.4, 0.19, 0.12] : look === 3 ? [0.6, 0.58, 0.52] : [0.36, 0.35, 0.32];
+        mb.mat(15).color(c[0], c[1], c[2], 1); mb.box(0, y + h / 2 - 0.1, 0, l + 0.02, h + 0.2, 0.32); mb.color(c[0] * 1.1, c[1] * 1.1, c[2] * 1.1, 1); mb.box(0, y + h + 0.03, 0, l + 0.04, 0.08, 0.38);
+      } else if (code === 2) {                  // fence: close-boarded timber panels (or a chain-link look: metal)
+        const h = hgt || 1.6;
+        if (matl === 4) { mb.mat(13, 150).color(0.4, 0.42, 0.42, 1); mb.box(0, y + h / 2, 0, l, h, 0.02); }
+        else { mb.mat(15).color(0.34, 0.26, 0.17, 1); mb.box(0, y + h / 2, 0, l, h, 0.05); mb.color(0.28, 0.21, 0.14, 1); mb.box(-l / 2, y + h / 2 + 0.05, 0, 0.1, h + 0.1, 0.1); }
+      } else if (code === 3) {                  // hedge: a clipped green box with a ragged top
+        const h = hgt || 1.5 + rnd() * 0.5; mb.mat(15).color(0.06 + rnd() * 0.03, 0.12 + rnd() * 0.04, 0.035, 1); mb.box(0, y + h / 2, 0, l + 0.2, h, 0.8 + rnd() * 0.3);
+      } else if (code === 5 || code === 6) {    // railings (posts, two rails, bars) or a crash barrier
+        const h = code === 6 ? 0.75 : (hgt || 1.05);
+        mb.mat(13, 100).color(code === 6 ? 0.45 : 0.07, code === 6 ? 0.46 : 0.12, code === 6 ? 0.47 : 0.1, 1);
+        mb.box(-l / 2, y + h / 2, 0, 0.06, h, 0.06); mb.box(0, y + h - 0.03, 0, l, 0.05, 0.05); mb.box(0, y + 0.15, 0, l, 0.04, 0.04);
+        if (code === 5) for (let e = 0; e < Math.floor(l / 0.13); e++) mb.box(-l / 2 + (e + 0.5) * 0.13, y + h / 2, 0, 0.02, h - 0.1, 0.02);
+      }
+      mb.pop();
+    }
+  };
+  // ---- OSM furniture
+  const F = T.furn, lampsAt = [];
+  let nf = 0;
+  if (F) for (let i = 0; i < F.n; i++) {
+    const x = F.xz[i * 2] * 0.01, z = F.xz[i * 2 + 1] * 0.01, c = F.c[i * 2], sub = F.c[i * 2 + 1], zc = zoneAt(x, z); if (zc === TZ.BLD || zc === TZ.OUT) continue;
+    const on = nearRoad(x, z, 25); let a = on ? Math.atan2(NR[1], NR[0]) : 0;
+    let px = x, pz = z;
+    // (a point mapped on the carriageway itself is moved to the kerb: bus stops, signals, signs stand on the pavement)
+    const toKerb = (extra) => { if (on && NR[2] < NR[5] + 0.4) { const sd = NR[3] || 1; px = x + (-NR[1]) * sd * (NR[5] + extra - NR[2]) * 1; pz = z + NR[0] * sd * (NR[5] + extra - NR[2]); } };
+    const face = () => on ? Math.atan2(NR[1], NR[0]) + (NR[3] > 0 ? PI : 0) : 0;   // (turned towards the road)
+    const J = (f, d) => townJob(px, pz, f, d || 300), fa = face(), gp = gy(px, pz);
+    if (c === FN.LAMP) { toKerb(0.6); const X = px, Zz = pz, A = face() + PI / 2, Y = gy(px, pz); townJob(X, Zz, () => lampModern(X, Zz, A, Y), 450); lampsAt.push(px, pz); }
+    else if (c === FN.BENCH) { const sea = px < 230 && pz > -1000 && pz < 2700 && zoneAt(px - 12, pz) === TZ.SAND; J(() => bench(px, pz, sea ? PI / 2 : fa, gp, sea)); }
+    else if (c === FN.BIN) J(() => bin(px, pz, gp), 200);
+    else if (c === FN.BOLLARD) J(() => bollard(px, pz, gp), 200);
+    else if (c === FN.BUS) { toKerb(0.5); const X = px, Zz = pz, A = face(), Y = gy(px, pz); townJob(X, Zz, () => busStop(X, Zz, A, Y, sub & 1), 350); }
+    else if (c === FN.POST) { toKerb(0.6); const X = px, Zz = pz, Y = gy(px, pz); townJob(X, Zz, () => postBox(X, Zz, Y), 250); }
+    else if (c === FN.PHONE) { toKerb(0.9); const X = px, Zz = pz, A = face(), Y = gy(px, pz); townJob(X, Zz, () => phoneBox(X, Zz, A, Y), 300); }
+    else if (c === FN.GUIDE || c === FN.INFO) { toKerb(0.6); const X = px, Zz = pz, Y = gy(px, pz); townJob(X, Zz, () => guidepost(X, Zz, a, Y), 250); }
+    else if (c === FN.CYCLES) J(() => cycles(px, pz, a, gp), 200);
+    else if (c === FN.MEMORIAL) J(() => memorial(px, pz, gp), 500);
+    else if (c === FN.CABINET) { toKerb(0.5); const X = px, Zz = pz, A = face(), Y = gy(px, pz); townJob(X, Zz, () => cabinet(X, Zz, A, Y), 200); }
+    else if (c === FN.RING) J(() => lifeRing(px, pz, a, gp), 200);
+    else if (c === FN.GATE) { const Y = hfAt(px, pz); J(() => fieldGate(px, pz, a + PI / 2, Y, 3.4)); }
+    else if ((c === FN.SIGNALS || c === FN.CROSSING || c === FN.GIVEWAY || c === FN.STOP) && on) {
+      // on the road: a pole on each kerb, facing the traffic (signals, crossings), the give-way or stop sign on the near side
+      const tx = NR[0], tz = NR[1], hw = NR[5], nx = -tz, nz = tx;
+      if (c === FN.SIGNALS || (c === FN.CROSSING && sub === 2)) for (const sd of [-1, 1]) { const qx = x + nx * sd * (hw + 0.6) - tx * sd * 2.5, qz = z + nz * sd * (hw + 0.6) - tz * sd * 2.5, A = a + (sd > 0 ? 0 : PI), Y = gy(qx, qz); townJob(qx, qz, () => signalHead(qx, qz, A, Y, 3.2), 400); }
+      else if (c === FN.CROSSING && sub === 1) for (const sd of [-1, 1]) { const qx = x + nx * sd * (hw + 0.5), qz = z + nz * sd * (hw + 0.5), Y = gy(qx, qz); townJob(qx, qz, () => belisha(qx, qz, Y), 350); }
+      else if (c === FN.GIVEWAY || c === FN.STOP) { const qx = x - nx * (hw + 0.7), qz = z - nz * (hw + 0.7), A = a + PI / 2, Y = gy(qx, qz); townJob(qx, qz, () => signPost(qx, qz, A, Y, c), 300); }
+    }
+    nf++;
+  }
+  // ---- boundaries: OSM's walls, fences and hedges, the front-garden walls and the village lanes' walls and hedges
+  // (townBoundaries, 13_wsm_town.js: the same segments stop the cars)
+  const BS = T.bsegs || []; let nb = BS.length / 7;
+  for (let q = 0; q < BS.length; q += 7) {
+    const mx = (BS[q] + BS[q + 2]) / 2, mz = (BS[q + 1] + BS[q + 3]) / 2; if (zoneAt(mx, mz) === TZ.ROAD || zoneAt(BS[q], BS[q + 1]) === TZ.ROAD || zoneAt(BS[q + 2], BS[q + 3]) === TZ.ROAD) continue;   // (never across a carriageway)
+    const q0 = q; townJob(mx, mz, () => boundary(BS[q0], BS[q0 + 1], BS[q0 + 2], BS[q0 + 3], BS[q0 + 4], BS[q0 + 5], 0, BS[q0 + 6]), 320);
+  }
+  // ---- default street lamps: every 34 m along the lit streets of the towns (one side, both on main roads), at the back of
+  // the kerb; none near a mapped lamp, none on the Toll Road and country lanes far from houses
+  const lampNear = (x, z) => { for (let q = 0; q < lampsAt.length; q += 2) if (Math.abs(lampsAt[q] - x) < 14 && Math.abs(lampsAt[q + 1] - z) < 14) return true; return false; };
+  const builtUp = (x, z) => { const gi = ((x - T.x0) / T.bcell) | 0, gj = ((z - T.z0) / T.bcell) | 0; let c = 0; for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) { const i = gi + di, j = gj + dj; if (i < 0 || j < 0 || i >= T.bgw || j >= T.bgh) continue; c += T.bstart[j * T.bgw + i + 1] - T.bstart[j * T.bgw + i]; } return c >= 3; };
+  let nl = 0;
+  const seafront = (x, z) => x < 260 && x > -320 && z > -900 && z < 2900;
+  for (let r = 0; r < R.n; r++) {
+    const cls = ri[r * 4], fl = ri[r * 4 + 2]; if (cls > 7 || (fl & 129)) continue;
+    const hw = ri[r * 4 + 1] * 0.05, pave = (fl & 32) ? 0 : ROAD_PAVE[cls], both = cls <= 4 && hw >= 3.4;
+    let acc = 17, side = 1;
+    for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) {
+      const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 0.1) continue;
+      const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz, nz = tx;
+      for (; acc < L; acc += 34) {
+        const cx = ax + tx * acc, cz = az + tz * acc; if (!builtUp(cx, cz)) continue;
+        for (const sd of both ? [-1, 1] : [side]) {
+          const o = hw + (pave ? Math.min(pave - 0.35, 0.6) : 0.9), x = cx + nx * sd * o, z = cz + nz * sd * o, zc = zoneAt(x, z);
+          if (zc === TZ.ROAD || zc === TZ.BLD || zc === TZ.WATER || zc === TZ.OUT || lampNear(x, z)) continue;
+          if (seafront(x, z)) continue;          // (the promenade has its own)
+          const A = Math.atan2(tz, tx) + (sd > 0 ? -PI / 2 : PI / 2), Y = gy(x, z); townJob(x, z, () => lampModern(x, z, A, Y), 450); lampsAt.push(x, z); nl++;
+        }
+        side = -side;
+      }
+      acc -= L;
+    }
+  }
+  // ---- the seafront: ornate lamps every 26 m and railings along the promenade's edge above the sea wall
+  const SW = T.walls; let ns = 0;
+  for (let i = 0; i < SW.length; i += 6) {
+    const ax = SW[i], az = SW[i + 1], bx = SW[i + 2], bz = SW[i + 3], top = SW[i + 5], L = Math.hypot(bx - ax, bz - az); if (L < 0.2) continue;
+    const tx = (bx - ax) / L, tz = (bz - az) / L, mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    let nx = -tz, nz = tx; if (hfAt(mx + nx * 4, mz + nz * 4) > hfAt(mx - nx * 4, mz - nz * 4)) { nx = -nx; nz = -nz; }   // n: towards the beach
+    if (!seafront(mx, mz)) continue;
+    const pr = Math.floor((ax * tx + az * tz) / 26), pr2 = Math.floor((bx * tx + bz * tz) / 26);
+    if (pr !== pr2) { const x = mx - nx * 1.4, z = mz - nz * 1.4, zc = zoneAt(x, z); if (zc !== TZ.ROAD && zc !== TZ.BLD && !lampNear(x, z)) { const A = Math.atan2(tz, tx), Y = hfAt(x, z) + TZH[zc]; townJob(x, z, () => lampVictorian(x, z, A, Y), 500); lampsAt.push(x, z); ns++; } }
+    // railings on the coping (painted the seafront's green)
+    townJob(mx, mz, () => { rot(mx, mz, Math.atan2(tz, tx)); const ox = -0.25;
+      mb.mat(13, 100).color(0.07, 0.2, 0.17, 1); mb.box(0, top + 0.95, ox, L, 0.05, 0.05); mb.box(0, top + 0.5, ox, L, 0.04, 0.04); mb.box(-L / 2, top + 0.5, ox, 0.06, 1.0, 0.06);
+      mb.pop(); }, 350);
+  }
+  if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 160); }
+  TOWNW.stats.furniture = { osm: nf, boundarySegments: nb, lamps: nl, seafrontLamps: ns, gardenWalls: T.nGardenWalls || 0, laneWalls: T.nLaneWalls || 0 };
+}
+
+// ---------------------------------------------------------------- road markings laid on the carriageways
+// Zebra crossings (stripes along the road, zigzags on both kerbs), stop lines before the traffic signals and signal
+// crossings, give-way lines where a lesser road meets a more important one (double dashes across its left half), and
+// tactile paving (red at the controlled crossings, buff at the others) on the pavements at every crossing.
+function townMarkingsBuild(mb, rs) {
+  const T = TOWN, R = T.rd, ri = T.rinfo, F = T.furn, i0 = mb.ni, lift = 0.075;
+  const zoneAt = (x, z) => { const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i < 0 || j < 0 || i >= T.zw || j >= T.zh ? TZ.OUT : T.zone[j * T.zw + i]; };
+  // a flat quad on the road surface: centre (cx, cz), axis (tx, tz), half sizes along and across
+  const decal = (cx, cz, tx, tz, hl, hc, y) => {
+    const nx = -tz, nz = tx, P = [[-hl, -hc], [hl, -hc], [hl, hc], [-hl, hc]].map(([a, c]) => { const x = cx + tx * a + nx * c, z = cz + tz * a + nz * c; return mb.v(x, (y === undefined ? hfAt(x, z) + TZH[TZ.ROAD] : y) + lift - 0.06, z, 0, 1, 0, 0, 0); });
+    townQuad(mb, P[0], P[1], P[2], P[3], 0, 1, 0);
+  };
+  const white = () => mb.mat(15).color(0.66, 0.66, 0.63, 1);
+  // nearest drivable road segment
+  const NR = new Float64Array(5);
+  const near = (x, z) => { let best = 12; NR[2] = 1e9; for (let r = 0; r < R.n; r++) { if (ri[r * 4] > 8) continue; const k0 = R.off[r], k1 = R.off[r + 1]; for (let k = k0; k < k1 - 1; k++) { const ax = R.p[k * 2], az = R.p[k * 2 + 1]; if (Math.abs(ax - x) > 80 || Math.abs(az - z) > 80) continue; const ex = R.p[k * 2 + 2] - ax, ez = R.p[k * 2 + 3] - az, L2 = ex * ex + ez * ez + 1e-9, t = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / L2)), d = Math.hypot(ax + ex * t - x, az + ez * t - z); if (d < best) { best = d; const L = Math.sqrt(L2); NR[0] = ex / L; NR[1] = ez / L; NR[2] = d; NR[3] = ri[r * 4 + 1] * 0.05; NR[4] = r; } } } return NR[2] < 12; };
+  let nz = 0, ns = 0, ng = 0;
+  if (F) for (let i = 0; i < F.n; i++) {
+    const c = F.c[i * 2], sub = F.c[i * 2 + 1]; if (c !== FN.CROSSING && c !== FN.SIGNALS) continue;
+    const x = F.xz[i * 2] * 0.01, z = F.xz[i * 2 + 1] * 0.01; if (!near(x, z)) continue;
+    const tx = NR[0], tz = NR[1], hw = NR[3], nx = -tz, nzz = tx, oneway = (ri[NR[4] * 4 + 2] & 2) !== 0;
+    if (c === FN.CROSSING && sub === 1) {         // zebra
+      white(); const m = Math.max(3, Math.floor(hw * 2 / 1.0));
+      for (let q = 0; q < m; q++) { const o = -hw + 0.5 + q * (hw * 2 - 1) / Math.max(1, m - 1); decal(x + nx * o, z + nzz * o, tx, tz, 1.3, 0.25); }
+      for (const sg of [-1, 1]) for (const sd of [-1, 1]) for (let q = 0; q < 8; q++) {   // zigzags along both kerbs, both sides of the crossing
+        const a = sg * (2.2 + q * 1.0), b = sg * (2.2 + (q + 1) * 1.0), oa = sd * (hw - 0.35 - (q & 1) * 0.35), ob = sd * (hw - 0.35 - ((q + 1) & 1) * 0.35);
+        const ax = x + tx * a + nx * oa, az = z + tz * a + nzz * oa, bx = x + tx * b + nx * ob, bz = z + tz * b + nzz * ob, L = Math.hypot(bx - ax, bz - az);
+        decal((ax + bx) / 2, (az + bz) / 2, (bx - ax) / L, (bz - az) / L, L / 2 + 0.05, 0.05);
+      }
+      nz++;
+    }
+    if (c === FN.SIGNALS || (c === FN.CROSSING && sub === 2)) {   // stop lines on the approaches (the left half; all of it on a one-way road)
+      white();
+      for (const sg of oneway ? [1] : [-1, 1]) { const a = -sg * 3.0, c0 = oneway ? 0 : -sg * hw / 2; decal(x + tx * a + nx * c0, z + tz * a + nzz * c0, tx, tz, 0.15, oneway ? hw - 0.2 : hw / 2 - 0.1); }
+      ns++;
+    }
+    if (c === FN.CROSSING) {                      // tactile paving on both pavements, at the kerb
+      const red = sub === 1 || sub === 2; mb.mat(15).color(red ? 0.42 : 0.62, red ? 0.12 : 0.55, red ? 0.08 : 0.38, 1);
+      for (const sd of [-1, 1]) { const o = sd * (hw + 0.65), px = x + nx * o, pz = z + nzz * o; if (zoneAt(px, pz) !== TZ.PAVE) continue; decal(px, pz, tx, tz, 1.2, 0.6, hfAt(px, pz) + TZH[TZ.PAVE] + 0.005); }
+    }
+  }
+  // give-way lines at the junctions (from townRoadSurface)
+  const J = T.junc || []; white();
+  for (let e = 0; e < J.length; e += 3) {
+    const r = J[e], end = J[e + 1], hwMaj = J[e + 2], P = T.rprof[r]; if (!P) continue;
+    const m = P.x.length, qe = end ? m - 1 : 0, qi = end ? Math.max(0, m - 3) : Math.min(m - 1, 2);
+    let tx = P.x[qe] - P.x[qi], tz = P.z[qe] - P.z[qi]; const L = Math.hypot(tx, tz); if (L < 0.5) continue; tx /= L; tz /= L;   // (towards the junction)
+    const hw = ri[r * 4 + 1] * 0.05, oneway = (ri[r * 4 + 2] & 2) !== 0, nx = -tz, nzz = tx, d = hwMaj + 0.6;
+    const cx = P.x[qe] - tx * d, cz = P.z[qe] - tz * d; if (zoneAt(cx, cz) !== TZ.ROAD) continue;
+    // (UK: the approach lane is on the left of the direction of travel: -normal)
+    const c0 = oneway ? 0 : -hw / 2, half = oneway ? hw - 0.25 : hw / 2 - 0.15, nd = Math.max(1, Math.floor(half * 2 / 0.9));
+    for (const off of [0, 0.45]) for (let q = 0; q < nd; q++) { const o = c0 - half + (q + 0.5) * half * 2 / nd, px = cx + nx * o - tx * off, pz = cz + nzz * o - tz * off; decal(px, pz, nx, nzz, 0.3, 0.1); }
+    ng++;
+  }
+  if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 1); rs.addRange(mb, i0, mb.ni, 4, 120); }
+  TOWNW.stats.markings = { zebras: nz, stopLines: ns, giveWay: ng };
+}
+
+// ---------------------------------------------------------------- grounds: pitches and allotments
+// Line markings on the playing fields (OSM leisure=pitch): a football pitch's lines and goals on the big ones, an outline
+// and a centre line on the small courts; allotments as rows of dug beds and crops between grass paths, with sheds.
+function townGroundsBuild(mb, rs) {
+  const T = TOWN, A = T.ad, ai = T.ainfo; if (!A || !ai) return;
+  const inRing = (k0, k1, x, z) => { let ins = false; for (let i = k0, j = k1 - 1; i < k1; j = i++) { const zi = A.p[i * 2 + 1], zj = A.p[j * 2 + 1]; if ((zi > z) !== (zj > z) && x < (A.p[j * 2] - A.p[i * 2]) * (z - zi) / (zj - zi) + A.p[i * 2]) ins = !ins; } return ins; };
+  const quad = (cx, cz, tx, tz, hl, hc, lift) => { const nx = -tz, nz = tx, P = [[-hl, -hc], [hl, -hc], [hl, hc], [-hl, hc]].map(([a, c]) => { const x = cx + tx * a + nx * c, z = cz + tz * a + nz * c; return mb.v(x, hfAt(x, z) + lift, z, 0, 1, 0, 0, 0); }); townQuad(mb, P[0], P[1], P[2], P[3], 0, 1, 0); };
+  let r = 0, np = 0, na = 0;
+  for (let q = 0; q < ai.length / 2; q++) {
+    const c = ai[q * 2], nr = ai[q * 2 + 1], k0 = A.off[r], k1 = A.off[r + 1]; r += nr;
+    if (c !== 13 && c !== 15) continue;
+    // the polygon's axes (principal directions of its vertices) and extents
+    let mx = 0, mz = 0; const n = k1 - k0; for (let k = k0; k < k1; k++) { mx += A.p[k * 2] / n; mz += A.p[k * 2 + 1] / n; }
+    let sxx = 0, szz = 0, sxz = 0; for (let k = k0; k < k1; k++) { const dx = A.p[k * 2] - mx, dz = A.p[k * 2 + 1] - mz; sxx += dx * dx; szz += dz * dz; sxz += dx * dz; }
+    const ang = 0.5 * Math.atan2(2 * sxz, sxx - szz), tx = Math.cos(ang), tz = Math.sin(ang), nx = -tz, nz = tx;
+    let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9; for (let k = k0; k < k1; k++) { const dx = A.p[k * 2] - mx, dz = A.p[k * 2 + 1] - mz, u = dx * tx + dz * tz, v = dx * nx + dz * nz; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+    const cx = mx + tx * (u0 + u1) / 2 + nx * (v0 + v1) / 2, cz = mz + tz * (u0 + u1) / 2 + nz * (v0 + v1) / 2, L = (u1 - u0) - 2, Wd = (v1 - v0) - 2;
+    if (L < 12 || Wd < 6) continue;
+    const at = (u, v) => [cx + tx * u + nx * v, cz + tz * u + nz * v];
+    if (c === 13) {
+      townJob(cx, cz, () => {
+        mb.mat(15).color(0.7, 0.72, 0.68, 1);
+        const line = (ua, va, ub, vb) => { const [ax, az] = at(ua, va), [bx, bz] = at(ub, vb), l = Math.hypot(bx - ax, bz - az); if (l < 0.05) return; quad((ax + bx) / 2, (az + bz) / 2, (bx - ax) / l, (bz - az) / l, l / 2, 0.06, 0.03); };
+        const hl = L / 2, hw = Wd / 2;
+        line(-hl, -hw, hl, -hw); line(-hl, hw, hl, hw); line(-hl, -hw, -hl, hw); line(hl, -hw, hl, hw); line(0, -hw, 0, hw);
+        if (L > 50 && Wd > 30) {                 // a football pitch: centre circle, penalty and goal areas, goals
+          const sc = Math.min(1, Wd / 68), rc = 9.15 * sc;
+          for (let e = 0; e < 24; e++) { const a0 = e / 24 * TAU, a1 = (e + 1) / 24 * TAU; line(Math.cos(a0) * rc, Math.sin(a0) * rc, Math.cos(a1) * rc, Math.sin(a1) * rc); }
+          for (const sg of [-1, 1]) {
+            const pd = 16.5 * sc, pw = Math.min(hw - 1, 20.15 * sc), gd = 5.5 * sc, gw = 9.15 * sc;
+            line(sg * hl, -pw, sg * (hl - pd), -pw); line(sg * hl, pw, sg * (hl - pd), pw); line(sg * (hl - pd), -pw, sg * (hl - pd), pw);
+            line(sg * hl, -gw, sg * (hl - gd), -gw); line(sg * hl, gw, sg * (hl - gd), gw); line(sg * (hl - gd), -gw, sg * (hl - gd), gw);
+            const gwid = 3.66 * Math.min(1, sc * 1.2), [g1x, g1z] = at(sg * (hl + 0.1), -gwid), [g2x, g2z] = at(sg * (hl + 0.1), gwid), gy0 = hfAt(g1x, g1z), gy1 = hfAt(g2x, g2z);
+            mb.mat(15).color(0.92, 0.92, 0.9, 1); mb.cyl(g1x, gy0, g1z, 0.06, gy0 + 2.44, 0.06, 6, false, true); mb.cyl(g2x, gy1, g2z, 0.06, gy1 + 2.44, 0.06, 6, false, true);
+            mb.push(m4mul(m4(), m4translate(m4(), (g1x + g2x) / 2, 0, (g1z + g2z) / 2), m4rotY(m4(), -Math.atan2(g2z - g1z, g2x - g1x)))); mb.box(0, Math.max(gy0, gy1) + 2.44, 0, gwid * 2, 0.1, 0.1); mb.pop();
+            mb.mat(15).color(0.7, 0.72, 0.68, 1);
+          }
+        }
+      }, 400);
+      np++;
+    } else {
+      // allotments: beds 1.3 m wide across the plot, every 2.2 m, clipped to the polygon; a shed every 30 m along one side
+      townJob(cx, cz, () => {
+        for (let v = -Wd / 2 + 1.2; v < Wd / 2 - 1; v += 2.2) for (let u = -L / 2 + 1; u < L / 2 - 1; u += 1.6) {
+          const [x, z] = at(u, v); if (!inRing(k0, k1, x, z)) continue;
+          const h = hash2(Math.round(u * 3), Math.round(v * 7)); if (h < 0.15) continue;   // (an empty plot)
+          if (h < 0.55) mb.mat(15).color(0.16, 0.1, 0.06, 1); else mb.mat(15).color(0.1 + h * 0.04, 0.2 + h * 0.08, 0.06, 1);
+          quad(x, z, tx, tz, 0.8, 0.65, h < 0.55 ? 0.02 : 0.08);
+        }
+        for (let u = -L / 2 + 6; u < L / 2 - 4; u += 30) { const [x, z] = at(u, Wd / 2 - 1.8); if (!inRing(k0, k1, x, z)) continue; const y = hfAt(x, z), h = hash2(Math.round(u), 9); mb.push(m4mul(m4(), m4translate(m4(), x, 0, z), m4rotY(m4(), -ang))); mb.mat(15).color(0.2 + h * 0.15, 0.24, 0.16, 1); mb.box(0, y + 1.0, 0, 2.2, 2.0, 1.6); mb.color(0.15, 0.15, 0.16, 1); mb.box(0, y + 2.05, 0, 2.5, 0.1, 1.9); mb.pop(); }
+      }, 350);
+      na++;
+    }
+  }
+  TOWNW.stats.grounds = { pitches: np, allotments: na };
+}
+
 // ---------------------------------------------------------------- all together
 function townWorldBuild() {
   const T = TOWN, defs = { SEA_LVL: T.sea.toFixed(3) };
@@ -1073,7 +1422,7 @@ function townWorldBuild() {
   const tileOf = (x, z) => clamp(Math.floor((x - T.x0) / TS), 0, tw - 1) + clamp(Math.floor((z - T.z0) / TS), 0, th - 1) * tw;
   const RD = T.rd; for (let r = 0; r < RD.n; r++) { const k = (RD.off[r] + RD.off[r + 1]) >> 1; tiles[tileOf(RD.p[k * 2], RD.p[k * 2 + 1])][0].push(r); }
   const bb = T.bbox; for (let b = 0; b < T.bd.n; b++) tiles[tileOf((bb[b * 4] + bb[b * 4 + 2]) / 2, (bb[b * 4 + 1] + bb[b * 4 + 3]) / 2)][1].push(b);
-  const Gr = townRoadGrid();
+  const Gr = townRoadGrid(); TOWNW.jobs = new Map();
   for (let k = 0; k < tiles.length; k++) {
     const i0 = mb.ni;
     for (const r of tiles[k][0]) townRoad(mb, r, Gr);
@@ -1082,6 +1431,7 @@ function townWorldBuild() {
   }
   townSeaWallBuild(mb, rs);
   townTollBuild(mb, rs);
+  TOWNW.roadGrid = Gr; townFurnitureBuild(mb, rs); townMarkingsBuild(mb, rs); townGroundsBuild(mb, rs); townJobsRun(mb, rs);
   townSpiresBuild(mb, rs);
   townCircuitBuild(mb, rs);
   TOWNW.stats.town = mb.ni / 3; TOWNW.stats.ranges = rs.r.length;

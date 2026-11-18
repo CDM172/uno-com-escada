@@ -1,6 +1,6 @@
 // Vegetação — geração procedural das malhas (árvores, palmeira, arbusto, samambaia, capim).
 // Formato do vértice (VLAYOUT): normal.w = peso de balanço do galho | mat = (id: 0 casca / 1 folha, fase, tipo de casca, peso de tremor) | cor.a = AO
-const VEG_NT = 6, VEG_NA = 9;   // arquétipos com impostor (árvores + arbusto grande) / total (com sub-bosque)
+let VEG_NT = 6, VEG_NA = 9;     // arquétipos com impostor (árvores + arbusto grande) / total (com sub-bosque) (British set: ukArchetypes, 33_veg_e_uk.js)
 // Camada de folhas individuais (só de perto): um quad por folha, forma e nervuras analíticas no shader (nítidas em qualquer escala).
 // Vértice (32 bytes): pos f32x3 | off snorm16x4 (canto - base da folha, em 0,6 m; w = peso de balanço) | normal snorm8x4 (w = tremor)
 //                     | uint8x4 (u, v, fase, AO) | unorm8x4 (tinta rgb, tipo de folha)
