@@ -59,16 +59,20 @@ fn surf(in: V2F, ff: bool) -> Surface {
     let ai = min((in.mat >> 16u) & 255u, VEG_NA_UK - 1u); let pm = VEG_UKM[ai]; let pv = VEG_UKV[ai];
     let t = textureSample(tLeaf, sLeaf, in.uv);
     keep *= vegCover(t.a, 0.5);
+    // cards seen edge-on (a smear of stretched texture) give way to the ones behind them
+    var geo = normalize(cross(dpdx(in.wpos), dpdy(in.wpos)));
+    let Vd = normalize(F.camPos.xyz - in.wpos);
+    if (pv.w < 0.5) { keep *= smoothstep(0.05, 0.22, abs(dot(geo, Vd))); }   // (not a hedge's face seen along it, nor the cordyline's sword leaves)
     // a card a few metres from the lens (its texture magnified too much) fades out and the single leaves stay; not the
     // face of a clipped hedge (it is the surface: behind it are only its stems)
     if (in.ext.w < VEG_D0 && pv.w < 1.5) { keep *= sat((dcam - 1.5) / 3.5); }
     if (keep <= nz) { discard; }
     let ao = in.col.a;
-    var geo = normalize(cross(dpdx(in.wpos), dpdy(in.wpos))); if (dot(geo, s.normal) < 0.0) { geo = -geo; }
+    if (dot(geo, s.normal) < 0.0) { geo = -geo; }
     let dn = textureSample(tNoise, sLin, in.uv * 3.0 + in.ext.y * 13.0).rg - 0.5;
     let lum0 = dot(t.rgb, vec3f(0.3, 0.6, 0.1));
     s.normal = normalize(mix(s.normal, geo, 0.2) + vec3f(dn.x, (lum0 - 0.25) * 0.5, dn.y) * 0.26);
-    let Vd = normalize(F.camPos.xyz - in.wpos); let nvd = dot(s.normal, Vd);
+    let nvd = dot(s.normal, Vd);
     if (nvd < 0.0) { s.normal = normalize(s.normal - Vd * (nvd * 1.7)); }
     // the atlas tiles carry each species' own green; this keeps the Serra's overall leaf level (veg_tree.wgsl)
     var lc = t.rgb * in.col.rgb * vec3f(0.6, 0.62, 0.42);

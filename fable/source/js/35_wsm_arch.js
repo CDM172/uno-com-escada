@@ -54,13 +54,13 @@
 //   vertices carry the record index in their material bytes.
 const ARCH_S = {
   NONE: 0, TERRACE: 1, VILLA: 2, HOTEL: 3, SHOP: 4, POSTWAR: 5, MODERN: 6, FLATS: 7, COMMERCIAL: 8, INDUSTRIAL: 9,
-  BUNGALOW: 10, CHALET_BUNGALOW: 11, COTTAGE: 12, BARN: 13, CARAVAN: 14, CHALET: 15, PUB: 16, CAFE: 17, GARAGE: 18, DECO: 19,
+  BUNGALOW: 10, CHALET_BUNGALOW: 11, COTTAGE: 12, BARN: 13, CARAVAN: 14, CHALET: 15, PUB: 16, CAFE: 17, GARAGE: 18, DECO: 19, CHURCH: 20,
 };
 const ARCH_SNAME = Object.keys(ARCH_S);
 // wall materials (record), dressings, windows, doors, roof coverings: the shader reads the same numbers
 const AW = { RENDER: 0, RUBBLE: 1, ASHLAR: 2, BRICK: 3, BUFF: 4, DASH: 5, BOARD: 6, METAL: 7, CARAVAN: 8, PANEL: 9, ROUGH: 10 };
 const AD = { NONE: 0, BATH: 1, PAINTED: 2, BRICK: 3, CONCRETE: 4, DECO: 5, RUSTIC: 6 };
-const AWIN = { SASH11: 0, SASH22: 1, SASH66: 2, EDW: 3, CASE: 4, UPVC: 5, MODERN: 6, RIBBON: 7, CRITTALL: 8, COTTAGE: 9, CARAVAN: 10, SHOP: 11 };
+const AWIN = { SASH11: 0, SASH22: 1, SASH66: 2, EDW: 3, CASE: 4, UPVC: 5, MODERN: 6, RIBBON: 7, CRITTALL: 8, COTTAGE: 9, CARAVAN: 10, SHOP: 11, LANCET: 12 };
 const ADOOR = { PANEL4: 0, PANEL6: 1, UPVC: 2, COMPOSITE: 3, LEDGED: 4, SHOP: 5, GARAGE: 6, ROLLER: 7, DOUBLE: 8, BARN: 9 };
 const AROOF = { SLATE: 0, ROMAN: 1, PLAIN: 2, CONCRETE: 3, FELT: 4, METAL: 5, CARAVAN: 6, PANTILE: 7, GLASS: 8, LEAD: 9 };
 // column programme (shell wall vertices, colour byte r): ground floor and upper floors, corners, bay faces, gables
@@ -141,7 +141,8 @@ function archDistrict(x, z, ctx) {
 function archStyle(t, area, height, x, z, ctx) {
   t = t || {}; const kind = t.kind | 0, look = t.look | 0, lu = t.lu | 0, b = t.building || '';
   const rise = t.rise === undefined ? -1 : t.rise;
-  if (kind === 4 || kind === 8 || kind === 9 || kind === 11 || look === 2 || look === 3) return ARCH_S.NONE;   // churches, the pier, ruins, shelters, landmarks
+  if (kind === 8 || kind === 9 || kind === 11 || look === 2 || look === 3) return ARCH_S.NONE;   // the pier, ruins, shelters, landmarks
+  if (kind === 4 || b === 'church' || b === 'chapel') return ARCH_S.CHURCH;                     // (the nave; towers stay with the map)
   if (look === 4 && kind !== 0 && kind !== 1) return ARCH_S.NONE;
   const dist = archDistrict(x, z, ctx);
   // static caravans: tagged, or as the bake finds them in the holiday parks (small white rectangles under a shallow roof)
@@ -172,7 +173,8 @@ function archStyle(t, area, height, x, z, ctx) {
   if (b === 'bungalow' || (low && !chalet)) return dist === 'kewstoke' && look === 4 ? ARCH_S.COTTAGE : ARCH_S.BUNGALOW;
   if (chalet) return ARCH_S.CHALET_BUNGALOW;
   if (area > 700) return ARCH_S.FLATS;
-  if (dist === 'kewstoke') return look === 4 ? ARCH_S.COTTAGE : (hash2(x | 0, z | 0) < 0.3 ? ARCH_S.COTTAGE : ARCH_S.POSTWAR);
+  // Kewstoke: the old village's limestone cottages and farmhouses, the rendered Victorian villas on the road, newer houses
+  if (dist === 'kewstoke') { if (look === 4) return ARCH_S.COTTAGE; if (area > 105 || rh > 8.6) return ARCH_S.VILLA; return hash2(x | 0, z | 0) < 0.4 ? ARCH_S.COTTAGE : ARCH_S.POSTWAR; }
   if (dist === 'sandbay') return height < 4.2 ? ARCH_S.BUNGALOW : hash2(x | 0, z | 0) < 0.35 ? ARCH_S.CHALET_BUNGALOW : ARCH_S.MODERN;
   if (dist === 'seafront') return height > 7.5 || area > 160 ? ARCH_S.HOTEL : ARCH_S.TERRACE;
   if (dist === 'centre') return lu === 2 || (ctx && ctx.shopStreet) ? ARCH_S.SHOP : ARCH_S.TERRACE;
@@ -412,6 +414,11 @@ function archLook(r) {
     st.boundary = s === S.SHOP ? 'none' : 'wall'; st.wallH = 0.7 + g() * 0.3; st.rails = g() < 0.3; st.hedge = h() < 0.35;
     st.unitW = s === S.VILLA ? 9 : s === S.HOTEL ? 7.5 : s === S.SHOP ? 5.5 : 5.1;
     if (s === S.VILLA) { st.gH += 0.2; st.uH += 0.15; st.bayW += 0.3; st.porch = g() < 0.5 ? 'recess' : 'canopy'; st.dormers = g() < 0.3; }
+    if (s === S.VILLA && dist === 'kewstoke') {   // Kewstoke Road's rendered Victorian villas: white and cream, slate, stone garden walls
+      st.wallMat = g() < 0.85 ? AW.RENDER : AW.RUBBLE; st.wallCol = st.wallMat === AW.RENDER ? C([[0.8, 0.79, 0.76], [0.76, 0.72, 0.6], [0.78, 0.76, 0.7], [0.72, 0.74, 0.74]], g) : C(AP.kew, g);
+      st.dress = st.wallMat === AW.RENDER ? AD.PAINTED : AD.BATH; st.dressCol = C(AP.bathPaint, g); st.roofCov = AROOF.SLATE; st.roofCol = C(AP.slate, g); st.ridgeCol = [0.22, 0.1, 0.06];
+      st.bay = g() < 0.5 ? 'c2' : 'c1'; st.porch = 'canopy'; st.boundary = 'wall'; st.stoneWall = true; st.rails = false; st.hedge = h() < 0.4;
+    }
     if (s === S.HOTEL) { st.balcony = g() < 0.65; st.porch = 'canopy'; st.flags |= 16; st.uH = 3.05; st.unitW = 7.0; st.boundary = g() < 0.5 ? 'wall' : 'none'; st.rails = true; }
     if (s === S.SHOP) {
       st.shopTop = 3.6 + g() * 0.4; st.gH = st.shopTop + 0.35; st.riser = 0.45 + g() * 0.2; st.glazing = (h() * 4) | 0; st.awning = h() < 0.35;
@@ -446,7 +453,8 @@ function archLook(r) {
     // Kewstoke: grey limestone rubble (some whitewashed or rendered), slate or clay tiles, small casements, stone garden walls
     st.wallMat = AW.RUBBLE; st.wallCol = C(AP.kew, g); st.dress = AD.RUSTIC; st.dressCol = [0.42, 0.4, 0.36];
     if (s === S.COTTAGE && g() < 0.28) { st.wallMat = AW.RENDER; st.wallCol = C([[0.82, 0.81, 0.78], [0.76, 0.73, 0.64], [0.78, 0.77, 0.72]], g); st.flags |= 128; }
-    st.roofCov = g() < 0.5 ? AROOF.SLATE : g() < 0.75 ? AROOF.ROMAN : AROOF.PLAIN; st.roofCol = st.roofCov === AROOF.SLATE ? C(AP.slate, g) : st.roofCov === AROOF.ROMAN ? C(AP.roman, g) : C(AP.plain, g);
+    st.roofCov = g() < 0.7 ? AROOF.SLATE : g() < 0.7 ? AROOF.ROMAN : AROOF.PLAIN; st.roofCol = st.roofCov === AROOF.SLATE ? C(AP.slate, g) : st.roofCov === AROOF.ROMAN ? C(AP.roman, g) : C(AP.plain, g);
+    st.stoneWall = true;
     st.ridgeCol = st.roofCov === AROOF.SLATE ? [0.22, 0.1, 0.06] : [st.roofCol[0] * 0.85, st.roofCol[1] * 0.85, st.roofCol[2] * 0.85];
     st.win = h() < 0.45 ? AWIN.COTTAGE : h() < 0.6 ? AWIN.CASE : AWIN.UPVC; st.trimCol = st.win === AWIN.UPVC ? [0.8, 0.8, 0.78] : h() < 0.6 ? [0.78, 0.78, 0.74] : C(AP.trimDark, h);
     st.door = h() < 0.6 ? ADOOR.LEDGED : ADOOR.PANEL4; st.doorW = 0.85; st.doorH = 1.95; st.fanH = 0; st.recess = 0.2;
@@ -454,6 +462,14 @@ function archLook(r) {
     st.porch = g() < 0.55 ? 'gable' : 'canopy'; st.pitch = 0.85 + g() * 0.25; st.ovE = 0.2; st.ovV = 0.08;
     st.chimney = 'gable'; st.pots = 1 + ((g() * 2) | 0); st.boundary = 'wall'; st.wallH = 0.9 + g() * 0.4; st.hedge = h() < 0.3; st.unitW = 7; st.cottage = true; st.alarm = false;
     if (s === S.BARN) { st.storeys = 1; st.gH = 4.5; st.chimney = 'none'; st.porch = 'none'; st.door = ADOOR.BARN; st.boundary = 'none'; st.roofCov = g() < 0.5 ? AROOF.PANTILE : AROOF.METAL; st.roofCol = st.roofCov === AROOF.PANTILE ? C(AP.roman, g) : [0.18, 0.2, 0.18]; st.win = AWIN.CASE; st.unitW = 30; st.aerial = false; st.dish = false; st.bins = false; }
+  } else if (s === S.CHURCH) {
+    // a parish church's nave: grey limestone rubble, Bath stone dressings, tall pointed lancets with leaded lights, a
+    // steep slate roof, a gabled stone porch, the churchyard wall
+    st.wallMat = AW.RUBBLE; st.wallCol = C(AP.kew, g); st.dress = AD.BATH; st.dressCol = C(AP.bath, g); st.flags |= 1 | 4;
+    st.win = AWIN.LANCET; st.trimCol = [0.05, 0.05, 0.05]; st.recess = 0.3; st.door = ADOOR.LEDGED; st.doorCol = [0.12, 0.07, 0.035]; st.doorW = 1.3; st.doorH = 2.8; st.fanH = 0;
+    st.roofCov = AROOF.SLATE; st.roofCol = C(AP.slate, g); st.ridgeCol = [0.2, 0.1, 0.06]; st.pitch = 1.1; st.ovE = 0.25; st.ovV = 0.1;
+    st.storeys = 1; st.gH = 6; st.gSill = 1.6; st.gWinH = 3.2; st.winW = 0.85; st.unitW = 3.8; st.porch = 'gable'; st.chimney = 'none';
+    st.boundary = 'wall'; st.stoneWall = true; st.wallH = 1.1; st.aerial = false; st.dish = false; st.bins = false; st.alarm = false; st.curtainMix = 0;
   } else if (s === S.PUB || s === S.CAFE) {
     st.wallMat = g() < 0.6 ? AW.RENDER : AW.RUBBLE; st.wallCol = st.wallMat === AW.RENDER ? C(AP.seafront, g) : C(AP.kew, g); st.dress = AD.PAINTED; st.dressCol = [0.8, 0.8, 0.77];
     st.roofCov = g() < 0.5 ? AROOF.SLATE : AROOF.CONCRETE; st.roofCol = st.roofCov === AROOF.SLATE ? C(AP.slate, g) : C(AP.concrete, g); st.ridgeCol = [0.2, 0.1, 0.06];
@@ -710,6 +726,7 @@ function archFrame(r, st) {
     st.gH = g0 * sc; st.uH = u0 * sc;
     if (s === S.SHOP) { st.gH = Math.max(st.gH, Math.min(st.shopTop + 0.3, tot - (k - 1) * 2.4)); st.uH = (tot - st.gH) / (k - 1); }
   }
+  if (s === S.CHURCH) { st.gH = Math.max(3.5, tot); st.gWinH = clamp(tot - st.gSill - 0.9, 1.4, 5.0); }
   st.gWinH = Math.min(st.gWinH, st.gH - st.gSill - 0.3); st.uWinH = Math.min(st.uWinH, st.uH - st.uSill - 0.3);
   if (st.shopTop) st.shopTop = Math.min(st.shopTop, st.gH - 0.2);
   return B;
@@ -791,7 +808,7 @@ function archFacades(B) {
   for (const e of E) {
     const cols = e.cols = [];
     if (e.role === 'P' || e.L < 1.3) { archBlank(cols, e.L); continue; }
-    if (e.role === 'F' && (s === S.FLATS || s === S.COMMERCIAL || s === S.INDUSTRIAL || s === S.GARAGE)) {
+    if (e.role === 'F' && (s === S.FLATS || s === S.COMMERCIAL || s === S.INDUSTRIAL || s === S.GARAGE || s === S.CHURCH)) {
       // blocks: a regular grid; flats an entrance in the middle, commercial a shop front, sheds roller doors, garages a row
       const n = Math.max(1, Math.round(e.L / st.unitW)), w = e.L / n, mid = n >> 1;
       for (let k = 0; k < n; k++) {
@@ -829,7 +846,7 @@ function archFacades(B) {
     // other walls: windows at a regular spacing; a back door; blank gable ends of terraces
     let sp = st.winW + 1.5, ow = st.winW * 0.85;
     if (s === S.SHOP) ow = st.winW * 0.8;
-    if (s === S.FLATS || s === S.COMMERCIAL) { sp = st.unitW; ow = st.winW; }
+    if (s === S.FLATS || s === S.COMMERCIAL || s === S.CHURCH) { sp = st.unitW; ow = st.winW; }
     const nW = Math.floor((e.L - 0.5) / sp);
     const blank = (e.role === 'S' && (s === S.TERRACE || s === S.SHOP) && ((st.hash >> 5) % 3 !== 0)) || s === S.GARAGE || s === S.INDUSTRIAL || (e.role === 'S' && s === S.BARN);
     if (nW < 1 || blank) archBlank(cols, e.L);
@@ -1082,8 +1099,12 @@ function archChimneys(B) {
     for (const e of E) {
       if (e.role !== 'S' || e.L < 3) continue;
       const t = ridgeT(e); if (t < 0) continue;
-      const [x, z] = on(e, t * e.L);
-      archStack(B, x - e.nx * 0.32, z - e.nz * 0.32, e.dx, e.dz, 0.95, 0.62, yR + 0.8, st.pots); placed++;
+      let [x, z] = on(e, t * e.L); x -= e.nx * 0.32; z -= e.nz * 0.32;
+      if (B.roof === 2 || B.roof === 4) {   // a hipped end: the stack stands where the ridge begins
+        const sgu = e.nx * B.cr + e.nz * B.sr > 0 ? -1 : 1, du = B.hv * (B.roof === 4 ? 0.5 : 1) + 0.3;
+        const u = sgu < 0 ? B.u1 - du : B.u0 + du; x = aX(B, u, B.vc); z = aZ(B, u, B.vc);
+      }
+      archStack(B, x, z, e.dx, e.dz, 0.95, 0.62, yR + 0.8, st.pots); placed++;
       if (st.chimney === 'party' && placed) break;
     }
   }
@@ -1222,7 +1243,7 @@ function archDormers(B) {
     for (let k = 0; k < n; k++) {
       const t = (k + 0.5) / n, x = F.ax + (F.bx - F.ax) * t - F.nx * 1.4, z = F.az + (F.bz - F.az) * t - F.nz * 1.4, wd = st.style === ARCH_S.CHALET_BUNGALOW ? Math.min(3.2, F.L / n - 1.2) : 1.6;
       list.push([x, z, wd, B.yE + Math.min(B.rise - 0.3, st.style === ARCH_S.CHALET_BUNGALOW ? 1.7 : 1.9), sideF]);
-      if (st.style === ARCH_S.CHALET_BUNGALOW) list.push([x - F.nx * 2.4 * 0, z, wd, B.yE + Math.min(B.rise - 0.3, 1.7), 1 - sideF]);
+      if (st.style === ARCH_S.CHALET_BUNGALOW) { const u = aU(B, x, z), v = 2 * B.vc - aV_(B, x, z); list.push([aX(B, u, v), aZ(B, u, v), wd, B.yE + Math.min(B.rise - 0.3, 1.7), 1 - sideF]); }
     }
   }
   const gabled = st.style === ARCH_S.VILLA || st.style === ARCH_S.TERRACE || st.style === ARCH_S.HOTEL || st.style === ARCH_S.COTTAGE || st.style === ARCH_S.PUB;
@@ -1231,6 +1252,7 @@ function archDormers(B) {
     const ud = aU(B, x, z), vcD = aV_(B, x, z), sg = side ? 1 : -1;   // the front of the dormer faces sg * v
     let vf = vcD + sg * 0.7; vf = side ? Math.min(vf, B.v1 - 0.35) : Math.max(vf, B.v0 + 0.35);
     const fAt = v => pl[2] + pl[1] * v, yfr = B.yE + fAt(vf);
+    if (!(yfr > B.yE - 0.3 && yfr < B.yR - 0.6)) continue;   // (not on this slope)
     const wd = clamp(wd0, 1.0, Math.min(6, B.hu * 2 - 0.8)), yTop = clamp(yTop0, yfr + 0.9, B.yR - 0.12); if (yTop - yfr < 0.85) continue;
     const vAt = y => (y - B.yE - pl[2]) / pl[1];                      // where the main roof reaches height y
     const ua = ud - wd / 2, ub = ud + wd / 2, nX = -B.sr * sg, nZ = B.cr * sg;   // outward normal of the front (along v)
@@ -1462,11 +1484,20 @@ function archBoundary(B) {
   for (const g of gaps) { if (g[0] - s > 0.3) segs.push([s, g[0]]); s = g[1]; }
   if (F.L + 0.12 - s > 0.3) segs.push([s, F.L + 0.12]);
   const P = (sx, d) => [F.ax + F.dx * sx + F.nx * d, F.az + F.dz * sx + F.nz * d];
-  const wh = st.wallH, hedgeOnly = st.boundary === 'hedge', cope = st.wallMat === AW.RUBBLE ? (st.dress === AD.BATH || st.dress === AD.RUSTIC ? [ASC.ASHLAR, st.dressCol] : [ASC.CONCRETE, [0.45, 0.44, 0.41]]) : st.wallMat === AW.BRICK || st.wallMat === AW.BUFF ? [ASC.BRICK, st.wallCol] : [ASC.SMOOTH, st.dressCol];
+  const wh = st.wallH, hedgeOnly = st.boundary === 'hedge', cope = st.stoneWall ? [ASC.RUBBLE, AP.kew[0]] : st.wallMat === AW.RUBBLE ? (st.dress === AD.BATH || st.dress === AD.RUSTIC ? [ASC.ASHLAR, st.dressCol] : [ASC.CONCRETE, [0.45, 0.44, 0.41]]) : st.wallMat === AW.BRICK || st.wallMat === AW.BUFF ? [ASC.BRICK, st.wallCol] : [ASC.SMOOTH, st.dressCol];
   for (const [a, b] of segs) {
     const p0 = P(a, off), p1 = P(b, off), q0 = P(a, off - 0.24), q1 = P(b, off - 0.24);
     const gmin = Math.min(G(p0[0], p0[1]), G(p1[0], p1[1])) - 0.15, mid = P((a + b) / 2, off - 0.12);
-    if (!hedgeOnly) {
+    if (!hedgeOnly && st.stoneWall) {
+      // a limestone rubble wall stepping with the ground, rough stone copings
+      const n = Math.max(1, Math.ceil((b - a) / 2.2)), kc = st.style === ARCH_S.CHURCH || st.cottage ? archPick(AP.kew, h()) : archPick(AP.kew, h());
+      for (let k = 0; k < n; k++) {
+        const t0 = a + (b - a) * k / n, t1 = a + (b - a) * (k + 1) / n, c0 = P((t0 + t1) / 2, off - 0.12), g = G(c0[0], c0[1]);
+        aSolid(mb, AM.STONE, B.rec, ASC.RUBBLE, kc);
+        aBox(mb, c0[0], g - 0.2, c0[1], F.dx, F.dz, t1 - t0 + 0.01, wh + 0.2, 0.34, 1 | 4 | 8 | 16 | 32);
+        aPropYaw(APR.BOX, ACLS.BIG, AM.STONE, B.rec, c0[0], g + wh - 0.01, c0[1], F.dx, F.dz, t1 - t0 + 0.02, 0.13, 0.38, [kc[0] * 0.9, kc[1] * 0.9, kc[2] * 0.88], ASC.RUBBLE / 15);
+      }
+    } else if (!hedgeOnly) {
       aWallMat(B, AC.GNONE | AC.UNONE, 0, 0, 0, 0);
       const top = (x, z) => G(x, z) + wh;
       aWallPiece(B, p0[0], p0[1], p1[0], p1[1], F.nx, F.nz, gmin, top, a, b);
@@ -1489,7 +1520,7 @@ function archBoundary(B) {
   }
   // gate piers, the path, bins
   for (const [a, b, kind, c] of gaps) {
-    if (!hedgeOnly && (st.style === ARCH_S.TERRACE || st.style === ARCH_S.VILLA || st.style === ARCH_S.HOTEL || st.style === ARCH_S.COTTAGE)) for (const sx of [a - 0.2, b + 0.2]) {
+    if (!hedgeOnly && (st.style === ARCH_S.TERRACE || st.style === ARCH_S.VILLA || st.style === ARCH_S.HOTEL || st.style === ARCH_S.COTTAGE || st.style === ARCH_S.CHURCH)) for (const sx of [a - 0.2, b + 0.2]) {
       const q = P(sx, off - 0.12), g = G(q[0], q[1]);
       aPropYaw(APR.BOX, ACLS.BIG, AM.STONE, B.rec, q[0], g - 0.1, q[1], F.dx, F.dz, 0.42, wh + 0.32, 0.42, cope[1], cope[0] / 15);
       aPropYaw(APR.BOX, ACLS.SMALL, AM.STONE, B.rec, q[0], g + wh + 0.22, q[1], F.dx, F.dz, 0.52, 0.1, 0.52, cope[1], cope[0] / 15);
@@ -1921,8 +1952,8 @@ function archScene() {
   let sd = 9001;
   const E = 1, W = -1;
   // A "Severn Road": Weston stone with Bath stone dressings, two-storey canted bays under gables, slate, front walls
-  { const L = { wallMat: AW.RUBBLE, dress: AD.BATH, bay: 'c2g', roofCov: AROOF.SLATE, roofCol: AP.slate[0], ridgeCol: [0.24, 0.1, 0.06], boundary: 'wall', rails: true, flags: 1 | 4 | 2 };
-    for (let i = 0; i < 6; i++) { const z0 = -290 + i * 5.2; add(i % 2 ? ell(E, z0, z0 + 5.2, 3.2, 8.2, 12.5, 2.6, i % 4 === 1) : rect(E, z0, z0 + 5.2, 3.2, 8.4), S.TERRACE, 6.3, 9.2, 1, Object.assign({}, L, { dressCol: i === 3 ? AP.bath[0] : AP.bathPaint[i % 2 ? 0 : 3] }), sd++, 3.2); } }
+  { const L = { wallMat: AW.RUBBLE, wallCol: AP.stone[0], dress: AD.BATH, bay: 'c2g', roofCov: AROOF.SLATE, roofCol: AP.slate[0], ridgeCol: [0.24, 0.1, 0.06], boundary: 'wall', rails: true, flags: 1 | 4 | 2 };
+    for (let i = 0; i < 6; i++) { const z0 = -290 + i * 5.2; add(i % 2 ? ell(E, z0, z0 + 5.2, 3.2, 8.2, 12.5, 2.6, i % 4 === 1) : rect(E, z0, z0 + 5.2, 3.2, 8.4), S.TERRACE, 6.3, 9.2, 1, Object.assign({}, L, { dressCol: i === 3 ? AP.bath[0] : AP.bathPaint[i % 2 ? 0 : 3], wallCol: AP.stone[[0, 2, 0, 3, 1, 0][i]] }), sd++, 3.2); } }
   views.terrace_stone = [-3.5, 1.7, -262, 7.5, 5.2, -284, 0.95];
   views.terrace_stone_close = [1.0, 1.6, -271, 9.5, 4.8, -279, 0.85];
   // B rendered terrace in the owners' colours: canted two-storey bays with hipped tops, slate
@@ -1930,7 +1961,7 @@ function archScene() {
     for (let i = 0; i < 6; i++) { const z0 = -250 + i * 5.0; add(rect(E, z0, z0 + 5.0, 2.6, 9.6), S.TERRACE, 6.0, 8.7, 1, Object.assign({}, L, { wallCol: AP.render[[0, 4, 1, 5, 3, 6][i]] }), sd++, 2.6); } }
   views.terrace_render = [-3.5, 1.7, -222, 8.5, 5.0, -246, 0.95];
   // C a pair of tall stone villas (three storeys, hipped clay roof, gabled bays, porches)
-  { const L = { wallMat: AW.RUBBLE, dress: AD.BATH, bay: 'c2g', roofCov: AROOF.ROMAN, roofCol: AP.roman[1], boundary: 'wall', rails: true, porch: 'canopy', flags: 1 | 2 | 4 | 16 };
+  { const L = { wallMat: AW.RUBBLE, wallCol: AP.stone[2], dress: AD.BATH, dressCol: AP.bath[1], bay: 'c2g', roofCov: AROOF.ROMAN, roofCol: AP.roman[1], boundary: 'wall', rails: true, porch: 'canopy', flags: 1 | 2 | 4 | 16 };
     add(rect(E, -210, -201.5, 4.2, 11), S.VILLA, 9.2, 12.4, 2, L, sd++, 4.2); add(rect(E, -201.5, -193, 4.2, 11), S.VILLA, 9.2, 12.4, 2, L, sd++, 4.2); }
   views.villas = [-3.5, 1.7, -186, 9.0, 6.0, -204, 0.95];
   // D the shops: fascias with their signs, flats above
@@ -1940,8 +1971,8 @@ function archScene() {
   views.shops = [-3.2, 1.7, -150, 8.0, 3.8, -170, 0.95];
   views.shops_close = [0.5, 1.6, -164, 6.5, 3.6, -172, 0.9];
   // E seafront hotels: tall cream and white render, a cast-iron veranda; big three-storey bays
-  add(rect(E, -143, -129, 3.0, 14), S.HOTEL, 12.4, 15.4, 2, { wallCol: AP.seafront[1], balcony: true, bay: 'none', sign: ARCH_SIGN_IX.HOTEL }, sd++, 3.0);
-  add(rect(E, -129, -115, 3.0, 14), S.HOTEL, 12.4, 15.6, 1, { wallCol: AP.seafront[0], balcony: false, bay: 'c3' }, sd++, 3.0);
+  add(rect(E, -143, -129, 3.0, 14), S.HOTEL, 12.4, 15.4, 2, { wallMat: AW.RENDER, dress: AD.PAINTED, wallCol: AP.seafront[1], dressCol: [0.8, 0.8, 0.77], balcony: true, bay: 'none', sign: ARCH_SIGN_IX.HOTEL }, sd++, 3.0);
+  add(rect(E, -129, -115, 3.0, 14), S.HOTEL, 12.4, 15.6, 1, { wallMat: AW.RENDER, dress: AD.PAINTED, wallCol: AP.seafront[0], dressCol: AP.bathPaint[0], balcony: false, bay: 'c3' }, sd++, 3.0);
   views.hotels = [-3.5, 1.7, -104, 9.5, 8.0, -129, 0.95];
   // F a block of flats: flat roof behind a parapet, balconies
   add(rect(E, -105, -75, 2.0, 12), S.FLATS, 11.6, 0, 0, { wallMat: AW.BUFF, wallCol: AP.buff[0], balcony: true }, sd++, 0);
@@ -1965,8 +1996,14 @@ function archScene() {
   add(rect(E, 62, 69, 2.0, 6.5), S.COTTAGE, 4.6, 7.6, 1, { gableFront: false, porch: 'gable', wallMat: AW.RUBBLE, roofCov: AROOF.SLATE, roofCol: AP.slate[0] }, sd++, 2.0);
   add(rect(E, 69, 76, 2.0, 6.5), S.COTTAGE, 4.6, 7.6, 1, { porch: 'gable', wallMat: AW.RENDER, wallCol: [0.82, 0.81, 0.78], flags: 128, roofCov: AROOF.ROMAN, roofCol: AP.roman[0] }, sd++, 2.0);
   add(rect(E, 79, 90, 3.0, 8), S.COTTAGE, 5.4, 9.0, 1, { porch: 'canopy', roofCov: AROOF.PLAIN, roofCol: AP.plain[0] }, sd++, 3.0);
-  add(rect(E, 93, 107, 1.0, 7.5), S.BARN, 4.8, 8.2, 1, {}, sd++, 0);
+  add(rect(E, 93, 107, 1.0, 7.5), S.BARN, 4.8, 8.2, 1, { wallCol: AP.kew[1] }, sd++, 0);
   views.kewstoke = [-3.5, 1.7, 112, 9.5, 3.5, 80, 0.95];
+  // and across the lane: the parish church (rubble nave, lancets, slate, a stone porch, the churchyard wall) and a
+  // rendered Victorian villa behind its stone wall
+  add(rect(W, 58, 80, 6.0, 8.5), S.CHURCH, 6.2, 11.0, 1, {}, sd++, 6.0);
+  add(rect(W, 86, 96, 4.5, 10), S.VILLA, 6.4, 9.4, 2, { wallMat: AW.RENDER, wallCol: [0.8, 0.79, 0.76], dress: AD.PAINTED, dressCol: AP.bathPaint[0], roofCov: AROOF.SLATE, roofCol: AP.slate[0], bay: 'c2', porch: 'canopy', boundary: 'wall', stoneWall: true, rails: false, hedge: true }, sd++, 4.5);
+  views.kewstoke_west = [3.5, 1.7, 108, -10, 4.0, 76, 0.95];
+  views.kewstoke_church = [4.0, 1.8, 54, -12, 5.0, 70, 0.95];
   // K Sand Bay: the seafront inn and a beach café (generic signs)
   add(rect(E, 115, 131, 4.0, 11), S.PUB, 6.4, 9.6, 2, { sign: ARCH_SIGN_IX.INN }, sd++, 4.0);
   add(rect(E, 134, 142, 3.0, 6), S.CAFE, 3.4, 5.2, 1, { sign: ARCH_SIGN_IX['ICE CREAM'] }, sd++, 3.0);
@@ -2030,3 +2067,12 @@ class ArchGround {
     pass.setVertexBuffer(0, this.m.vb); pass.setIndexBuffer(this.m.ib, 'uint32'); pass.drawIndexed(this.m.count);
   }
 }
+// ?map=wsm&arch=1 (a test): the whole baked town through the kit, drawn over the town's own buildings until
+// 34_wsm_world.js calls archFromTown() itself (then this flag is not needed). Nothing happens without the flag.
+if (TOWN.on && Q.has('arch')) queueMicrotask(() => BUILD.push(async () => {
+  const t0 = performance.now(); let n = 0;
+  for (let b = 0; b < TOWN.bd.n; b++) if (archFromTown(b)) n++;
+  const t1 = performance.now();
+  archFinish();
+  ARCH.stats.taken = n; ARCH.stats.requestMs = Math.round(t1 - t0); ARCH.stats.totalMs = Math.round(performance.now() - t0);
+}));

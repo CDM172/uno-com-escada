@@ -266,7 +266,7 @@ const vegDrawable = {
 queueMicrotask(() => BUILD.push(async () => {
   if (GAME.mode === 'test' || GAME.mode === 'car' || Q.has('noveg')) return;
   const V = VEG, dev = G.dev;
-  V.leafTex = VEG_UK ? ukAtlasBuild() : vegAtlasBuild(); V.leafView = V.leafTex.createView(); R.view.vegLeaf = V.leafView;
+  V.leafTex = VEG_UK ? await ukAtlasBuild() : vegAtlasBuild(); V.leafView = V.leafTex.createView(); R.view.vegLeaf = V.leafView;
   V.sLeaf = dev.createSampler({ minFilter: 'linear', magFilter: 'linear', mipmapFilter: 'linear', maxAnisotropy: 8 });
   V.sImp = dev.createSampler({ minFilter: 'linear', magFilter: 'linear', mipmapFilter: 'linear', maxAnisotropy: 4 });
   const cpu = VEG_UK ? ukArchetypes() : vegArchetypes(); V.meshes = cpu.map(m => m.upload());

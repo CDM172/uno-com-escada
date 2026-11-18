@@ -1354,7 +1354,7 @@ function townFurnitureBuild(mb, rs) {
       const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, y = Math.min(hfAt(x0, z0), hfAt(x1, z1), hfAt(mx, mz));
       rot(mx, mz, a);
       if (code === 1 || code === 4) {          // wall: grey limestone rubble, red brick or render, with a coping
-        const h = hgt || (code === 4 ? 1.2 : 1.5), c = look === 2 ? [0.4, 0.19, 0.12] : look === 3 ? [0.6, 0.58, 0.52] : [0.36, 0.35, 0.32];
+        const hv = hash2(Math.round(mx * 3), Math.round(mz * 3)) * 0.06, h = hgt || (code === 4 ? 1.2 : 1.5), c = look === 2 ? [0.3 + hv, 0.13 + hv * 0.4, 0.085] : look === 3 ? [0.46, 0.44, 0.39] : [0.22 + hv, 0.215 + hv, 0.19 + hv * 0.8];   // (weathered limestone, red brick, render)
         mb.mat(15).color(c[0], c[1], c[2], 1); mb.box(0, y + h / 2 - 0.1, 0, l + 0.02, h + 0.2, 0.32); mb.color(c[0] * 1.1, c[1] * 1.1, c[2] * 1.1, 1); mb.box(0, y + h + 0.03, 0, l + 0.04, 0.08, 0.38);
       } else if (code === 2) {                  // fence: close-boarded timber panels (or a chain-link look: metal)
         const h = hgt || 1.6;

@@ -90,14 +90,19 @@ fn aRubble(c: vec3f, p0: vec2f, near: f32, mid: f32, seed: f32) -> AM {
   var m = amDef(c);
   let wob = (aNz(p0 * vec2f(0.9, 1.4) + seed).rg - 0.5) * vec2f(0.05, 0.035);   // irregular edges
   let p = p0 + wob;
-  let ch = 0.23; let row = floor(p.y / ch); let fy = fract(p.y / ch);
-  let len = 0.32 + 0.3 * hash11(row * 1.37 + seed);
-  let su = p.x / len + hash11(row * 3.1 + seed * 1.7); let si = floor(su); let fx = fract(su);
+  // courses of 0.42 m; along a course stones of 0.25-0.6 m, each one whole or split into two or three of uneven height
+  let ch = 0.42; let row = floor(p.y / ch); let fy = fract(p.y / ch);
+  let len = 0.3 + 0.22 * hash11(row * 1.37 + seed);
+  let su = p.x / len + hash11(row * 3.1 + seed * 1.7); let si = floor(su); let fxr = fract(su);
   let hs = hash21(vec2f(si, row) + seed);
-  // some stones split in two (snecks), some a little shorter
-  var ex = min(fx, 1.0 - fx) * len; var ey = min(fy, 1.0 - fy) * ch; var id = vec2f(si, row);
-  if (hs < 0.32) { let sy = step(0.5, fy); ey = min(fract(fy * 2.0), 1.0 - fract(fy * 2.0)) * ch * 0.5; id = vec2f(si, row * 2.0 + sy + 100.0); }
-  else if (hs > 0.8) { let sx = step(0.6, fx); ex = select(min(fx / 0.6, 1.0 - fx / 0.6) * len * 0.6, min((fx - 0.6) / 0.4, 1.0 - (fx - 0.6) / 0.4) * len * 0.4, fx > 0.6); id = vec2f(si * 2.0 + sx + 500.0, row); }
+  // stones of uneven length: the joint inside the slot shifts per stone
+  let cut = 0.5 + (hash21(vec2f(si + 7.0, row) + seed) - 0.5) * 0.5;
+  let left = fxr < cut; let fx = select((fxr - cut) / (1.0 - cut), fxr / cut, left); let ln = len * select(1.0 - cut, cut, left);
+  let sid = si * 2.0 + select(1.0, 0.0, left);
+  let hs2 = hash21(vec2f(sid, row) + seed * 1.3);
+  var ex = min(fx, 1.0 - fx) * ln; var ey = min(fy, 1.0 - fy) * ch; var id = vec2f(sid, row);
+  if (hs2 < 0.42) { let k = 0.35 + 0.3 * hash11(sid + row * 5.0); let up = fy > k; let f2 = select(fy / k, (fy - k) / (1.0 - k), up); ey = min(f2, 1.0 - f2) * ch * select(k, 1.0 - k, up); id = vec2f(sid, row * 3.0 + select(0.0, 1.0, up) + 100.0); }
+  else if (hs2 < 0.6) { let f3 = fract(fy * 3.0); ey = min(f3, 1.0 - f3) * ch / 3.0; id = vec2f(sid, row * 3.0 + floor(fy * 3.0) + 300.0); }
   let e = min(ex, ey);
   let jw = 0.012 + max(fwidth(p.x), fwidth(p.y)) * 0.5;
   let joint = (1.0 - smoothstep(jw * 0.5, jw * 1.6, e)) * mid;
@@ -391,6 +396,12 @@ fn aWinFrame(t: u32, x: f32, y: f32, w: f32, h: f32, hs: f32, aa: f32) -> vec3f 
   } else if (t == 6u) { f = max(f, aL(x - w * 0.68, 0.024, aa)); pane = step(w * 0.68, x); }
   else if (t == 7u) { f = max(f, aL((fract(x / 1.5 + 0.5) - 0.5) * 1.5, 0.024, aa)); pane = floor(x / 1.5); }
   else if (t == 8u) { f = max(f, aL((fract(y / 0.27 + 0.5) - 0.5) * 0.27, 0.008, aa)); f = max(f, aL((fract(x / 0.48 + 0.5) - 0.5) * 0.48, 0.01, aa)); pane = floor(x / 0.48) + floor(y / 0.27) * 7.0; }
+  else if (t == 12u) {
+    // leaded lights: a diamond lattice of lead cames in a stone frame
+    let q = vec2f(x + y * 0.6, x - y * 0.6) / 0.16;
+    f = max(f, max(aL(fract(q.x) - 0.5, 0.06, aa * 8.0), aL(fract(q.y) - 0.5, 0.06, aa * 8.0)));
+    pane = floor(q.x) + floor(q.y) * 13.0;
+  }
   else if (t == 10u) {
     // caravan: rounded corners, a top opener
     let r = 0.09; let q = abs(p - vec2f(w, h) * 0.5) - (vec2f(w, h) * 0.5 - vec2f(fw + r));
@@ -514,8 +525,12 @@ fn archWall(in: V2F, N: vec3f) -> Surface {
   var inside = false;
   if (o.kind != 0u) {
     inside = u > o.x0 && u < o.x1 && v > o.y0 && v < o.y1;
-    if (inside && o.kind == 2u && R.porchD > 0.4 && (dT == 1u || dT == 2u)) {   // a round-headed porch arch
+    if (inside && o.kind == 2u && R.porchD > 0.4 && (dT == 1u || dT == 2u) && R.win != 12u) {   // a round-headed porch arch
       let r = (o.x1 - o.x0) * 0.5; let cy = o.y1 - r; inside = v < cy || length(vec2f(u - (o.x0 + o.x1) * 0.5, v - cy)) < r;
+    }
+    if (inside && R.win == 12u && (o.kind == 1u || o.kind == 2u)) {   // a pointed (lancet) head: two arcs from the springing
+      let w = o.x1 - o.x0; let ys = o.y1 - w * 0.866;
+      inside = v < ys || (length(vec2f(u - o.x0, v - ys)) < w && length(vec2f(u - o.x1, v - ys)) < w);
     }
   }
   if (isShopCol && !inside) {
@@ -623,6 +638,7 @@ fn archWall(in: V2F, N: vec3f) -> Surface {
     glassC = mix(room, cur.rgb * 0.38, cur.a);
     if (jf.z > 0.5) { glassC = room * 0.7; }   // the gap under a raised sash
     if ((va & 3u) == 1u) { glassC = vec3f(0.5, 0.52, 0.52) * (0.85 + 0.15 * aNz(vec2f(x, y) * 9.0).r) * 0.5; }   // obscured glass
+    if (wt == 12u) { glassC = vec3f(0.03, 0.035, 0.03) * (0.7 + 0.6 * hash11(jf.y * 0.37 + ch)); }                  // old leaded glass
   }
   let gl = (1.0 - frame);
   s.albedo = mix(glassC * 0.85, tc * shadeK, frame);
