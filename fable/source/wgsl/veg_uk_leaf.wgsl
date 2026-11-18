@@ -19,10 +19,16 @@ fn vert(in: VIn) -> VSOut {
   let rel = vec3f(lp.x * c - lp.z * sn, lp.y, lp.x * sn + lp.z * c);
   let ln = vec3f(in.nrm.x / kh, in.nrm.y, in.nrm.z / kh); o.nrm = vec3f(ln.x * cn - ln.z * snn, ln.y, ln.x * snn + ln.z * cn);
   let fl = in.nrm.w; let ph = f32(in.uvx.z) / 255.0; let t = F.wind.w;
-  let fk = VEG_UKV[ukArch(in.i1.w)].z;
+  let ai = ukArch(in.i1.w); let fk = VEG_UKV[ai].z;
+  // ivy on the trunks: only the trees whose seed gives them ivy, up to their own ivy height (as in veg_uk_tree.wgsl)
+  var ivyOff = false;
+  if (u32(in.col.a * 255.0 + 0.5) == 11u && in.i1.w < VEG_NT && VEG_UKV[ai].w < 0.5) {
+    let has = fract(in.i1.z * 41.7 + 0.3) < VEG_UKM[ai].w; let ivyH = mix(1.5, 10.0, fract(in.i1.z * 17.1));
+    ivyOff = !has || relb.y > ivyH * mix(0.85, 1.15, ph);
+  }
   var wp = base + rel + vegWindK(base, rel, in.off.w, fl, ph, t, fk);
   var pp = base + rel + vegWindK(base, rel, in.off.w, fl, ph, t - F.misc.x, fk);
-  if (k <= 0.0) { wp = base; pp = base; }
+  if (k <= 0.0 || ivyOff) { wp = base; pp = base; }
   o.wpos = wp; o.pwpos = pp;
   o.uv = vec2f(f32(in.uvx.x) / 255.0, f32(in.uvx.y) / 127.5 - 1.0);
   o.mat = 2u | (u32(in.col.a * 255.0 + 0.5) << 8u);

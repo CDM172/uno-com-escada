@@ -307,6 +307,7 @@ const _bu = [], _bv = [], _bt = [];
 function townBuilding(mb, b) {
   const T = TOWN, B = T.bd, bi = T.binfo, k0 = B.off[b], n = B.off[b + 1] - k0; if (n < 3) return;
   const lp = townLandmarkProp(b); if (lp >= 0) { const f = townLandmarkFrame(b); townPropPut(lp, f[0], f[2], f[1], f[3]); return; }   // (its own model)
+  if (TOWNW.arch && archFromTown(b)) return;   // (the architecture kit, 35_wsm_arch.js, takes the building)
   const kind = bi[b * 8], hgt = bi[b * 8 + 1] * 0.25; let roof = bi[b * 8 + 2]; const ridge = bi[b * 8 + 3] / 256 * PI;
   if (roof === 4) roof = 2;   // (a half-hip, from the LIDAR: drawn as a hip here)
   const h0 = bi[b * 8 + 4] / 255, h1 = bi[b * 8 + 5] / 255, lu = bi[b * 8 + 6] & 15, look = bi[b * 8 + 6] >> 4;   // look: landmark (bake)
@@ -976,6 +977,74 @@ function townTvCams() {
 // parks and fields; a few palms (cabbage palms) on the seafront lawns. Archetypes: 0 large, 1 medium, 2 tall, 3 palm,
 // 4 small tree, 5 big shrub.
 function townVegPlace(push) {
+  if (typeof VEG_UK !== 'undefined' && VEG_UK && typeof ukPlant === 'function') return townVegPlaceUK();
+  return townVegPlaceOld(push);
+}
+// British planting (33_veg_e_uk.js): every LIDAR crown as the species its place and its size suggest (ukZoneCtx,
+// ukTreeSpecies), the Toll Road's tunnel of canopy trees and its ivy, fern and bramble verges, the woodland floor of
+// Weston Woods, Sand Bay's dunes (marram on the fore dune thinning into scrub), the hedges among the town's boundaries,
+// and the cabbage palms of the seafront lawns.
+function townVegPlaceUK() {
+  const T = TOWN, rnd = mkRng(5153), Z = T.zone, zw = T.zw;
+  const zoneAt = (x, z) => { if (x < T.x0 || z < T.z0) return TZ.OUT; const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i >= zw || j >= T.zh ? TZ.OUT : Z[j * zw + i]; };
+  const L = T.ltrees; if (!L) return;
+  const onTop = new Uint8Array(18); for (const c of [TZ.ROAD, TZ.KERB, TZ.BLD, TZ.WALL]) onTop[c] = 1;
+  for (let i = 0; i < L.length; i += 3) {
+    let x = L[i], z = L[i + 1]; const h = L[i + 2], c = zoneAt(x, z);
+    if (c === TZ.WATER || c === TZ.OUT || c === TZ.SAND || c === TZ.MUD) continue;
+    if (onTop[c]) {       // (a crown over a road or a roof: its trunk stands beside it)
+      let found = false;
+      for (let rr = 1.5; rr <= 5 && !found; rr += 1) for (let a = 0; a < 8 && !found; a++) { const xx = x + Math.cos(a * PI / 4 + i) * rr, zz = z + Math.sin(a * PI / 4 + i) * rr, cc = zoneAt(xx, zz); if (!onTop[cc] && cc !== TZ.WATER && cc !== TZ.OUT) { x = xx; z = zz; found = true; } }
+      if (!found) continue;
+    }
+    const ctx = ukZoneCtx(x, z);
+    if (h < 5) { ukShrub(x, hfAt(x, z), z, ctx === UKC.DUNE || ctx === UKC.BACKDUNE ? UKC.BACKDUNE : ctx, h, i); continue; }
+    ukPlant(x, hfAt(x, z), z, ukTreeSpecies(ctx, h, 0, i), h, 0, rnd() * TAU, i);
+  }
+  // the Toll Road: canopy trees every 6-11 m on both sides, as tall as the crowns round them; ivy, fern and bramble verges
+  const RD = T.rd, ri = T.rinfo;
+  for (let r = 0; r < RD.n; r++) {
+    if (!(ri[r * 4 + 2] & 128)) continue;
+    const hw = ri[r * 4 + 1] * 0.05, k0 = RD.off[r], k1 = RD.off[r + 1];
+    const ends = [RD.p[k0 * 2], RD.p[k0 * 2 + 1], RD.p[(k1 - 1) * 2], RD.p[(k1 - 1) * 2 + 1]], nearEnd = (x, z) => Math.hypot(ends[0] - x, ends[1] - z) < 16 || Math.hypot(ends[2] - x, ends[3] - z) < 16;
+    for (let k = k0; k < k1 - 1; k++) {
+      const ax = RD.p[k * 2], az = RD.p[k * 2 + 1], bx = RD.p[k * 2 + 2], bz = RD.p[k * 2 + 3], Ls = Math.hypot(bx - ax, bz - az); if (Ls < 0.1) continue;
+      const nx = -(bz - az) / Ls, nz = (bx - ax) / Ls;
+      for (let s = rnd() * 1.4; s < Ls; s += 1.4) for (let sd = -1; sd <= 1; sd += 2) {
+        const o = hw + 1.0 + rnd() * rnd() * 5, x = ax + (bx - ax) * s / Ls + nx * sd * o, z = az + (bz - az) * s / Ls + nz * sd * o, c = zoneAt(x, z), r1 = rnd();
+        if (c === TZ.ROAD || c === TZ.WALL || c === TZ.BLD || c === TZ.WATER || c === TZ.OUT || c === TZ.KERB || r1 > 0.8 || nearEnd(x, z)) continue;
+        if (r1 < 0.3) ukShrub(x, hfAt(x, z), z, UKC.WOOD, 0, k * 31 + s); else ukGround(x, hfAt(x, z), z, r1 < 0.5 ? 'fern' : r1 < 0.65 ? 'bramble' : 'ivy', 0, k * 17 + s);
+      }
+      for (let s = rnd() * 8; s < Ls; s += 6 + rnd() * 5) for (let sd = -1; sd <= 1; sd += 2) {
+        const o = hw + 2.5 + rnd() * 3.5, x = ax + (bx - ax) * s / Ls + nx * sd * o, z = az + (bz - az) * s / Ls + nz * sd * o, c = zoneAt(x, z);
+        if (c !== TZ.WOOD && c !== TZ.NONE && c !== TZ.GRASS && c !== TZ.FIELD) continue;
+        let hs = 0, hn = 0; for (let q = 0; q < L.length; q += 3) { const dx = L[q] - x, dz = L[q + 1] - z; if (dx * dx + dz * dz < 400 && L[q + 2] > 8) { hs += L[q + 2]; hn++; } }
+        if (!hn) continue;
+        const ht = clamp(hs / hn, 9, 24); ukPlant(x, hfAt(x, z), z, ukTreeSpecies(UKC.WOOD, ht, 0, k * 7 + s), ht, 0, rnd() * TAU, k * 7 + s);
+      }
+    }
+  }
+  // woodland floor (a 3 m grid in the woods: brighter at their edges), Sand Bay's dunes (1.3 m)
+  for (let z0 = T.z0 + 14; z0 < T.z1 - 14; z0 += 3) for (let x0 = T.x0 + 14; x0 < T.x1 - 14; x0 += 3) {
+    const x = x0 + rnd() * 3, z = z0 + rnd() * 3; if (zoneAt(x, z) !== TZ.WOOD) continue;
+    let edge = 0; for (let a = 0; a < 4; a++) if (zoneAt(x + Math.cos(a * PI / 2) * 8, z + Math.sin(a * PI / 2) * 8) !== TZ.WOOD) edge++;
+    ukWoodFloor(x, hfAt(x, z), z, x0 * 7.1 + z0, edge / 4);
+  }
+  for (let z0 = T.z0 + 14; z0 < T.z1 - 14; z0 += 1.3) for (let x0 = T.x0 + 14; x0 < T.x1 - 14; x0 += 1.3) {
+    const x = x0 + rnd() * 1.3, z = z0 + rnd() * 1.3; if (zoneAt(x, z) !== TZ.DUNE) continue;
+    let back = 1; for (let d = 4; d <= 24; d += 4) { let sea = false; for (let a = 0; a < 8 && !sea; a++) { const c = zoneAt(x + Math.cos(a * PI / 4) * d, z + Math.sin(a * PI / 4) * d); sea = c === TZ.SAND || c === TZ.WATER || c === TZ.MUD; } if (sea) { back = d / 28; break; } }
+    ukDunes(x, hfAt(x, z), z, back, x0 * 3.3 + z0);
+  }
+  // hedges: the town's boundary hedges (front gardens, the lanes, OSM barrier=hedge)
+  if (typeof ukBoundaryHedges === 'function') ukBoundaryHedges(T.bsegs);
+  // cabbage palms on the seafront lawns near the pier
+  const o = new Float64Array(5);
+  for (let s = -520; s < 260; s += 26) {
+    const i = (((Math.round(s / TRK.ds)) % TRK.N) + TRK.N) % TRK.N, e = Math.min(9, T.cedge[i * 2] * 0.1);
+    for (let d = e + 6; d < e + 16; d += 2.5) { trackPos(s, -d, o); const c = zoneAt(o[0], o[2]); if ((c === TZ.GRASS || c === TZ.HARD || c === TZ.NONE)) { ukPlant(o[0], hfAt(o[0], o[2]), o[2], UKS.CORDYLINE, 3.5 + rnd() * 1.5, 0, rnd() * TAU, s); break; } }
+  }
+}
+function townVegPlaceOld(push) {
   const T = TOWN, rnd = mkRng(5153), Z = T.zone, zw = T.zw, zh = T.zh;
   const zoneAt = (x, z) => { if (x < T.x0 || z < T.z0) return TZ.OUT; const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i >= zw || j >= zh ? TZ.OUT : Z[j * zw + i]; };
   const hard = new Uint8Array(18); for (const c of [TZ.BLD, TZ.ROAD, TZ.WATER, TZ.OUT, TZ.KERB, TZ.PAVE, TZ.SAND, TZ.MUD, TZ.WALL]) hard[c] = 1;
@@ -1084,17 +1153,19 @@ const WSMP_KINDS = {
   bench: ['bench', 'seafront_bench', 'bench_cast_iron'], bin: ['bin', 'litter_bin', 'waste_basket', 'litter_bin_seafront'],
   bollard: ['bollard'], post_box: ['post_box', 'pillar_box'], phone: ['phone_kiosk', 'telephone_box', 'phone_box', 'k6', 'telephone_kiosk'],
   bus_shelter: ['bus_shelter'], bus_stop: ['bus_stop', 'bus_stop_pole', 'bus_stop_flag'], signal: ['traffic_signal', 'traffic_light', 'signal_pole', 'traffic_signals'],
-  belisha: ['belisha_beacon', 'belisha'], signpost: ['signpost', 'fingerpost', 'guidepost'], railing: ['promenade_railing', 'railing', 'railing_section'],
-  shelter: ['seafront_shelter', 'promenade_shelter', 'shelter'],
+  belisha: ['belisha_beacon', 'belisha', 'beacon'], signpost: ['signpost', 'fingerpost', 'guidepost'], railing: ['promenade_railing', 'railing', 'railing_section'],
+  shelter: ['seafront_shelter', 'promenade_shelter'], balustrade: ['glass_balustrade'],
 };
 const WSMP = { idx: null, place: [], landmark: new Map() };
 function townPropIndex() {
   if (WSMP.idx) return WSMP.idx; WSMP.idx = new Map();
   if (typeof WSM_PROPS === 'undefined' || !WSM_PROPS || !WSM_PROPS.length) return WSMP.idx;
-  for (let i = 0; i < WSM_PROPS.length; i++) {
+  // (by name first, then by kind for the placements still without one: a bus shelter and the seafront shelter are both
+  // kind "shelter")
+  for (let pass = 0; pass < 2; pass++) for (let i = 0; i < WSM_PROPS.length; i++) {
     const p = (WSM_PROPS[i].meta && WSM_PROPS[i].meta.prop) || {}, nm = String(p.name || '').toLowerCase(), kd = String(p.kind || '').toLowerCase();
-    if (kd === 'landmark' || kd.startsWith('landmark')) { WSMP.landmark.set(nm, i); continue; }
-    for (const [k, names] of Object.entries(WSMP_KINDS)) if (names.includes(kd) || names.includes(nm)) { if (!WSMP.idx.has(k)) WSMP.idx.set(k, i); }
+    if (kd === 'landmark' || kd.startsWith('landmark')) { if (!pass) WSMP.landmark.set(nm, i); continue; }
+    for (const [k, names] of Object.entries(WSMP_KINDS)) if (!WSMP.idx.has(k) && names.includes(pass ? kd : nm)) WSMP.idx.set(k, i);
   }
   return WSMP.idx;
 }
@@ -1102,7 +1173,7 @@ function townPropIndex() {
 function townProp(kind) { const i = townPropIndex().get(kind); return i === undefined ? -1 : i; }
 function townPropPut(i, x, y, z, yaw) { WSMP.place.push(i, x, y, z, yaw); }
 async function townPropChunks(i) {
-  const e = WSM_PROPS[i], M = e.meta, buf = await bcInflate(e.b64), out = { sc: 1 / M.scale, body: [], glass: [], anchor: (M.prop && M.prop.anchor) || [0, 0, 0] }; let off = 0;
+  const e = WSM_PROPS[i], M = e.meta, buf = await bcInflate(e.b64), out = { sc: 1 / M.scale, body: [], glass: [], anchor: (M.prop && M.prop.anchor) || [0, 0, 0], paint: (M.prop && M.prop.paint) || null }; let off = 0;
   for (const ch of M.chunks) {
     if (ch.mirror) continue;                     // (no mirrored chunks in the props)
     const nv = ch.nv, ni = ch.ni;
@@ -1117,7 +1188,7 @@ async function townPropChunks(i) {
 function townPropEmit(mb, gl, md) {
   const sc = md.sc, an = md.anchor;
   const emit = (dst, [ch, pos, nrm, idx]) => {
-    const c = ch.c || [1, 1, 1], v0 = dst.nv; dst.mat(ch.id, ch.a || 0); dst.color(c[0], c[1], c[2]);
+    const c = ch.id === 20 && md.paint ? md.paint : ch.c || [1, 1, 1], v0 = dst.nv; dst.mat(ch.id, ch.a || 0); dst.color(c[0], c[1], c[2]);   // (20: the paint, e.g. the pillar box's red)
     for (let q = 0; q < ch.nv; q++) dst.v(pos[q * 3] * sc - an[0], pos[q * 3 + 1] * sc - an[1], pos[q * 3 + 2] * sc - an[2], nrm[q * 4], nrm[q * 4 + 1], nrm[q * 4 + 2], 1, 0);
     for (let q = 0; q < ch.ni; q += 3) dst.tri(v0 + idx[q], v0 + idx[q + 1], v0 + idx[q + 2]);
   };
@@ -1160,7 +1231,6 @@ async function townPropsBuild() {
   R.transparents.push(glass);
   TOWNW.stats.props = { models: models.size, placed: P.length / 5, tris: Math.round(tris) };
 }
-if (TOWN.on && WORLD.active) queueMicrotask(() => BUILD.push(async () => { await townPropsBuild(); }));
 
 // ---------------------------------------------------------------- street furniture and boundaries
 // OSM's street furniture where it is mapped (bus stops, crossings, benches, bins, bollards, post boxes, phone boxes,
@@ -1176,7 +1246,7 @@ function townFurnitureBuild(mb, rs) {
   // nearest road segment (drivable) to a point: direction, distance, class, half width
   const SG = new Map(), sc = 24;
   for (let r = 0; r < R.n; r++) { if (ri[r * 4] > 9) continue; for (let k = R.off[r]; k < R.off[r + 1] - 1; k++) { const kk = Math.floor(R.p[k * 2] / sc) + ',' + Math.floor(R.p[k * 2 + 1] / sc); let l = SG.get(kk); if (!l) SG.set(kk, l = []); l.push(r, k); } }
-  const NR = new Float64Array(6);   // tx, tz, dist, side (+1: the point is on the road's right), class, half width
+  const NR = new Float64Array(7);   // tx, tz, dist, side (+1: the point is on the road's right), class, half width, one-way
   const nearRoad = (x, z, rmax) => {
     let best = rmax;
     NR[2] = 1e9;
@@ -1185,7 +1255,7 @@ function townFurnitureBuild(mb, rs) {
       for (let e = 0; e < l.length; e += 2) {
         const r = l[e], k = l[e + 1], ax = R.p[k * 2], az = R.p[k * 2 + 1], ex = R.p[k * 2 + 2] - ax, ez = R.p[k * 2 + 3] - az, L2 = ex * ex + ez * ez + 1e-9;
         const t = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / L2)), px = ax + ex * t - x, pz = az + ez * t - z, d = Math.hypot(px, pz);
-        if (d < best) { best = d; const L = Math.sqrt(L2); NR[0] = ex / L; NR[1] = ez / L; NR[2] = d; NR[3] = (ex * (z - az) - ez * (x - ax)) > 0 ? 1 : -1; NR[4] = ri[r * 4]; NR[5] = ri[r * 4 + 1] * 0.05; }
+        if (d < best) { best = d; const L = Math.sqrt(L2); NR[0] = ex / L; NR[1] = ez / L; NR[2] = d; NR[3] = (ex * (z - az) - ez * (x - ax)) > 0 ? 1 : -1; NR[4] = ri[r * 4]; NR[5] = ri[r * 4 + 1] * 0.05; NR[6] = (ri[r * 4 + 2] & 2) ? 1 : 0; }
       }
     }
     return NR[2] < rmax;
@@ -1290,7 +1360,8 @@ function townFurnitureBuild(mb, rs) {
         const h = hgt || 1.6;
         if (matl === 4) { mb.mat(13, 150).color(0.4, 0.42, 0.42, 1); mb.box(0, y + h / 2, 0, l, h, 0.02); }
         else { mb.mat(15).color(0.34, 0.26, 0.17, 1); mb.box(0, y + h / 2, 0, l, h, 0.05); mb.color(0.28, 0.21, 0.14, 1); mb.box(-l / 2, y + h / 2 + 0.05, 0, 0.1, h + 0.1, 0.1); }
-      } else if (code === 3) {                  // hedge: a clipped green box with a ragged top
+      } else if (code === 3) {                  // hedge: a clipped green box with a ragged top (without the British planting kit)
+        if (typeof ukBoundaryHedges === 'function' && typeof VEG_UK !== 'undefined' && VEG_UK && !Q.has('noveg')) { mb.pop(); continue; }
         const h = hgt || 1.5 + rnd() * 0.5; mb.mat(15).color(0.06 + rnd() * 0.03, 0.12 + rnd() * 0.04, 0.035, 1); mb.box(0, y + h / 2, 0, l + 0.2, h, 0.8 + rnd() * 0.3);
       } else if (code === 5 || code === 6) {    // railings (posts, two rails, bars) or a crash barrier
         const h = code === 6 ? 0.75 : (hgt || 1.05);
@@ -1328,7 +1399,8 @@ function townFurnitureBuild(mb, rs) {
     else if ((c === FN.SIGNALS || c === FN.CROSSING || c === FN.GIVEWAY || c === FN.STOP) && on) {
       // on the road: a pole on each kerb, facing the traffic (signals, crossings), the give-way or stop sign on the near side
       const tx = NR[0], tz = NR[1], hw = NR[5], nx = -tz, nz = tx;
-      if (c === FN.SIGNALS || (c === FN.CROSSING && sub === 2)) for (const sd of [-1, 1]) { const qx = x + nx * sd * (hw + 0.6) - tx * sd * 2.5, qz = z + nz * sd * (hw + 0.6) - tz * sd * 2.5, A = a + (sd > 0 ? 0 : PI), Y = gy(qx, qz); put('signal', qx, Y, qz, A + PI, () => signalHead(qx, qz, A, Y, 3.2), 400); }   // (X: towards the traffic it faces)
+      // (each approach: the primary signal on the drivers' left at the stop line, its head (+X) facing them)
+      if (c === FN.SIGNALS || (c === FN.CROSSING && sub === 2)) for (const sg of NR[6] ? [1] : [1, -1]) { const qx = x - sg * tx * 3.2 - sg * nx * (hw + 0.6), qz = z - sg * tz * 3.2 - sg * nz * (hw + 0.6), A = Math.atan2(-sg * tz, -sg * tx), Y = gy(qx, qz); put('signal', qx, Y, qz, A, () => signalHead(qx, qz, A - PI / 2, Y, 3.2), 400); }
       else if (c === FN.CROSSING && sub === 1) for (const sd of [-1, 1]) { const qx = x + nx * sd * (hw + 0.5), qz = z + nz * sd * (hw + 0.5), Y = gy(qx, qz); put('belisha', qx, Y, qz, Math.atan2(-nz * sd, -nx * sd), () => belisha(qx, qz, Y), 350); }
       else if (c === FN.GIVEWAY || c === FN.STOP) { const qx = x - nx * (hw + 0.7), qz = z - nz * (hw + 0.7), A = a + PI / 2, Y = gy(qx, qz); townJob(qx, qz, () => signPost(qx, qz, A, Y, c), 300); }
     }
@@ -1525,6 +1597,8 @@ function townWorldBuild() {
   const RD = T.rd; for (let r = 0; r < RD.n; r++) { const k = (RD.off[r] + RD.off[r + 1]) >> 1; tiles[tileOf(RD.p[k * 2], RD.p[k * 2 + 1])][0].push(r); }
   const bb = T.bbox; for (let b = 0; b < T.bd.n; b++) tiles[tileOf((bb[b * 4] + bb[b * 4 + 2]) / 2, (bb[b * 4 + 1] + bb[b * 4 + 3]) / 2)][1].push(b);
   const Gr = townRoadGrid(); TOWNW.jobs = new Map();
+  // the architecture kit (35_wsm_arch.js): ?arch=1 until it is declared ready (then on unless ?arch=0)
+  TOWNW.arch = typeof archFromTown === 'function' && Q.get('arch') === '1';
   for (let k = 0; k < tiles.length; k++) {
     const i0 = mb.ni;
     for (const r of tiles[k][0]) townRoad(mb, r, Gr);
@@ -1534,6 +1608,7 @@ function townWorldBuild() {
   townSeaWallBuild(mb, rs);
   townTollBuild(mb, rs);
   TOWNW.roadGrid = Gr; townFurnitureBuild(mb, rs); townMarkingsBuild(mb, rs); townGroundsBuild(mb, rs); townJobsRun(mb, rs);
+  if (TOWNW.arch) TOWNW.stats.arch = archFinish();
   townSpiresBuild(mb, rs);
   townCircuitBuild(mb, rs);
   TOWNW.stats.town = mb.ni / 3; TOWNW.stats.ranges = rs.r.length;
@@ -1548,6 +1623,6 @@ function townWorldBuild() {
     window.__cap.trackCam = (s, d, h, s2, d2, h2, fov) => { trackPos(s, d, o); trackPos(s2, d2, q); const py = Math.max(o[1], hfAt(o[0], o[2])) + h; setCamera(o[0], py, o[2], q[0], q[1] + h2, q[2], fov || 1.0); R.cube.pos.set([q[0], q[1] + 1.2, q[2]]); return [o[0], py, o[2]]; };
   }
   // capture helpers: camera at heights above the ground (h, th) of its own point and of its target
-  window.__cap.town = { stats: TOWNW.stats, TOWN, TOWNW, hf: hfAt, camH: (x, z, h, tx, tz, th, fov) => window.__cap.cam(x, hfAt(x, z) + h, z, tx, hfAt(tx, tz) + th, tz, fov || 0.9) };
+  window.__cap.town = { stats: TOWNW.stats, TOWN, TOWNW, props: WSMP, hf: hfAt, camH: (x, z, h, tx, tz, th, fov) => window.__cap.cam(x, hfAt(x, z) + h, z, tx, hfAt(tx, tz) + th, tz, fov || 0.9) };
 }
-if (TOWN.on && WORLD.active) queueMicrotask(() => BUILD.push(async () => { townWorldBuild(); }));
+if (TOWN.on && WORLD.active) queueMicrotask(() => BUILD.push(async () => { townWorldBuild(); await townPropsBuild(); }));   // (the props once the town has placed them)

@@ -94,7 +94,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
     // colour; birch's black, fissured foot is the first ~2.5 m
     var vr = 0.0;
     if (bt == 5u) { vr = sat((in.col.r - in.col.b - 0.06) / 0.3); }
-    if (bt == 7u) { vr = 1.0 - smoothstep(0.4, 2.8, in.ext.z); }
+    if (bt == 7u) { vr = 1.0 - smoothstep(0.3, 1.9, in.ext.z + textureSample(tNoise, sLin, in.uv * vec2f(0.5, 0.2)).r * 0.8 - 0.4); }
     let B4 = UK_BK[bt]; let style = u32(B4.w);
     var sc = B4.xy; var depth = B4.z;
     if (bt == 5u) { sc = mix(sc, vec2f(0.9, 0.5), vr); depth = mix(depth, 0.32, vr); }   // Scots pine: thin papery flakes up the stem
@@ -121,7 +121,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
       h0 = textureSample(tNoise, sLin, q).b * 0.7 + textureSample(tNoise, sLin, q2).b * 0.22 + textureSample(tNoise, sLin, q3).b * 0.08;
       hx = textureSample(tNoise, sLin, q + vec2f(e, 0.0)).b * 0.7 + textureSample(tNoise, sLin, q2 + vec2f(e * 3.1, 0.0)).b * 0.22 + textureSample(tNoise, sLin, q3 + vec2f(e * 8.3, 0.0)).b * 0.08;
       hy = textureSample(tNoise, sLin, q + vec2f(0.0, e)).b * 0.7 + textureSample(tNoise, sLin, q2 + vec2f(0.0, e * 2.3)).b * 0.22 + textureSample(tNoise, sLin, q3 + vec2f(0.0, e * 6.1)).b * 0.08;
-      h0 = smoothstep(0.22, 0.68, h0); hx = smoothstep(0.22, 0.68, hx); hy = smoothstep(0.22, 0.68, hy);
+      h0 = smoothstep(0.18, 0.75, h0); hx = smoothstep(0.18, 0.75, hx); hy = smoothstep(0.18, 0.75, hy);
     }
     let g = vec2f(hx - h0, hy - h0) / e * 0.034 * depth;
     let dp1 = dpdx(in.wpos); let dp2 = dpdy(in.wpos); let du1 = dpdx(q); let du2 = dpdy(q);
@@ -130,7 +130,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
     let fd = sat(1.25 - in.ext.w / 70.0);
     s.normal = normalize(N - (T * g.x + Bv * g.y) * im * fd);
     let ridge = smoothstep(0.28, 0.72, h0);
-    var k = mix(1.0, mix(0.2, 1.4, ridge), sat(0.35 + 0.65 * depth)) * (0.7 + 0.6 * wr.x);
+    var k = mix(1.0, mix(0.3, select(1.3, 1.08, depth > 0.9), ridge), sat(0.35 + 0.65 * depth)) * (0.75 + 0.5 * wr.x);
     var col = in.col.rgb;
     let hue = textureSample(tNoise, sLin, uvb * vec2f(0.13, 0.031) + 0.7).g;
     if (style == 3u) {
@@ -148,14 +148,20 @@ fn surf(in: V2F, ff: bool) -> Surface {
       let dash = smoothstep(0.55, 0.62, textureSample(tNoise, sLin, uvb * vec2f(2.6, 1.3)).r);
       let lent = (1.0 - smoothstep(0.025, 0.07, ln)) * select(dash, 1.0, bt == 11u);
       k *= 1.0 - lent * select(0.75, 0.35, bt == 11u);
-      if (bt == 7u) { k = mix(k, k * 0.22 * (0.6 + 0.8 * ridge), smoothstep(0.35, 0.8, vr * (0.7 + 0.6 * h0))); }   // the black, fissured base
+      if (bt == 7u) { k = mix(k, k * 0.16 * (0.5 + 0.9 * ridge), smoothstep(0.25, 0.6, vr * (0.7 + 0.6 * h0))); }   // the black, fissured base
     }
     if (bt == 1u || bt == 12u) { k *= 0.94 + 0.08 * sin(uvb.y * 31.0 + wr.y * 9.0); }   // beech/holly: faint wrinkles
     let vein = textureSample(tNoise, sLin, uvb * vec2f(1.9, 0.05)).g;
-    k *= mix(0.78, 1.1, smoothstep(0.35, 0.62, vein)) * mix(0.55, 1.0, smoothstep(0.0, 1.8, in.ext.z));
+    let smoothBk = style == 1u || bt == 7u || bt == 8u;
+    k *= mix(select(0.78, 0.94, smoothBk), select(1.1, 1.03, smoothBk), smoothstep(0.35, 0.62, vein)) * mix(0.55, 1.0, smoothstep(0.0, 1.8, in.ext.z));
+    if (smoothBk) {
+      // smooth bark: mottled with pale lichen and darker blotches instead of streaks (beech, holly, birch, plane)
+      let mo = textureSample(tNoise, sLin, uvb * vec2f(0.9, 0.7) + 0.21).r; let mo2 = textureSample(tNoise, sLin, uvb * vec2f(2.7, 2.1) + 0.63).g;
+      k *= mix(0.86, 1.14, smoothstep(0.4, 0.7, mo)) * mix(0.9, 1.06, mo2);
+    }
     // green algae and lichen: the damp side of the stems in the woods (strongest on smooth barks), moss at the foot
     let smoothB = bt == 1u || bt == 7u || bt == 8u || bt == 12u;
-    let moss = smoothstep(0.5, 0.76, wr.y + (1.0 - sat(in.ext.z * 0.4)) * 0.24 + sat(N.y) * 0.25 + sat(-N.x) * 0.1) * select(0.38, 0.28, smoothB);
+    let moss = smoothstep(0.5, 0.76, wr.y + (1.0 - sat(in.ext.z * 0.4)) * 0.24 + sat(N.y) * 0.25 + sat(-N.x) * 0.1) * select(select(0.38, 0.14, bt == 5u || bt == 6u), 0.28, smoothB);
     var alb = col * mix(vec3f(1.08, 0.95, 0.85), vec3f(0.92, 0.98, 1.06), smoothstep(0.3, 0.7, hue)) * k * 0.56;
     alb = mix(alb, vec3f(0.07, 0.1, 0.03) * (0.6 + 0.8 * h0), moss);
     // ivy up the trunk on part of the trees (per tree, from its seed; the share per species is VEG_UKM.w): dark glossy

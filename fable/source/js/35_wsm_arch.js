@@ -33,7 +33,9 @@
 //               dorms:  dormers seen by the LIDAR, flat [x, z, width, yTop (absolute), side (0: v below the ridge,
 //                       1: above), ...] (TOWN.dorm)
 //               surveyed: true when the roof was fitted to the LIDAR: then chims/dorms are the whole truth (none
-//                       means none); otherwise the style places its own stacks and dormers }
+//                       means none); otherwise the style places its own stacks and dormers
+//               look:   optional overrides of the generated look (archLook's fields: wallMat, wallCol, dress, bay,
+//                       roofCov, win, door, porch, ...) for landmarks or a fixed design }
 //   archFromTown(b) -> archBuild for building b of the baked town (TOWN.bd, binfo, bfront, chim, dorm, hfAt): the
 //     simplest hook for 34_wsm_world.js (call it first in townBuilding; when it returns true, return).
 //   archFinish() -> stats: generates everything handed over (party walls and terrace rows are found between the
@@ -71,8 +73,8 @@ const AM = {
 };
 // palettes (linear albedo)
 const AP = {
-  stone: [[0.3, 0.29, 0.27], [0.27, 0.27, 0.27], [0.33, 0.3, 0.26], [0.32, 0.28, 0.26], [0.26, 0.255, 0.24], [0.35, 0.33, 0.29]],   // grey Weston limestone rubble
-  kew: [[0.3, 0.3, 0.29], [0.27, 0.27, 0.26], [0.33, 0.31, 0.28], [0.24, 0.24, 0.235]],                                          // Kewstoke's greyer, rougher limestone
+  stone: [[0.21, 0.2, 0.19], [0.19, 0.19, 0.19], [0.24, 0.215, 0.18], [0.23, 0.2, 0.185], [0.18, 0.175, 0.165], [0.25, 0.235, 0.205]],   // grey Weston limestone rubble
+  kew: [[0.22, 0.22, 0.21], [0.2, 0.2, 0.195], [0.25, 0.235, 0.21], [0.18, 0.18, 0.175]],                                        // Kewstoke's greyer, rougher limestone
   bath: [[0.6, 0.52, 0.37], [0.56, 0.49, 0.36], [0.64, 0.57, 0.42], [0.52, 0.46, 0.35]],                                        // Bath stone dressings
   bathPaint: [[0.74, 0.7, 0.58], [0.78, 0.77, 0.72], [0.72, 0.66, 0.5], [0.7, 0.68, 0.62]],                                     // painted dressings: cream, white
   render: [[0.78, 0.77, 0.73], [0.74, 0.7, 0.57], [0.76, 0.72, 0.62], [0.74, 0.67, 0.42], [0.56, 0.63, 0.68], [0.73, 0.61, 0.57], [0.6, 0.66, 0.56], [0.62, 0.62, 0.6], [0.66, 0.6, 0.5], [0.8, 0.79, 0.76]],
@@ -204,7 +206,7 @@ function archBuild(fp, o) {
   if (!style) return false;
   ARCH.on = true;
   ARCH.reqs.push({ p, n, area: a, cx, cz, y0, eave, ridge: o.ridge, roof: o.roof, ridgeAng: o.ridgeAng, ridgeOff: o.ridgeOff || 0, style, tags: o.tags || {}, seed: (o.seed === undefined ? hash2(cx * 7 | 0, cz * 7 | 0) * 4294967296 : o.seed) >>> 0,
-    front, road: o.road || null, gap: o.gap === undefined ? 0 : o.gap, ground: o.ground || null, chims: o.chims || null, dorms: o.dorms || null, surveyed: !!o.surveyed,
+    front, road: o.road || null, gap: o.gap === undefined ? 0 : o.gap, ground: o.ground || null, chims: o.chims || null, dorms: o.dorms || null, surveyed: !!o.surveyed, look: o.look || null,
     party: null, nb: null, group: -1, order: 0, idx: ARCH.reqs.length });
   return true;
 }
@@ -467,7 +469,7 @@ function archLook(r) {
     if (s === S.FLATS) { st.wallMat = m < 0.4 ? AW.BUFF : m < 0.65 ? AW.BRICK : m < 0.9 ? AW.RENDER : AW.PANEL; st.wallCol = st.wallMat === AW.BUFF ? C(AP.buff, g) : st.wallMat === AW.BRICK ? C(AP.brick, g) : st.wallMat === AW.RENDER ? C(AP.render, g) : [0.5, 0.5, 0.48]; st.dress = AD.CONCRETE; st.dressCol = [0.55, 0.55, 0.52]; st.win = AWIN.UPVC; st.gH = 2.9; st.uH = 2.8; st.gWinH = 1.3; st.uWinH = 1.3; st.gSill = 0.85; st.uSill = 0.85; st.winW = 1.5; st.balcony = g() < 0.45; st.door = ADOOR.SHOP; st.doorW = 1.6; st.roofCov = AROOF.FELT; st.roofCol = C(AP.felt, g); st.chimney = 'none'; st.unitW = 3.0; }
     else if (s === S.COMMERCIAL) { st.wallMat = m < 0.35 ? AW.BRICK : m < 0.7 ? AW.METAL : AW.RENDER; st.wallCol = st.wallMat === AW.BRICK ? C(AP.brick, g) : st.wallMat === AW.METAL ? C(AP.clad, g) : C(AP.render, g); st.dress = AD.CONCRETE; st.dressCol = [0.5, 0.5, 0.48]; st.win = AWIN.RIBBON; st.trimCol = [0.12, 0.13, 0.14]; st.gH = 3.6; st.uH = 3.4; st.gWinH = 1.6; st.uWinH = 1.5; st.gSill = 0.9; st.uSill = 0.9; st.winW = 2.4; st.door = ADOOR.SHOP; st.doorW = 1.8; st.roofCov = AROOF.FELT; st.roofCol = C(AP.felt, g); st.chimney = 'none'; st.unitW = 4.0;
       st.sign = ARCH_SIGN_IX[archPick(['FURNITURE', 'CARPETS', 'BUILDING SUPPLIES', 'TYRES', 'BIKES', 'HARDWARE'], h())]; st.signBg = (h() * AP.shopBg.length) | 0; st.signFg = 0; st.signStyle = 2; }
-    else if (s === S.INDUSTRIAL) { st.wallMat = AW.METAL; st.wallCol = C(AP.clad, g); st.dress = AD.NONE; st.win = AWIN.RIBBON; st.trimCol = [0.15, 0.16, 0.17]; st.gH = 6; st.uH = 4; st.gWinH = 0.9; st.gSill = 3.8; st.winW = 3; st.door = ADOOR.ROLLER; st.doorW = 4.2; st.doorH = 4.5; st.roofCov = AROOF.METAL; st.roofCol = C(AP.clad, g); st.chimney = 'none'; st.pitch = 0.12; st.unitW = 6; st.flags |= 4; }
+    else if (s === S.INDUSTRIAL) { st.wallMat = AW.METAL; st.wallCol = C(AP.clad, g); st.dress = AD.NONE; st.win = AWIN.RIBBON; st.trimCol = [0.15, 0.16, 0.17]; st.gH = 6; st.uH = 4; st.gWinH = 0.9; st.gSill = 3.8; st.winW = 3; st.door = ADOOR.ROLLER; st.doorCol = C([[0.32, 0.33, 0.34], [0.1, 0.16, 0.25], [0.12, 0.2, 0.13], [0.42, 0.42, 0.4], [0.3, 0.06, 0.04]], h); st.doorW = 4.2; st.doorH = 4.5; st.roofCov = AROOF.METAL; st.roofCol = C(AP.clad, g); st.chimney = 'none'; st.pitch = 0.12; st.unitW = 6; st.flags |= 4; }
     else { st.wallMat = m < 0.55 ? AW.BRICK : m < 0.8 ? AW.PANEL : AW.BOARD; st.wallCol = st.wallMat === AW.BRICK ? C(AP.brick, g) : st.wallMat === AW.PANEL ? [0.46, 0.45, 0.42] : C(AP.board, g); st.dress = AD.NONE; st.door = ADOOR.GARAGE; st.doorW = 2.3; st.doorH = 2.0; st.doorCol = C([[0.72, 0.72, 0.7], [0.1, 0.2, 0.12], [0.3, 0.05, 0.04], [0.2, 0.25, 0.32], [0.62, 0.6, 0.55]], h); st.gH = 2.5; st.roofCov = AROOF.FELT; st.roofCol = C(AP.felt, g); st.chimney = 'none'; st.unitW = 2.9; st.storeys = 1; st.win = AWIN.CASE; st.pitch = 0.5; }
     st.storeys = s === S.GARAGE ? 1 : 0; st.aerial = false; st.dish = s === S.FLATS && h() < 0.3; st.bins = false; st.alarm = false;
   } else if (s === S.CARAVAN) {
@@ -879,7 +881,7 @@ function archWalls(B) {
   B.roofTop = flat ? ((x, z) => yE + ph) : ((x, z) => aRoofY(B, x, z));
   for (const e of B.E) {
     for (const c of e.cols) {
-      const qd = c.q & AC.QL ? c.c - c.a : c.q & AC.QR ? c.b - c.c : 0;
+      const qd = c.g === AC.GSHOP ? (c.b - c.a) / 2 : c.q & AC.QL ? c.c - c.a : c.q & AC.QR ? c.b - c.c : 0;
       const top = yE - B.yf + (flat ? ph : 0);
       aWallMat(B, c.g | c.up | c.q, qd, c.ow, c.v, (c.maxTop !== undefined ? c.maxTop : top));
       const ax = e.ax + e.dx * c.a, az = e.az + e.dz * c.a, bx = e.ax + e.dx * c.b, bz = e.az + e.dz * c.b;
@@ -1377,7 +1379,7 @@ function archShopfronts(B) {
       aSolid(mb, AM.PAINT, B.rec, ASC.SMOOTH, bg);
       aBox(mb, m[0], yB, m[1], e.dx, e.dz, W - 0.1, fh, 0.16, 1 | 2 | 4 | 8);
       // the sign: uv in metres across the fascia (the shader fits the word from the sign atlas)
-      aSetMat(mb, AM.SIGN, B.rec, 0, 0, 0, 0);
+      aSetMat(mb, AM.SIGN, B.rec, Math.min(255, Math.round((W - 0.1) / 0.04)), Math.min(255, Math.round(fh / 0.02)), 0, 0);
       const f0 = P(rn.a + 0.05, 0.16), f1 = P(rn.b - 0.05, 0.16);
       const i0 = aVt(mb, f0[0], yB, f0[1], e.nx, 0, e.nz, 0, 0), i1 = aVt(mb, f1[0], yB, f1[1], e.nx, 0, e.nz, W - 0.1, 0), i2 = aVt(mb, f1[0], yB + fh, f1[1], e.nx, 0, e.nz, W - 0.1, fh), i3 = aVt(mb, f0[0], yB + fh, f0[1], e.nx, 0, e.nz, 0, fh);
       aQ(mb, i0, i1, i2, i3, e.nx, 0, e.nz);
@@ -1515,13 +1517,14 @@ function archDetails(B) {
   const wide = st.dress === AD.BATH || st.dress === AD.CONCRETE || st.dress === AD.RUSTIC ? 0.12 : 0.05;
   const opening = (c, k) => {   // [bottom, top, width] of the opening of column c in storey k (as the shader draws it), or null
     const blank = (c.v >> 4) & 3; if (k < blank) return null;
-    if (k === 0) { if (c.g !== AC.GWIN) return null; return [st.gSill, st.gSill + st.gWinH, c.ow]; }
+    if (k === 0) { if (c.g !== AC.GWIN || (c.v & 8)) return null; return [st.gSill, st.gSill + st.gWinH, c.ow]; }
     if (k >= st.storeys) return null;
     const up = c.up; if (up === AC.UNONE) return null;
-    const sb = st.gH + (k - 1) * st.uH, w = up === AC.UNARROW ? Math.min(c.ow, st.winW * 0.7) : c.ow;
+    const sb = st.gH + (k - 1) * st.uH, w = up === AC.UNARROW ? Math.min(c.ow, 0.75) : c.ow;
     if (up === AC.UFRENCH && k === 1) return null;
     if (c.v & 8) return null;
     const top = Math.min(sb + st.uSill + st.uWinH, B.yE - yf - 0.25); if (top - (sb + st.uSill) < 0.5) return null;
+    if ((c.v & 3) === 1) return [top - (top - sb - st.uSill) * 0.55, top, w * 0.7];
     return [sb + st.uSill, top, w];
   };
   for (const e of B.E) {
@@ -1703,13 +1706,14 @@ function archNameBoard(B) {
   const P = (sx, d) => [F.ax + F.dx * sx + F.nx * d, F.az + F.dz * sx + F.nz * d], m = P(sc, 0.05);
   aSolid(mb, AM.PAINT, B.rec, ASC.SMOOTH, AP.shopBg[st.signBg % AP.shopBg.length]);
   aBox(mb, m[0], y, m[1], F.dx, F.dz, W, h, 0.1, 1 | 2 | 4 | 8);
-  aSetMat(mb, AM.SIGN, B.rec, 0, 0, 0, 0);
+  aSetMat(mb, AM.SIGN, B.rec, Math.min(255, Math.round(W / 0.04)), Math.min(255, Math.round(h / 0.02)), 0, 0);
   const f0 = P(sc - W / 2, 0.1), f1 = P(sc + W / 2, 0.1);
   const i0 = aVt(mb, f0[0], y, f0[1], F.nx, 0, F.nz, 0, 0), i1 = aVt(mb, f1[0], y, f1[1], F.nx, 0, F.nz, W, 0), i2 = aVt(mb, f1[0], y + h, f1[1], F.nx, 0, F.nz, W, h), i3 = aVt(mb, f0[0], y + h, f0[1], F.nx, 0, F.nz, 0, h);
   aQ(mb, i0, i1, i2, i3, F.nx, 0, F.nz);
 }
 function archGen(r) {
   const st = archLook(r);
+  if (r.look) Object.assign(st, r.look);   // (overrides: the demo street, landmarks)
   if (r.style === ARCH_S.CARAVAN) return archCaravan(r, st);
   return archHouse(r, st);
 }
@@ -1846,10 +1850,10 @@ function archSignAtlas() {
   return tex;
 }
 function archUpload(ranges) {
-  const dev = G.dev, defs = {}, t0 = performance.now();
+  const dev = G.dev, defs = { ARCH_SIGN_ROWS: ARCH_SIGNS.length.toFixed(1) }, t0 = performance.now();
   ARCH.fam = mkFamily('arch', { src: 'mat_arch', defs, shadowBias: 3, shadowSlope: 2.5 });
-  ARCH.famP = mkFamily('archP', { src: 'mat_arch', defs: { ARCH_PROPS: '' }, buffers: [VLAYOUT, ARCH_INST], noCube: true, shadowBias: 3, shadowSlope: 2.5 });
-  ARCH.famR = mkFamily('archR', { src: 'mat_arch', defs: { ARCH_PROPS: '', ARCH_RAIL: '' }, buffers: [VLAYOUT, ARCH_INST], alpha: true, cull: 'none', noCube: true, shadowBias: 3, shadowSlope: 2.5 });
+  ARCH.famP = mkFamily('archP', { src: 'mat_arch', defs: Object.assign({ ARCH_PROPS: '' }, defs), buffers: [VLAYOUT, ARCH_INST], noCube: true, shadowBias: 3, shadowSlope: 2.5 });
+  ARCH.famR = mkFamily('archR', { src: 'mat_arch', defs: Object.assign({ ARCH_PROPS: '', ARCH_RAIL: '' }, defs), buffers: [VLAYOUT, ARCH_INST], alpha: true, cull: 'none', noCube: true, shadowBias: 3, shadowSlope: 2.5 });
   // records: 4 texels per building in a 1024-wide rgba32uint texture
   const nt = Math.max(1, AG.nrec) * 4, th = Math.ceil(nt / 1024), data = new Uint32Array(1024 * th * 4); data.set(AG.rec.subarray(0, AG.nrec * 16));
   const rec = ARCH.recTex = mkTex(1024, th, 'rgba32uint', TU.TB | TU.CD);
@@ -1897,4 +1901,132 @@ function archView(name) {
   const v = ARCH.views && ARCH.views[name]; if (!v) return Object.keys(ARCH.views || {});
   setCamera(v[0], v[1], v[2], v[3], v[4], v[5], v[6] || 0.9); R.cube.pos.set([v[0] * 0.5 + v[3] * 0.5, Math.max(1.2, v[1] * 0.3 + v[4] * 0.7), v[2] * 0.5 + v[5] * 0.5]);
   return name;
+}
+
+// ---------------------------------------------------------------- ?scene=arch: a demo street with every style
+// A street running north-south (X east, Z south) on flat ground: the low western sun of the game lights the fronts on
+// the east side; the west side is in the shade. Blocks from north to south; window.__cap.arch.view(name) frames each.
+function archScene() {
+  const S = ARCH_S, GY = 0.12, ground = (x, z) => Math.abs(x) < 3.65 ? 0 : GY, views = ARCH.views = {};
+  // a rectangle with its front (edge 0) on the street: side +1 east of the road (front faces -x), -1 west (faces +x)
+  const rect = (side, z0, z1, gap, depth) => { const xf = side * (5.65 + gap), xb = xf + side * depth; return side > 0 ? [xf, z1, xf, z0, xb, z0, xb, z1] : [xf, z0, xf, z1, xb, z1, xb, z0]; };
+  // an L: the front block depth d1 over the whole width, an outrigger (width w2 at one side) to depth d2
+  const ell = (side, z0, z1, gap, d1, d2, w2, atZ0) => {
+    const xf = side * (5.65 + gap), x1 = xf + side * d1, x2 = xf + side * d2, za = atZ0 ? z0 : z1 - w2, zb = atZ0 ? z0 + w2 : z1;
+    const pts = side > 0 ? (atZ0 ? [xf, z1, xf, z0, x2, z0, x2, zb, x1, zb, x1, z1] : [xf, z1, xf, z0, x1, z0, x1, za, x2, za, x2, z1])
+      : (atZ0 ? [xf, z0, xf, z1, x1, z1, x1, zb, x2, zb, x2, z0] : [xf, z0, xf, z1, x2, z1, x2, za, x1, za, x1, z0]);
+    return pts;
+  };
+  const add = (fp, style, eave, ridge, roof, look, seed, gap, tags) => archBuild(fp, { y0: GY, eave: GY + eave, ridge: ridge ? GY + ridge : undefined, roof, style, look, seed, front: 0, gap, ground, tags, road: [0, (fp[1] + fp[3]) / 2] });
+  let sd = 9001;
+  const E = 1, W = -1;
+  // A "Severn Road": Weston stone with Bath stone dressings, two-storey canted bays under gables, slate, front walls
+  { const L = { wallMat: AW.RUBBLE, dress: AD.BATH, bay: 'c2g', roofCov: AROOF.SLATE, roofCol: AP.slate[0], ridgeCol: [0.24, 0.1, 0.06], boundary: 'wall', rails: true, flags: 1 | 4 | 2 };
+    for (let i = 0; i < 6; i++) { const z0 = -290 + i * 5.2; add(i % 2 ? ell(E, z0, z0 + 5.2, 3.2, 8.2, 12.5, 2.6, i % 4 === 1) : rect(E, z0, z0 + 5.2, 3.2, 8.4), S.TERRACE, 6.3, 9.2, 1, Object.assign({}, L, { dressCol: i === 3 ? AP.bath[0] : AP.bathPaint[i % 2 ? 0 : 3] }), sd++, 3.2); } }
+  views.terrace_stone = [-3.5, 1.7, -262, 7.5, 5.2, -284, 0.95];
+  views.terrace_stone_close = [1.0, 1.6, -271, 9.5, 4.8, -279, 0.85];
+  // B rendered terrace in the owners' colours: canted two-storey bays with hipped tops, slate
+  { const L = { wallMat: AW.RENDER, dress: AD.PAINTED, bay: 'c2', roofCov: AROOF.SLATE, roofCol: AP.slate[1], boundary: 'wall', rails: false, hedge: true, flags: 4 | 8 };
+    for (let i = 0; i < 6; i++) { const z0 = -250 + i * 5.0; add(rect(E, z0, z0 + 5.0, 2.6, 9.6), S.TERRACE, 6.0, 8.7, 1, Object.assign({}, L, { wallCol: AP.render[[0, 4, 1, 5, 3, 6][i]] }), sd++, 2.6); } }
+  views.terrace_render = [-3.5, 1.7, -222, 8.5, 5.0, -246, 0.95];
+  // C a pair of tall stone villas (three storeys, hipped clay roof, gabled bays, porches)
+  { const L = { wallMat: AW.RUBBLE, dress: AD.BATH, bay: 'c2g', roofCov: AROOF.ROMAN, roofCol: AP.roman[1], boundary: 'wall', rails: true, porch: 'canopy', flags: 1 | 2 | 4 | 16 };
+    add(rect(E, -210, -201.5, 4.2, 11), S.VILLA, 9.2, 12.4, 2, L, sd++, 4.2); add(rect(E, -201.5, -193, 4.2, 11), S.VILLA, 9.2, 12.4, 2, L, sd++, 4.2); }
+  views.villas = [-3.5, 1.7, -186, 9.0, 6.0, -204, 0.95];
+  // D the shops: fascias with their signs, flats above
+  { const signs = [['amenity', 'cafe'], ['shop', 'bakery'], ['shop', 'chemist'], ['amenity', 'fast_food'], ['shop', 'books']];
+    const words = ['CAFE', 'BAKERY', 'CHEMIST', 'FISH & CHIPS', 'BOOKS'];
+    for (let i = 0; i < 5; i++) { const z0 = -183 + i * 6; add(rect(E, z0, z0 + 6, 0.0, 12), S.SHOP, 8.8, 11.4, 1, { sign: ARCH_SIGN_IX[words[i]], awning: i === 0 || i === 3, wallMat: i % 2 ? AW.RUBBLE : AW.RENDER, dress: i % 2 ? AD.BATH : AD.PAINTED, wallCol: i % 2 ? AP.stone[0] : AP.render[[1, 0, 3, 0, 9][i]], dressCol: AP.bathPaint[1], signBg: [1, 0, 7, 2, 3][i], signFg: [0, 1, 0, 0, 1][i], signStyle: i % 3 }, sd++, 0, { [signs[i][0]]: signs[i][1] }); } }
+  views.shops = [-3.2, 1.7, -150, 8.0, 3.8, -170, 0.95];
+  views.shops_close = [0.5, 1.6, -164, 6.5, 3.6, -172, 0.9];
+  // E seafront hotels: tall cream and white render, a cast-iron veranda; big three-storey bays
+  add(rect(E, -143, -129, 3.0, 14), S.HOTEL, 12.4, 15.4, 2, { wallCol: AP.seafront[1], balcony: true, bay: 'none', sign: ARCH_SIGN_IX.HOTEL }, sd++, 3.0);
+  add(rect(E, -129, -115, 3.0, 14), S.HOTEL, 12.4, 15.6, 1, { wallCol: AP.seafront[0], balcony: false, bay: 'c3' }, sd++, 3.0);
+  views.hotels = [-3.5, 1.7, -104, 9.5, 8.0, -129, 0.95];
+  // F a block of flats: flat roof behind a parapet, balconies
+  add(rect(E, -105, -75, 2.0, 12), S.FLATS, 11.6, 0, 0, { wallMat: AW.BUFF, wallCol: AP.buff[0], balcony: true }, sd++, 0);
+  views.flats = [-3.5, 1.7, -60, 10, 7.0, -90, 1.0];
+  // G post-war semis: brick and pebbledash, hipped concrete tile roofs, porches, a garage beside each
+  for (let i = 0; i < 2; i++) {
+    const z0 = -65 + i * 16, L = { wallMat: i ? AW.DASH : AW.BRICK, wallCol: i ? AP.dash[0] : AP.brick[2], roofCov: AROOF.CONCRETE, roofCol: AP.concrete[i], boundary: i ? 'hedge' : 'wall', porch: 'box', chimney: 'party', bay: 'none' };
+    add(rect(E, z0, z0 + 6.4, 5.0, 8), S.POSTWAR, 5.3, 8.0, 2, L, sd++, 5.0); add(rect(E, z0 + 6.4, z0 + 12.8, 5.0, 8), S.POSTWAR, 5.3, 8.0, 2, L, sd++, 5.0);
+    add(rect(E, z0 + 12.9, z0 + 15.8, 6.5, 5.5), S.GARAGE, 2.5, 0, 0, { wallCol: AP.brick[2] }, sd++, 0);
+  }
+  views.postwar = [-3.5, 1.7, -30, 9.5, 4.0, -55, 0.95];
+  // H modern estate houses: buff and red brick, integral garages, gabled concrete tile roofs
+  for (let i = 0; i < 3; i++) { const z0 = -27 + i * 10; add(rect(E, z0, z0 + 8, 5.5, 9), S.MODERN, 5.1, 7.9, 1, { garage: true, wallMat: i === 1 ? AW.BUFF : AW.BRICK, wallCol: i === 1 ? AP.buff[1] : AP.brick[i], boundary: 'none' }, sd++, 5.5); }
+  views.modern = [-3.5, 1.7, 12, 9.5, 3.8, -12, 0.95];
+  // I bungalows (hipped, a bay, a conservatory behind) and a chalet bungalow with dormers
+  add(rect(E, 15, 27, 6.0, 9), S.BUNGALOW, 2.6, 5.6, 2, { bay: 'c1', conservatory: true }, sd++, 6.0);
+  add(rect(E, 29, 41, 6.0, 9), S.BUNGALOW, 2.6, 5.4, 2, { bay: 'none', wallMat: AW.RENDER, wallCol: AP.render[0] }, sd++, 6.0);
+  add(rect(E, 43, 55, 6.0, 9.5), S.CHALET_BUNGALOW, 2.7, 6.7, 1, { dormers: true }, sd++, 6.0);
+  views.bungalows = [-3.5, 1.7, 62, 10, 3.0, 35, 0.95];
+  // J Kewstoke: grey limestone cottages, a whitewashed one, a farmhouse, a barn; stone garden walls
+  add(rect(E, 62, 69, 2.0, 6.5), S.COTTAGE, 4.6, 7.6, 1, { gableFront: false, porch: 'gable', wallMat: AW.RUBBLE, roofCov: AROOF.SLATE, roofCol: AP.slate[0] }, sd++, 2.0);
+  add(rect(E, 69, 76, 2.0, 6.5), S.COTTAGE, 4.6, 7.6, 1, { porch: 'gable', wallMat: AW.RENDER, wallCol: [0.82, 0.81, 0.78], flags: 128, roofCov: AROOF.ROMAN, roofCol: AP.roman[0] }, sd++, 2.0);
+  add(rect(E, 79, 90, 3.0, 8), S.COTTAGE, 5.4, 9.0, 1, { porch: 'canopy', roofCov: AROOF.PLAIN, roofCol: AP.plain[0] }, sd++, 3.0);
+  add(rect(E, 93, 107, 1.0, 7.5), S.BARN, 4.8, 8.2, 1, {}, sd++, 0);
+  views.kewstoke = [-3.5, 1.7, 112, 9.5, 3.5, 80, 0.95];
+  // K Sand Bay: the seafront inn and a beach café (generic signs)
+  add(rect(E, 115, 131, 4.0, 11), S.PUB, 6.4, 9.6, 2, { sign: ARCH_SIGN_IX.INN }, sd++, 4.0);
+  add(rect(E, 134, 142, 3.0, 6), S.CAFE, 3.4, 5.2, 1, { sign: ARCH_SIGN_IX['ICE CREAM'] }, sd++, 3.0);
+  views.sandbay = [-3.5, 1.7, 152, 10, 3.2, 128, 0.95];
+  // L a holiday park: static caravans in rows (curved and apex roofs), chalets
+  for (let i = 0; i < 8; i++) {
+    const row = i % 2, k = i >> 1, z0 = 150 + k * 6.2, x0 = 8 + row * 14, L = 10.8 + (i % 3) * 0.6, Wd = 3.5 + (i % 2) * 0.2;
+    const fp = [x0, z0, x0 + L, z0, x0 + L, z0 + Wd, x0, z0 + Wd];
+    archBuild(fp, { y0: GY, eave: GY + 3.0, ridge: GY + 3.1, roof: 1, style: S.CARAVAN, seed: sd++, ground, road: [x0 + L / 2, z0 - 3], look: i % 3 === 2 ? { apex: true } : { apex: false } });
+  }
+  add(rect(E, 178, 184, 2.5, 5), S.CHALET, 2.6, 4.0, 1, {}, sd++, 0); add(rect(E, 186, 192, 2.5, 5), S.CHALET, 2.6, 4.0, 1, { wallCol: AP.board[1] }, sd++, 0);
+  views.caravans = [5.5, 1.7, 145, 15, 1.8, 160, 0.95];
+  views.caravans_close = [12.0, 1.6, 147.2, 16, 1.6, 152, 0.85];
+  // west side, in the shade: an industrial unit and a row of lock-up garages, a three-storey rendered terrace with
+  // single-storey bays, 1930s modernist houses, a retail shed
+  add(rect(W, -295, -265, 3.0, 22), S.INDUSTRIAL, 6.0, 7.4, 1, {}, sd++, 0);
+  add(rect(W, -260, -236.8, 2.0, 5.5), S.GARAGE, 2.4, 0, 0, { unitW: 2.9 }, sd++, 0);
+  { const L = { wallMat: AW.RENDER, dress: AD.PAINTED, bay: 'c1', roofCov: AROOF.SLATE, roofCol: AP.slate[2], boundary: 'wall', rails: true, flags: 1 | 4 | 16 };
+    for (let i = 0; i < 6; i++) { const z0 = -230 + i * 5.4; add(rect(W, z0, z0 + 5.4, 3.0, 10), S.TERRACE, 8.9, 11.6, 1, Object.assign({}, L, { wallCol: AP.seafront[[0, 2, 1, 4, 0, 3][i]] }), sd++, 3.0); } }
+  views.terrace_west = [3.5, 1.7, -200, -8.5, 6.0, -222, 0.95];
+  add(rect(W, -190, -181, 5.0, 9), S.DECO, 5.6, 0, 0, { roofKind: 0 }, sd++, 5.0); add(rect(W, -179, -170, 5.0, 9), S.DECO, 5.6, 6.4, 2, {}, sd++, 5.0);
+  views.deco = [3.5, 1.7, -163, -9.5, 4.0, -182, 0.95];
+  add(rect(W, -160, -120, 4.0, 28), S.COMMERCIAL, 7.0, 0, 0, { sign: ARCH_SIGN_IX.FURNITURE }, sd++, 0);
+  views.street = [0.6, 1.8, -300, 0.6, 3.0, -150, 1.0];
+  views.street_south = [-1.2, 1.8, 200, -0.8, 3.5, 60, 1.0];
+  views.overview = [-60, 55, -330, 15, 0, -170, 0.9];
+  views.overview_south = [-60, 45, 230, 10, 0, 90, 0.9];
+  // the ground: the road with its centre line, kerbs, pavements; grass gardens and the land around
+  const mb = new MeshBuilder(1 << 14), z0 = -320, z1 = 230;
+  const quad = (id, x0, x1, za, zb, y, col) => { aSetMat(mb, id, 0, col ? col[0] * 255 : 0, col ? col[1] * 255 : 0, col ? col[2] * 255 : 0, 255); const a = mb.v(x0, y, za, 0, 1, 0, za, x0), b = mb.v(x1, y, za, 0, 1, 0, za, x1), c = mb.v(x1, y, zb, 0, 1, 0, zb, x1), d = mb.v(x0, y, zb, 0, 1, 0, zb, x0); aQ(mb, a, b, c, d, 0, 1, 0); };
+  quad(AM.ROAD, -3.65, 3.65, z0, z1, 0);
+  for (let z = z0; z < z1; z += 9) quad(AM.LINE, -0.06, 0.06, z, z + 3, 0.004, [0.62, 0.62, 0.6]);
+  for (const sx of [-1, 1]) {
+    quad(AM.PAVE, sx > 0 ? 3.8 : -5.65, sx > 0 ? 5.65 : -3.8, z0, z1, GY);
+    quad(AM.KERB, sx > 0 ? 3.65 : -3.8, sx > 0 ? 3.8 : -3.65, z0, z1, GY);
+    const xk = sx * 3.65; aSetMat(mb, AM.KERB, 0, 0, 0, 0, 255);
+    const a = mb.v(xk, 0, z0, -sx, 0, 0, z0, 0), b = mb.v(xk, 0, z1, -sx, 0, 0, z1, 0), c = mb.v(xk, GY, z1, -sx, 0, 0, z1, GY), d = mb.v(xk, GY, z0, -sx, 0, 0, z0, GY); aQ(mb, a, b, c, d, -sx, 0, 0);
+    quad(AM.GRASS, sx > 0 ? 5.65 : -400, sx > 0 ? 400 : -5.65, z0 - 200, z1 + 200, GY - 0.005);
+  }
+  quad(AM.GRASS, -400, 400, z0 - 400, z0, GY - 0.006); quad(AM.GRASS, -400, 400, z1, z1 + 400, GY - 0.006);
+  // the holiday park's track
+  quad(AM.GRAVEL, 5.65, 40, 145, 150, GY + 0.01); quad(AM.GRAVEL, 21.2, 23.2, 150, 175, GY + 0.01);
+  return { gm: mb.upload(), views };
+}
+if (ARCH.scene) queueMicrotask(() => BUILD.push(async () => {
+  const t0 = performance.now(); archInit();
+  const sc = archScene();
+  archFinish();
+  // the ground drawn by the kit's own family (record 0 unused there)
+  const set = new ArchGround(ARCH.fam, ARCH.shell.bg3, sc.gm); R.drawables.push(set);
+  ARCH.stats.sceneMs = Math.round(performance.now() - t0);
+  TRK.shadowC = [0, -50]; TRK.shadowR = 420;
+  GAME.tick = null; GAME.prewarm = null;
+  GAME.init = () => { archView('terrace_stone'); };
+}));
+class ArchGround {
+  constructor(fam, bg3, m) { this.fam = fam; this.bg3 = bg3; this.m = m; }
+  draw(pass, ctx) {
+    const pipe = this.fam.pipe[ctx.kind]; if (!pipe) return;
+    pass.setPipeline(pipe); R.dyn2[0] = 0; pass.setBindGroup(2, R.objBG, R.dyn2, 0, 1); pass.setBindGroup(3, this.bg3);
+    pass.setVertexBuffer(0, this.m.vb); pass.setIndexBuffer(this.m.ib, 'uint32'); pass.drawIndexed(this.m.count);
+  }
 }

@@ -427,7 +427,8 @@ def furniture_code(t):
     if hw == 'traffic_signals': return FURN['signals'], 0
     if hw == 'crossing' or g('crossing'):
         c = g('crossing', ''); cr = g('crossing_ref', '')
-        return FURN['crossing'], 1 if (c == 'zebra' or cr == 'zebra') else 2 if c == 'traffic_signals' else 3 if c in ('uncontrolled', 'marked') else 4
+        isl = 8 if (g('crossing:island') == 'yes' or g('traffic_calming') == 'island') else 0
+        return FURN['crossing'], isl | (1 if (c == 'zebra' or cr == 'zebra') else 2 if c == 'traffic_signals' else 3 if c in ('uncontrolled', 'marked') else 4)
     if hw == 'give_way': return FURN['give_way'], 0
     if hw == 'stop': return FURN['stop'], 0
     if hw == 'mini_roundabout': return FURN['mini_roundabout'], 0
@@ -1214,9 +1215,16 @@ def main():
         i = int((x - TOWN[0]) / LUR); j = int((z - TOWN[1]) / LUR)
         return LU_NAME[int(lu_arr[j, i])] if 0 <= i < lw and 0 <= j < lh else None
 
-    # ---- roads: clip, classify; segment grid for ridge directions
+    # ---- roads: clip, classify; segment grid for ridge directions. Every way is split at the nodes it shares with other
+    # roads (and at the ones it passes twice): each polyline then runs from junction to junction, so the game knows the
+    # exact topology (its junctions are where polylines end) and the simplification never moves a junction.
     rd = []
     roadgrid = SegGrid(40.0)
+    use = collections.Counter()
+    for oid, t, pts, ids in roads:
+        if 1 <= road_class(t) <= 9 and t.get('highway') != 'steps':   # (the carriageways' own network: paths are not split)
+            for nid in ids: use[nid] += 1
+            if ids: use[ids[0]] += 1; use[ids[-1]] += 1     # (the ends of a way count as junctions with whatever meets them)
     for oid, t, pts, ids in roads:
         cls = road_class(t)
         steps = t.get('highway') == 'steps'            # (Monk's Steps up from Kewstoke church: a footway of stone steps)
@@ -1227,10 +1235,17 @@ def main():
         if steps: w = min(w, 1.5)
         toll = 'Toll' in (t.get('alt_name', '') + t.get('old_name', '') + t.get('loc_name', '')) and t.get('highway') == 'tertiary'
         if toll: w = 5.0
-        for part in clip_polyline(pts, 0):
+        cuts = [0] + [i for i in range(1, len(ids) - 1) if use[ids[i]] >= 2] + [len(pts) - 1] if (ids and len(ids) == len(pts) and cls <= 9 and not steps) else [0, len(pts) - 1]
+        pieces = [pts[cuts[k]:cuts[k + 1] + 1] for k in range(len(cuts) - 1)]
+        if t.get('oneway') == '-1': pieces = [p[::-1] for p in pieces[::-1]]   # (one way against the drawing: turned round)
+        rb = t.get('junction') in ('roundabout', 'circular')
+        sw = t.get('sidewalk', t.get('sidewalk:both', ''))
+        swl = t.get('sidewalk:left', ''); swr = t.get('sidewalk:right', '')
+        side_none = (1 if (sw in ('no', 'none', 'right') or swl in ('no', 'none')) else 0) | (2 if (sw in ('no', 'none', 'left') or swr in ('no', 'none')) else 0)
+        for part in (pp for piece in pieces for pp in clip_polyline(piece, 0)):
             part = dedupe(dp_simplify(part, 0.15), 0.1)
             if len(part) < 2: continue
-            flags = (1 if t.get('bridge') == 'yes' else 0) | (2 if t.get('oneway') in ('yes', '1', '-1') else 0)
+            flags = (1 if t.get('bridge') == 'yes' else 0) | (2 if t.get('oneway') in ('yes', '1', '-1') or rb else 0)
             if t.get('lane_markings') == 'no': flags |= 4
             if t.get('sidewalk') in ('no', 'none') or t.get('footway') == 'none': flags |= 32
             if toll: flags |= 64 | 128 | 32 | 4
@@ -1239,6 +1254,8 @@ def main():
             lanes = 0
             try: lanes = min(6, int(t.get('lanes', '0')))
             except ValueError: pass
+            # lanes byte: lanes (0..6) + 16 roundabout + 32 no pavement on the left + 64 none on the right (sidewalk=*)
+            lanes |= (16 if rb else 0) | (32 if side_none & 1 else 0) | (64 if side_none & 2 else 0)
             if cls <= 7:
                 for (ax, az), (bx, bz) in zip(part, part[1:]): roadgrid.add(ax, az, bx, bz, cls)
             rd.append((part, cls, w, flags, lanes))
@@ -1369,7 +1386,8 @@ def main():
     cnt, st, d = enc_polys([r[0] for r in rd])
     blob.add('rn', cnt); blob.add('r0', st); blob.add('rxz', d)
     # rinfo: class, width (dm), flags (1 bridge, 2 one way, 4 no lane markings, 8 block paving (drives, car park aisles,
-    # setts), 16 steps, 32 no pavements, 64 white edge lines, 128 the Toll Road), lanes
+    # setts), 16 steps, 32 no pavements, 64 white edge lines, 128 the Toll Road), lanes (+16 roundabout, +32 / +64 no
+    # pavement on the left / right side). Polylines run from junction to junction (ways split at their shared nodes).
     blob.add('rinfo', np.asarray([[r[1], min(255, int(round(r[2] * 10))), r[3], r[4]] for r in rd], 'u1').ravel())
     if rhs: blob.add('rh', np.asarray(rhs, '<i2'))
     if lt:     # LIDAR tree crowns: absolute start (int32, 1/8 m) per crown would be big: int16 deltas in sorted order

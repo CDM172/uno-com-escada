@@ -34,8 +34,14 @@
 //       bramble at the edges (light ~ 1), holly seedlings. Call it on a ~3 m grid inside woods.
 //   ukDunes(x, y, z, back, seed)             Sand Bay's dunes on a ~1.3 m grid: pale marram (fore dune, back = 0) thinning
 //       into rough grass, bramble and sea buckthorn scrub on the back dunes (back = 1).
-//   ukZoneHedges()                           front-garden and field hedges laid from the town's zone raster. vegPlace calls
-//       it (through ukEnd) after townVegPlace when the town code planted no hedge itself; ?nohedge turns it off.
+//   ukBoundaryHedges(segs)                   British hedges along the town's boundary segments (TOWN.bsegs, code 3):
+//       hawthorn hedgerows on the lanes, privet / escallonia / beech / Leyland in front gardens. Meant to replace the
+//       green boxes the town builds for code 3 (34_wsm_world.js, boundary()).
+//   ukWoodEdges()                            the woods' floor (ukWoodFloor) up to 40 m from their roads, tracks and paths;
+//       run by ukEnd when the town code called no ukWoodFloor itself (?nofloor: off).
+//   ukZoneHedges(fieldsOnly)                 hedges laid from the town's zone raster: front gardens along pavements, and
+//       field edges. vegPlace calls it (through ukEnd) after townVegPlace when the town code planted no hedge itself:
+//       only the field edges away from roads while the town builds its own boundaries (TOWN.bsegs); ?nohedge: none.
 //
 // How the map worker can choose: the zone raster gives the context (TZ.WOOD → wood; pavements and roads → street;
 // TZ.GARDEN → garden, or village north of Worlebury Hill (Kewstoke), holiday next to Sand Bay's dunes; TZ.GRASS → park,
@@ -75,7 +81,7 @@ const UKT = {
 const UK_TW = 8, UK_TH = 4, UK_TS = 512;
 const ukTileUV = t => [(t % UK_TW) / UK_TW, Math.floor(t / UK_TW) / UK_TH, 1 / UK_TW, 1 / UK_TH];
 // shared state of a planting run (set by ukBegin from vegPlace)
-const UKV = { push: null, n: 0, stats: { trees: 0, shrubs: 0, ground: 0, hedge: 0, hedgeM: 0 }, time: {}, tris: null, leaves: null };
+const UKV = { push: null, n: 0, stats: { trees: 0, shrubs: 0, ground: 0, hedge: 0, hedgeM: 0, floor: 0 }, time: {}, tris: null, leaves: null };
 
 // ------------------------------------------------------------------------------------------------ leaf layer buffer
 // Same vertex layout as VegLeafBuf (veg_leaf / veg_uk_leaf), corner offsets over a 1.2 m range.
@@ -128,15 +134,17 @@ function ukAtlasBuild() {
   // one leaf along +x from (x, y): length len, half width wid; c = [h, s, l]; sh = outline. Flat fills (no gradient,
   // no clip: the atlas has tens of thousands of leaves): the body, the lit half, a gloss spot, midrib and veins.
   const leaf = (x, y, ang, len, wid, c, sh, glossy) => {
-    const f = SH[sh] || SH.ell, ca = Math.cos(ang), sa = Math.sin(ang);
+    const f = SH[sh] || SH.ell, ca = Math.cos(ang), sa = Math.sin(ang), NO = wid < 4 ? 7 : N_OUT;
     const P = (u, v) => [x + ca * u - sa * v, y + sa * u + ca * v];
     g.fillStyle = hsl(c[0], c[1], c[2]); g.beginPath(); g.moveTo(x, y);
-    for (let i = 1; i <= N_OUT; i++) { const t = i / N_OUT, q = P(len * t, -wid * f(t)); g.lineTo(q[0], q[1]); }
-    for (let i = N_OUT - 1; i > 0; i--) { const t = i / N_OUT, q = P(len * t, wid * f(t)); g.lineTo(q[0], q[1]); }
+    for (let i = 1; i <= NO; i++) { const t = i / NO, q = P(len * t, -wid * f(t)); g.lineTo(q[0], q[1]); }
+    for (let i = NO - 1; i > 0; i--) { const t = i / NO, q = P(len * t, wid * f(t)); g.lineTo(q[0], q[1]); }
     g.closePath(); g.fill();
+    if (wid < 2.2) return;
+    if (wid > 4) { g.strokeStyle = hsl(c[0] + 6, c[1] + 6, Math.max(3, c[2] - 12), 0.45); g.lineWidth = 0.9; g.stroke(); }   // a dark rim: overlapping leaves stay apart
     // lit half (from the base along one edge to the tip and back down the midrib), slightly lighter
     g.fillStyle = hsl(c[0] + 5, c[1] + 4, c[2] + 6, 0.5); g.beginPath(); g.moveTo(x, y);
-    for (let i = 1; i <= N_OUT; i++) { const t = i / N_OUT, q = P(len * t, -wid * f(t) * 0.96); g.lineTo(q[0], q[1]); }
+    for (let i = 1; i <= NO; i++) { const t = i / NO, q = P(len * t, -wid * f(t) * 0.96); g.lineTo(q[0], q[1]); }
     g.closePath(); g.fill();
     if (glossy && wid > 3) { const q = P(len * 0.42, -wid * 0.3); g.fillStyle = hsl(c[0] - 10, c[1] - 18, c[2] + 28, 0.3 * glossy); g.beginPath(); g.ellipse(q[0], q[1], len * 0.18, wid * 0.16, ang, 0, TAU); g.fill(); }
     g.strokeStyle = hsl(c[0] + 10, c[1] - 8, c[2] + 15, 0.7); g.lineWidth = Math.max(0.7, wid * 0.08);
@@ -209,9 +217,13 @@ function ukAtlasBuild() {
   };
   // an opaque mat of leaves over the whole tile (the clipped face of a hedge): a dark base, then leaves at random
   const mat = (P, n, dark, gaps) => {
-    g.fillStyle = hsl(dark[0], dark[1], dark[2]); g.fillRect(0, 0, TS, TS);
+    // the dark depth of the hedge fills an irregular blob inset from the tile's edge; leaves overlap its rim, so the
+    // tile's border is ragged leaves over transparency (the face cards overlap and merge without seams)
+    g.fillStyle = hsl(dark[0], dark[1], dark[2]); g.beginPath();
+    for (let k = 0; k <= 48; k++) { const a = k / 48 * TAU, r = 190 + 30 * Math.sin(a * 5 + 1.3) * Math.cos(a * 3) + rr(-8, 8); const x = 256 + Math.cos(a) * r * 1.12, y = 256 + Math.sin(a) * r * 1.12; k ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.closePath(); g.fill();
     for (let k = 0; k < n; k++) {
-      const x = rr(-20, TS + 20), y = rr(-20, TS + 20), t = k / n, c = jit(P.col, 6, 6, 5); c[2] += (t - 0.6) * 14;
+      const a = rr(0, TAU), rd = Math.sqrt(rnd()) * 250, x = 256 + Math.cos(a) * rd, y = 256 + Math.sin(a) * rd, t = k / n, c = jit(P.col, 6, 6, 5); c[2] += (t - 0.6) * 14;
       if (P.twigs && rnd() < 0.04) stem(x, y, x + rr(-30, 30), y + rr(-30, 30), 1.4, P.stemC || [25, 20, 16]);
       leafOrCompound(x, y, rr(0, TAU), P.leafL * rr(0.75, 1.2), P, c);
     }
@@ -239,7 +251,7 @@ function ukAtlasBuild() {
   tile(UKT.BEECH, () => {
     for (let layer = 0; layer < 3; layer++) for (let k = 0; k < 7; k++) {
       const u = (k + rr(0.1, 0.9)) / 7 - 0.5, a = -PI / 2 + u * 2.4, c = [84 + [4, 0, -3][layer], 44 + [-8, 0, 3][layer], 27 + [-9, -1, 5][layer]];
-      shoot(256 + u * 60, 502, a, rr(330, 440) * (1 - Math.abs(u) * 0.7), 2, { depth: 2, step: 13, stemW: 1.1, stemC: [25, 20, 20], branchP: 0.75, leafL: 24, leafW: 0.5, sh: 'beech', col: c, perNode: 1, leafP: 0.95, ang: [1.0, 1.35], wig: 1.4, gloss: 0.6 });
+      shoot(256 + u * 60, 502, a, rr(330, 440) * (1 - Math.abs(u) * 0.7), 1, { depth: 1, step: 11, stemW: 1.1, stemC: [25, 20, 20], branchP: 0.7, leafL: 24, leafW: 0.5, sh: 'beech', col: c, perNode: 1, leafP: 0.95, ang: [1.0, 1.35], wig: 1.4, gloss: 0.6 });
     }
   });
   // ash: pinnate leaves on stout grey shoots, leaflets narrow and light green: airy, the sky shows through
@@ -252,16 +264,16 @@ function ukAtlasBuild() {
     for (let k = 0; k < 14; k++) { g.fillStyle = hsl(32 + rr(-6, 6), 45, 30 + rr(-4, 6), 0.55); g.beginPath(); g.ellipse(rr(60, 450), rr(60, 450), rr(6, 16), rr(4, 10), rr(0, PI), 0, TAU); g.fill(); }
   });
   // holm oak: small leathery leaves, very dark above and grey-felted below, densely set
-  tile(UKT.HOLM, () => fan({ depth: 2, step: 11, stemW: 1.1, stemC: [30, 10, 22], branchP: 0.55, leafL: 24, leafW: 0.4, sh: 'holm', col: [105, 22, 15], perNode: 2, leafP: 0.85, ang: [0.6, 1.2], gloss: 0.5, droop: 0.6 }, 7, 2.6, 330, 460));
+  tile(UKT.HOLM, () => fan({ depth: 1, step: 9, stemW: 1.1, stemC: [30, 10, 22], branchP: 0.55, leafL: 24, leafW: 0.4, sh: 'holm', col: [105, 22, 15], perNode: 2, leafP: 0.85, ang: [0.6, 1.2], gloss: 0.5, droop: 0.6 }, 7, 2.6, 330, 460));
   // Scots pine: tufts of short twisted blue-green needles on orange shoots, in clumps
-  tile(UKT.SCOTS, () => fan({ depth: 2, step: 20, stemW: 1.6, stemC: [22, 45, 32], branchP: 0.5, leafL: 46, leafW: 0.1, sh: 'ell', col: [150, 20, 25], perNode: 2, leafP: 0.9, ang: [0.3, 0.8], compound: 'needles', nNeedles: 22, needleW: 1.7 }, 6, 2.4, 300, 440));
+  tile(UKT.SCOTS, () => fan({ depth: 2, step: 20, stemW: 1.6, stemC: [22, 45, 32], branchP: 0.5, leafL: 46, leafW: 0.1, sh: 'ell', col: [150, 20, 25], perNode: 2, leafP: 0.9, ang: [0.3, 0.8], compound: 'needles', nNeedles: 16, needleW: 1.7 }, 6, 2.4, 300, 440));
   // Monterey pine: long bright green needles in dense brushes
-  tile(UKT.MONTEREY, () => fan({ depth: 1, step: 26, stemW: 2.2, stemC: [25, 25, 20], branchP: 0.6, leafL: 95, leafW: 0.1, sh: 'ell', col: [105, 42, 25], perNode: 2, leafP: 0.95, ang: [0.2, 0.6], compound: 'needles', nNeedles: 30, needleW: 1.5 }, 6, 2.5, 320, 460));
+  tile(UKT.MONTEREY, () => fan({ depth: 1, step: 26, stemW: 2.2, stemC: [25, 25, 20], branchP: 0.6, leafL: 95, leafW: 0.1, sh: 'ell', col: [105, 42, 25], perNode: 2, leafP: 0.95, ang: [0.2, 0.6], compound: 'needles', nNeedles: 22, needleW: 1.5 }, 6, 2.5, 320, 460));
   // silver birch: fine shoots that arch over and hang, small toothed triangular leaves, light yellowish green
   tile(UKT.BIRCH, () => {
-    for (let layer = 0; layer < 3; layer++) for (let k = 0; k < 9; k++) {
-      const u = (k + rr(0.1, 0.9)) / 9 - 0.5;
-      shoot(256 + u * 90, 502, -PI / 2 + u * 0.8, rr(380, 470), 1, { depth: 1, step: 11, stemW: 0.9, stemC: [15, 35, 18], branchP: 0.45, leafL: 17, leafW: 0.42, sh: 'birch', col: [76 + [4, 0, -3][layer], 46, 32 + [-9, -1, 5][layer]], perNode: 1, leafP: 0.9, ang: [0.5, 1.2], curl: u * 0.012, droop: 1.6 });
+    for (let layer = 0; layer < 3; layer++) for (let k = 0; k < 7; k++) {
+      const u = (k + rr(0.1, 0.9)) / 7 - 0.5;
+      shoot(256 + u * 90, 502, -PI / 2 + u * 0.8, rr(380, 470), 1, { depth: 1, step: 13, stemW: 0.9, stemC: [15, 35, 18], branchP: 0.45, leafL: 17, leafW: 0.42, sh: 'birch', col: [76 + [4, 0, -3][layer], 46, 32 + [-9, -1, 5][layer]], perNode: 1, leafP: 0.9, ang: [0.5, 1.2], curl: u * 0.012, droop: 1.6 });
     }
   });
   // London plane: big maple-like leaves, bright green, and the seed balls hanging on their stalks
@@ -273,16 +285,16 @@ function ukAtlasBuild() {
   tile(UKT.LIME, () => fan({ depth: 2, step: 15, stemW: 1.3, stemC: [10, 35, 25], branchP: 0.55, leafL: 40, leafW: 0.5, sh: 'heart', col: [88, 42, 26], perNode: 1, leafP: 0.95, ang: [0.8, 1.3], wig: 1.3, droop: 0.4 }, 7, 2.5, 330, 460));
   // hawthorn: dense, twiggy, small deeply lobed leaves; a few green-red haws
   tile(UKT.HAWTHORN, () => {
-    fan({ depth: 2, step: 10, stemW: 1.2, stemC: [25, 15, 22], branchP: 0.65, leafL: 21, leafW: 0.45, sh: 'hawth', col: [98, 40, 22], perNode: 2, leafP: 0.75, ang: [0.6, 1.3], wig: 2 }, 7, 2.6, 300, 450);
+    fan({ depth: 1, step: 9, stemW: 1.2, stemC: [25, 15, 22], branchP: 0.7, leafL: 21, leafW: 0.45, sh: 'hawth', col: [98, 40, 22], perNode: 2, leafP: 0.75, ang: [0.6, 1.3], wig: 2 }, 7, 2.6, 300, 450);
     for (let k = 0; k < 9; k++) { const x = rr(70, 440), y = rr(70, 400); for (let q = 0; q < 6; q++) { g.fillStyle = hsl(rr(0, 12), 60, rr(28, 38)); g.beginPath(); g.arc(x + rr(-9, 9), y + rr(-7, 7), 3.2, 0, TAU); g.fill(); } }
   });
   // blackthorn: a thicket of black spiny twigs with tiny dark leaves, a few bloomed sloes
   tile(UKT.BLACKTHORN, () => {
-    fan({ depth: 2, step: 10, stemW: 1.3, stemC: [20, 10, 10], branchP: 0.75, leafL: 15, leafW: 0.45, sh: 'ell', col: [104, 30, 18], perNode: 2, leafP: 0.6, ang: [0.6, 1.2], wig: 2.2 }, 8, 2.6, 300, 450);
+    fan({ depth: 1, step: 8, stemW: 1.3, stemC: [20, 10, 10], branchP: 0.8, leafL: 15, leafW: 0.45, sh: 'ell', col: [104, 30, 18], perNode: 2, leafP: 0.65, ang: [0.6, 1.2], wig: 2.2 }, 8, 2.6, 300, 450);
     for (let k = 0; k < 16; k++) { g.fillStyle = hsl(235, 25, rr(20, 30)); g.beginPath(); g.arc(rr(60, 450), rr(60, 450), 4, 0, TAU); g.fill(); }
   });
   // holly: spiny, very dark and glossy
-  tile(UKT.HOLLY, () => fan({ depth: 2, step: 14, stemW: 1.4, stemC: [95, 25, 25], branchP: 0.5, leafL: 36, leafW: 0.45, sh: 'holly', col: [110, 42, 13], perNode: 2, leafP: 0.85, ang: [0.6, 1.2], gloss: 1 }, 7, 2.6, 320, 460));
+  tile(UKT.HOLLY, () => fan({ depth: 1, step: 11, stemW: 1.4, stemC: [95, 25, 25], branchP: 0.5, leafL: 36, leafW: 0.45, sh: 'holly', col: [110, 42, 13], perNode: 2, leafP: 0.85, ang: [0.6, 1.2], gloss: 1 }, 7, 2.6, 320, 460));
   // cordyline: four sword leaves side by side, full length (each card or strip uses one column of 128 px)
   tile(UKT.SWORD, () => {
     for (let k = 0; k < 4; k++) {
@@ -299,11 +311,11 @@ function ukAtlasBuild() {
   });
   // sea buckthorn: narrow silvery leaves, thorny shoots and orange berries crowding the older wood
   tile(UKT.BUCKTHORN, () => {
-    fan({ depth: 2, step: 10, stemW: 1.3, stemC: [30, 15, 30], branchP: 0.55, leafL: 36, leafW: 0.13, sh: 'buck', col: [85, 13, 44], perNode: 2, leafP: 0.85, ang: [0.35, 0.8] }, 7, 2.5, 320, 450);
+    fan({ depth: 1, step: 9, stemW: 1.3, stemC: [30, 15, 30], branchP: 0.6, leafL: 36, leafW: 0.13, sh: 'buck', col: [85, 13, 44], perNode: 2, leafP: 0.85, ang: [0.35, 0.8] }, 7, 2.5, 320, 450);
     for (let k = 0; k < 10; k++) { const x = rr(80, 430), y = rr(120, 470); for (let q = 0; q < 14; q++) { g.fillStyle = hsl(28 + rr(-4, 4), 85, rr(42, 52)); g.beginPath(); g.arc(x + rr(-4, 4), y - q * 5, 3.4, 0, TAU); g.fill(); } }
   });
   // privet: small glossy oval leaves in opposite pairs
-  tile(UKT.PRIVET, () => fan({ depth: 2, step: 11, stemW: 1.1, stemC: [35, 15, 25], branchP: 0.6, leafL: 22, leafW: 0.45, sh: 'ell', col: [95, 42, 23], perNode: 2, leafP: 0.95, ang: [0.7, 1.2], opp: true, gloss: 0.7 }, 7, 2.6, 300, 450));
+  tile(UKT.PRIVET, () => fan({ depth: 1, step: 9, stemW: 1.1, stemC: [35, 15, 25], branchP: 0.6, leafL: 22, leafW: 0.45, sh: 'ell', col: [95, 42, 23], perNode: 2, leafP: 0.95, ang: [0.7, 1.2], opp: true, gloss: 0.7 }, 7, 2.6, 300, 450));
   // clipped faces: privet, beech, escallonia, Leyland cypress; a hedgerow face with holes
   tile(UKT.F_PRIVET, () => mat({ leafL: 22, leafW: 0.45, sh: 'ell', col: [95, 44, 24], gloss: 0.7, twigs: true }, 2600, [100, 40, 8]));
   tile(UKT.F_BEECH, () => mat({ leafL: 26, leafW: 0.5, sh: 'beech', col: [90, 37, 22], gloss: 0.4, twigs: true }, 2000, [92, 35, 8]));
@@ -357,7 +369,7 @@ function ukAtlasBuild() {
   });
   tile(UKT.LAUREL, () => fan({ depth: 1, step: 30, stemW: 2, stemC: [90, 25, 25], branchP: 0.5, leafL: 95, leafW: 0.36, sh: 'ell', col: [110, 40, 17], perNode: 2, leafP: 0.9, ang: [0.5, 1.1], gloss: 1 }, 6, 2.6, 300, 450));
   tile(UKT.ESCALLONIA, () => {
-    fan({ depth: 2, step: 10, stemW: 1.1, stemC: [20, 25, 22], branchP: 0.6, leafL: 18, leafW: 0.42, sh: 'ell', col: [110, 40, 18], perNode: 2, leafP: 0.9, ang: [0.6, 1.2], gloss: 0.9, droop: 0.4 }, 8, 2.6, 300, 450);
+    fan({ depth: 1, step: 8, stemW: 1.1, stemC: [20, 25, 22], branchP: 0.65, leafL: 18, leafW: 0.42, sh: 'ell', col: [110, 40, 18], perNode: 2, leafP: 0.9, ang: [0.6, 1.2], gloss: 0.9, droop: 0.4 }, 6, 2.6, 300, 450);
     for (let k = 0; k < 22; k++) { const x = rr(60, 450), y = rr(40, 420); for (let q = 0; q < 8; q++) { g.fillStyle = hsl(335 + rr(-8, 8), 55, rr(48, 62)); g.beginPath(); g.arc(x + rr(-8, 8), y + rr(-8, 8), 3.2, 0, TAU); g.fill(); } }
   });
   tile(UKT.LEYLAND, () => {
@@ -462,7 +474,7 @@ function ukTree(P, seed, ai) {
   const envR = (y, az) => {
     const t = (y - y0) / (H - y0); if (t < 0 || t > 1) return 0;
     let k = 1 - lA * 0.75; for (const L of lumps) { let da = Math.abs(az - L[0]); da = Math.min(da, TAU - da); const dt = t - L[1]; k += L[2] * Math.exp(-(da * da) / (L[3] * L[3]) - dt * dt * 12); }
-    if (P.shape === 'lean') k *= 1 + 0.55 * Math.cos(az) - 0.15 * t;   // leeward side long, windward side clipped
+    if (P.shape === 'lean') k *= 1 + 0.8 * Math.cos(az) - 0.25 * t;   // leeward side long, windward side clipped
     return CR * prof(t) * Math.max(0.35, k);
   };
   const rel = p => { const a = axis(p[1]); return [p[0] - a[0], p[2] - a[1]]; };
@@ -486,6 +498,17 @@ function ukTree(P, seed, ai) {
     const vr = i => P.bark === UKB.SCOTS ? smooth(0.3, 0.6, pts[i][1] / H) : P.bark === UKB.BIRCH ? 1 - smooth(0.4, 3.5, pts[i][1]) : 0;
     ukTube(mb, pts, i => tR(i / nT, r0), P.trunkRad || 9, 0, 0.12, P.bark, 0, ai, i => { const k = vr(i); return [lerp(bc[0], bct[0], k), lerp(bc[1], bct[1], k), lerp(bc[2], bct[2], k)]; }, i => Math.round(vr(i) * 255));
     stems.push({ pts, r0, len });
+    // ivy climbing the trunk: single leaves on the bark up to ~10 m. Every tree of the species carries them; the leaf
+    // shader keeps them only on the trees whose seed gives them ivy, up to that tree's ivy height (as the bark's ivy)
+    const nIvy = si === 0 ? (P.ivy || 0) : 0;
+    for (let e = 0; e < nIvy; e++) {
+      const hy = Math.min(top * 0.95, 10.5) * Math.pow(rl(), 1.35), t = hy / (len * Math.sin(el) || 1), i0 = Math.min(nT - 1, Math.floor(t * nT)), fu = t * nT - i0;
+      const c = [lerp(pts[i0][0], pts[i0 + 1][0], fu), lerp(pts[i0][1], pts[i0 + 1][1], fu), lerp(pts[i0][2], pts[i0 + 1][2], fu)], a = rq(0, TAU), rad = tR(t, r0) + rq(0.015, 0.07);
+      const out = [Math.cos(a), 0, Math.sin(a)], b = [c[0] + out[0] * rad, c[1], c[2] + out[2] * rad];
+      let ax = _vn([out[0] * 0.35 + rq(-0.6, 0.6), rq(-0.2, 1), out[2] * 0.35 + rq(-0.6, 0.6)]), nl = _vn([out[0] + rq(-0.4, 0.4), rq(-0.2, 0.5), out[2] + rq(-0.4, 0.4)]);
+      const sd = _vn(_vx(ax, nl)); nl = _vx(sd, ax); const ll = rq(0.05, 0.085);
+      LB.add(b, ax, sd, nl, ll, ll * 0.48, 0.05, Math.floor(rl() * 255), rq(0.45, 0.8), [rq(0.5, 0.62), rq(0.62, 0.74), rq(0.52, 0.62)], UKL.IVY);
+    }
   }
   const stemAt = (s, t) => { const f = sat(t) * nT, i = Math.min(nT - 1, Math.floor(f)), u = f - i, p = s.pts; return [lerp(p[i][0], p[i + 1][0], u), lerp(p[i][1], p[i + 1][1], u), lerp(p[i][2], p[i + 1][2], u)]; };
   // --- foliage clumps ---
@@ -658,11 +681,11 @@ function ukCordyline(seed, ai) {
   }
   const uvS = ukTileUV(UKT.SWORD);
   for (let h = 0; h < heads.length; h++) {
-    const c = heads[h], nL = 130;
+    const c = heads[h], nL = 170;
     for (let k = 0; k < nL + 34; k++) {
       const dead = k >= nL, u = dead ? rr(0.75, 1) : k / nL, az = k * 2.39996 + rr(-0.2, 0.2);
       // living leaves: erect at the top, spreading round, arching down below; the dead ones hang against the arm
-      const el = dead ? rr(-1.45, -1.15) : lerp(1.35, -0.6, Math.pow(u, 0.9)) + rr(-0.15, 0.15), L = dead ? rr(0.6, 0.9) : rr(0.7, 1.0), Wd = 0.035;
+      const el = dead ? rr(-1.45, -1.15) : lerp(1.35, -0.6, Math.pow(u, 0.9)) + rr(-0.15, 0.15), L = dead ? rr(0.6, 0.9) : rr(0.7, 1.0), Wd = 0.042;
       let d = [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)], p = [c[0] + d[0] * 0.06, c[1] - (dead ? 0.15 : 0), c[2] + d[2] * 0.06];
       const col = dead ? 3 : (k % 3), u0 = uvS[0] + uvS[2] * (col + 0.1) / 4, u1 = uvS[0] + uvS[2] * (col + 0.9) / 4, base = mb.nv, ph = Math.floor(rnd() * 255), nS = 3;
       const tint = dead ? [0.75, 0.72, 0.7] : [rr(0.92, 1.08), rr(0.95, 1.05), rr(0.85, 1)];
@@ -689,23 +712,25 @@ function ukHedgeMod(P, seed, ai) {
   // the shape of the cross-section: clipped → straight sides, a slight batter, a flat top with rounded edges; hedgerow →
   // wide, domed, lumpy
   const halfW = y => { const t = sat(y / Hh); return rough ? Wd * 0.5 * (1.05 - 0.35 * t * t) : Wd * 0.5 * (1.0 - 0.1 * t); };
-  const face = (pts, nrm, du, dv, nu, nv) => {   // a grid of cards over a face: pts(u, v) → position, nrm(u, v) → normal
+  const bulgeAt = (u, v, f) => (rough ? 0.18 : 0.05) * Math.sin(u * 5.1 + seed + f) * Math.cos(v * 4.3 + f * 1.7) + (rough ? 0.08 : 0.02) * Math.sin(u * 13.7 - v * 9.1 + f);
+  const face = (pts, nrm, du, dv, nu, nv, f) => {   // overlapping cards over a face: pts(u, v) → position, nrm(u, v) → normal
     for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
-      const base = mb.nv, ph = Math.floor(rnd() * 255), tn = [rr(0.93, 1.07), rr(0.95, 1.05), rr(0.9, 1.04)];
-      const tu0 = rr(0.02, 0.36), tv0 = rr(0.02, 0.36);
+      const base = mb.nv, ph = Math.floor(rnd() * 255), tj = rr(0.97, 1.03), cu = (i + 0.5 + rr(-0.15, 0.15)) / nu, cv = (j + 0.5 + rr(-0.15, 0.15)) / nv;
+      const ang = rr(0, TAU), ca = Math.cos(ang), sa = Math.sin(ang), hu = 0.78 / nu, hv = 0.78 / nv, tr = 0.48 / (Math.abs(ca) + Math.abs(sa));   // (the turned square stays inside its tile)
       for (let q = 0; q < 4; q++) {
-        const u = (i + (q & 1)) / nu, v = (j + (q >> 1)) / nv, p = pts(u, v), n = nrm(u, v), bulge = (rough ? 0.18 : 0.06) * (Math.sin(u * 5.1 + seed + j * 0.7) * Math.cos(v * 4.3 + i * 0.9) + rr(-0.6, 0.6));
+        const qu = (q & 1) * 2 - 1, qv = (q >> 1) * 2 - 1, u = cu + qu * hu, v = sat(cv + qv * hv), p = pts(u, v), n = nrm(u, v), bulge = bulgeAt(u, v, f) + 0.012 * (q & 1);
         const ao = lerp(0.55, 1, sat(p[1] / Hh)) * (rough ? rr(0.85, 1) : 1);
-        mb.color(tn[0] * (0.75 + 0.25 * ao), tn[1] * (0.75 + 0.25 * ao), tn[2] * (0.75 + 0.25 * ao), ao); mb.weight(0.08 + 0.12 * sat(p[1] / Hh)); mb.mat(1, ph, ai, 90);
-        mb.v(p[0] + n[0] * bulge, p[1] + n[1] * bulge, p[2] + n[2] * bulge, n[0], n[1] + 0.15, n[2], uvF[0] + uvF[2] * (tu0 + (q & 1) * 0.6), uvF[1] + uvF[3] * (tv0 + (q >> 1) * 0.6));
+        mb.color(tj * (0.75 + 0.25 * ao), tj * (0.75 + 0.25 * ao), tj * (0.75 + 0.25 * ao), ao); mb.weight(0.08 + 0.12 * sat(p[1] / Hh)); mb.mat(1, ph, ai, 90);
+        const tu = 0.5 + tr * (qu * ca - qv * sa), tv = 0.5 + tr * (qu * sa + qv * ca);
+        mb.v(p[0] + n[0] * bulge, p[1] + n[1] * bulge, p[2] + n[2] * bulge, n[0], n[1] + 0.15, n[2], uvF[0] + uvF[2] * tu, uvF[1] + uvF[3] * tv);
       }
       mb.quadI(base, base + 1, base + 3, base + 2);
     }
   };
   const nu = Math.max(2, Math.round(L / 0.45)), nvS = Math.max(2, Math.round(Hh / 0.45)), nw = Math.max(1, Math.round(Wd / 0.45));
-  for (const s of [1, -1]) face((u, v) => { const y = v * Hh * 0.97; return [(u - 0.5) * L * 1.04, y, s * halfW(y)]; }, () => [0, rough ? 0.25 : 0.06, s], 0, 0, nu, nvS);
-  face((u, v) => { const z = (v - 0.5) * 2 * halfW(Hh) * 0.98, dome = rough ? 0.3 * (1 - Math.pow(v * 2 - 1, 2)) : 0.05 * (1 - Math.pow(v * 2 - 1, 4)) + 0.04 * Math.sin(u * 4.4 + seed); return [(u - 0.5) * L * 1.04, Hh + dome, z]; }, (u, v) => _vn([0, 1, (v - 0.5) * (rough ? 1.2 : 0.4)]), 0, 0, nu, nw);
-  for (const s of [1, -1]) face((u, v) => [s * L * 0.5, v * Hh * 0.95, (u - 0.5) * 2 * halfW(v * Hh) * 0.95], () => [s, 0.1, 0], 0, 0, nw, nvS);
+  for (const s of [1, -1]) face((u, v) => { const y = v * Hh * 0.97; return [(u - 0.5) * L * 1.04, y, s * halfW(y)]; }, () => [0, rough ? 0.25 : 0.06, s], 0, 0, nu, nvS, s);
+  face((u, v) => { const z = (v - 0.5) * 2 * halfW(Hh) * 0.98, dome = rough ? 0.3 * (1 - Math.pow(v * 2 - 1, 2)) : 0.05 * (1 - Math.pow(v * 2 - 1, 4)) + 0.04 * Math.sin(u * 4.4 + seed); return [(u - 0.5) * L * 1.04, Hh + dome, z]; }, (u, v) => _vn([0, 1, (v - 0.5) * (rough ? 1.2 : 0.4)]), 0, 0, nu, nw, 3);
+  for (const s of [1, -1]) face((u, v) => [s * L * 0.5, v * Hh * 0.95, (u - 0.5) * 2 * halfW(v * Hh) * 0.95], () => [s, 0.1, 0], 0, 0, nw, nvS, 5 + s);
   // sprigs: shoots growing out of the faces since the last clipping (hedgerows: long and many)
   const tiles = P.sprig, nSp = Math.round(L * Hh * (rough ? 7 : 3.2));
   for (let k = 0; k < nSp; k++) {
@@ -770,35 +795,35 @@ function ukGroundGen(kind, seed, ai) {
 // v: (per-tree tint variation, share of trees starting to turn, leaf flutter, 0 tree | 1 sword leaves | 2 clipped hedge);
 // m: (leaf gloss, translucency, silvery undersides, share of trees with ivy up the trunk); h: [typical heights (m)];
 // a: [crown radius / height range] for ukTreeSpecies; sink: how far the foot goes into the ground (m).
-const UKBC = { oak: [0.16, 0.145, 0.125], beech: [0.33, 0.345, 0.355], ash: [0.3, 0.3, 0.27], syc: [0.25, 0.23, 0.2], hc: [0.25, 0.2, 0.165], holm: [0.12, 0.11, 0.1], scots: [0.18, 0.15, 0.13], scotsTop: [0.52, 0.27, 0.14], mont: [0.14, 0.12, 0.105], birch: [0.66, 0.64, 0.6], plane: [0.42, 0.4, 0.31], lime: [0.22, 0.2, 0.18], hawth: [0.2, 0.18, 0.15], black: [0.085, 0.075, 0.07], holly: [0.4, 0.4, 0.37], shrub: [0.22, 0.18, 0.14] };
+const UKBC = { oak: [0.16, 0.145, 0.125], beech: [0.27, 0.28, 0.29], ash: [0.3, 0.3, 0.27], syc: [0.25, 0.23, 0.2], hc: [0.25, 0.2, 0.165], holm: [0.12, 0.11, 0.1], scots: [0.18, 0.15, 0.13], scotsTop: [0.52, 0.27, 0.14], mont: [0.14, 0.12, 0.105], birch: [0.66, 0.64, 0.6], plane: [0.42, 0.4, 0.31], lime: [0.22, 0.2, 0.18], hawth: [0.2, 0.18, 0.15], black: [0.085, 0.075, 0.07], holly: [0.4, 0.4, 0.37], shrub: [0.22, 0.18, 0.14] };
 const UK_ARCH = [
-  { k: 'OAK', gen: 'tree', h: [10, 24], a: [0.38, 0.7], P: { holes: 0.2, H: 18, cb: 0.22, cr: 9.5, shape: 'dome', lumps: 9, lumpA: 0.32, r0: 0.56, flare: 0.45, lean: 0.02, wob: 0.45, leader: 0.45, bark: UKB.OAK, bc: UKBC.oak, nB: 12, el: [12, 60], bCurve: 0.5, bSin: 2.2, nSub: 6, subLen: 0.55, limbR: 0.72, tiles: [UKT.OAK], card: 1.4, cpc: 5, clumpR: 0.6, fill: 160, leaf: { t: UKL.OAK, L: 0.15, asp: 0.55, n: 17, droop: 0.2, col: [0.92, 0.95, 0.85] } }, sp: [0.95, 0.97, 0.9], v: [0.8, 0.03, 1, 0], m: [0.2, 0.95, 0, 0.3] },
-  { k: 'OAK_W', gen: 'tree', h: [14, 28], a: [0.2, 0.4], P: { holes: 0.18, H: 22, cb: 0.45, cr: 6.5, shape: 'ovoid', lumps: 8, lumpA: 0.26, r0: 0.42, flare: 0.4, lean: 0.03, wob: 0.4, leader: 0.68, bark: UKB.OAK, bc: UKBC.oak, nB: 11, el: [22, 68], bCurve: 0.6, bSin: 2.0, nSub: 5, subLen: 0.55, limbR: 0.65, tiles: [UKT.OAK], card: 1.3, cpc: 5, clumpR: 0.6, fill: 90, leaf: { t: UKL.OAK, L: 0.15, asp: 0.55, n: 17, droop: 0.2, col: [0.92, 0.95, 0.85] } }, sp: [0.95, 0.97, 0.9], v: [0.8, 0.03, 1, 0], m: [0.2, 0.95, 0, 0.45] },
-  { k: 'BEECH', gen: 'tree', h: [14, 32], a: [0.22, 0.5], P: { holes: 0.12, H: 25, cb: 0.3, cr: 9, shape: 'ovoid', lumps: 6, lumpA: 0.2, r0: 0.44, flare: 0.55, lean: 0.015, wob: 0.2, leader: 0.75, bark: UKB.BEECH, bc: UKBC.beech, nB: 13, el: [18, 64], bCurve: 0.9, bSin: 0.8, nSub: 6, subLen: 0.5, tiles: [UKT.BEECH], card: 1.3, cpc: 5, clumpR: 0.55, droop: 0.15, fill: 150, leaf: { t: UKL.BEECH, L: 0.11, asp: 0.6, n: 18, droop: 0.15, col: [1.05, 1.08, 0.8] } }, sp: [0.95, 0.97, 0.88], v: [0.6, 0.02, 1, 0], m: [0.5, 1.0, 0, 0.25] },
-  { k: 'ASH', gen: 'tree', h: [12, 30], a: [0.2, 0.42], P: { holes: 0.36, gap: 1.3, H: 23, cb: 0.45, cr: 7, shape: 'ovoid', lumps: 7, lumpA: 0.3, r0: 0.38, flare: 0.35, lean: 0.03, wob: 0.3, leader: 0.7, bark: UKB.ASH, bc: UKBC.ash, nB: 10, el: [34, 76], bCurve: 1.4, bSin: 1.0, nSub: 4, subLen: 0.5, subEl: 0.2, tiles: [UKT.ASH], card: 1.3, aspect: 0.9, cpc: 4, clumpR: 0.7, fill: 50, leaf: { t: UKL.LANCE, L: 0.26, asp: 0.32, n: 5, comp: 'pinnate', droop: 0.3, col: [1.0, 1.05, 0.82] } }, sp: [0.97, 1.0, 0.88], v: [0.7, 0.04, 1.2, 0], m: [0.15, 1.05, 0, 0.35] },
-  { k: 'SYCAMORE', gen: 'tree', h: [8, 24], a: [0.36, 0.65], P: { holes: 0.1, H: 18, cb: 0.22, cr: 8.5, shape: 'dome', lumps: 7, lumpA: 0.15, r0: 0.5, flare: 0.4, lean: 0.02, wob: 0.3, leader: 0.5, bark: UKB.SYCAMORE, bc: UKBC.syc, nB: 12, el: [22, 64], bCurve: 0.8, bSin: 1.1, nSub: 6, subLen: 0.55, tiles: [UKT.SYCAMORE], card: 1.4, cpc: 6, clumpR: 0.55, fill: 140, leaf: { t: UKL.PALM, L: 0.18, asp: 1.0, n: 14, droop: 0.4, col: [0.85, 0.9, 0.78] } }, sp: [0.92, 0.95, 0.88], v: [0.7, 0.03, 1, 0], m: [0.15, 1.05, 0, 0.3] },
-  { k: 'SYCAMORE_W', gen: 'tree', h: [12, 28], a: [0.2, 0.4], P: { holes: 0.12, H: 21, cb: 0.42, cr: 6.5, shape: 'ovoid', lumps: 7, lumpA: 0.15, r0: 0.4, flare: 0.35, lean: 0.03, wob: 0.3, leader: 0.7, bark: UKB.SYCAMORE, bc: UKBC.syc, nB: 11, el: [28, 70], bCurve: 0.8, bSin: 1.1, nSub: 5, subLen: 0.55, tiles: [UKT.SYCAMORE], card: 1.35, cpc: 6, clumpR: 0.55, fill: 90, leaf: { t: UKL.PALM, L: 0.18, asp: 1.0, n: 14, droop: 0.4, col: [0.85, 0.9, 0.78] } }, sp: [0.92, 0.95, 0.88], v: [0.7, 0.03, 1, 0], m: [0.15, 1.05, 0, 0.45] },
-  { k: 'HCHESTNUT', gen: 'tree', h: [10, 26], a: [0.36, 0.6], P: { holes: 0.08, H: 20, cb: 0.18, cr: 9, shape: 'dome', lumps: 6, lumpA: 0.12, r0: 0.55, flare: 0.4, lean: 0.015, wob: 0.3, leader: 0.5, bark: UKB.HCHESTNUT, bc: UKBC.hc, nB: 13, el: [8, 58], bCurve: 1.1, sag: 0.9, bSin: 0.9, nSub: 6, subLen: 0.5, tiles: [UKT.HCHESTNUT], card: 1.5, cpc: 6, clumpR: 0.55, droop: 0.35, fill: 140, leaf: { t: UKL.OBOV, L: 0.17, asp: 0.4, n: 4, comp: 'palmate', droop: 0.5, col: [0.86, 0.92, 0.75] } }, sp: [0.95, 0.97, 0.88], v: [0.6, 0.22, 0.8, 0], m: [0.15, 1.0, 0, 0.1] },
-  { k: 'HOLMOAK', gen: 'tree', h: [6, 22], a: [0.35, 0.65], P: { holes: 0.06, H: 15, cb: 0.12, cr: 7.5, shape: 'round', lumps: 8, lumpA: 0.2, r0: 0.48, flare: 0.4, lean: 0.03, wob: 0.4, leader: 0.45, bark: UKB.HOLM, bc: UKBC.holm, nB: 12, el: [8, 58], bCurve: 0.4, sag: 0.5, bSin: 1.4, nSub: 7, subLen: 0.55, tiles: [UKT.HOLM], card: 1.1, cpc: 7, clumpR: 0.5, droop: 0.3, fill: 120, leaf: { t: UKL.HOLM, L: 0.07, asp: 0.45, n: 22, droop: 0.3, col: [0.62, 0.7, 0.62] } }, sp: [0.85, 0.9, 0.88], v: [0.5, 0, 0.5, 0], m: [0.6, 0.45, 0.25, 0.2] },
-  { k: 'SCOTSPINE', gen: 'tree', h: [10, 28], a: [0.15, 0.36], P: { flatCards: 1, holes: 0.45, gap: 1.2, H: 21, cb: 0.62, cr: 7, shape: 'flat', lumps: 9, lumpA: 0.4, r0: 0.36, flare: 0.25, lean: 0.025, wob: 0.5, leader: 0.92, bark: UKB.SCOTS, bc: UKBC.scots, bcTop: UKBC.scotsTop, nB: 15, whorl: 3, el: [0, 26], bCurve: 1.0, bSin: 1.4, nSub: 3, subLen: 0.45, tiles: [UKT.SCOTS], card: 1.05, cpc: 8, clumpR: 0.75, fill: 40, leaf: { t: UKL.NEEDLE, L: 0.085, asp: 0.55, n: 8, comp: 'needles', droop: 0.1, col: [0.78, 0.92, 1.1] } }, sp: [0.9, 0.98, 1.05], v: [0.5, 0, 0.3, 0], m: [0.3, 0.5, 0, 0.1] },
-  { k: 'MONTPINE', gen: 'tree', h: [10, 30], a: [0.3, 0.6], P: { holes: 0.2, H: 22, cb: 0.3, cr: 9, shape: 'umbrella', lumps: 9, lumpA: 0.3, r0: 0.6, flare: 0.4, lean: 0.03, wob: 0.5, leader: 0.65, bark: UKB.MONTEREY, bc: UKBC.mont, nB: 14, whorl: 4, el: [14, 54], bCurve: 0.8, bSin: 1.2, nSub: 5, subLen: 0.5, tiles: [UKT.MONTEREY], card: 1.4, cpc: 7, clumpR: 0.5, fill: 110, leaf: { t: UKL.NEEDLE, L: 0.14, asp: 0.6, n: 8, comp: 'needles', droop: 0.15, col: [0.95, 1.05, 0.75] } }, sp: [0.95, 1.0, 0.85], v: [0.5, 0, 0.3, 0], m: [0.35, 0.5, 0, 0.1] },
-  { k: 'BIRCH', gen: 'tree', h: [6, 22], a: [0.15, 0.35], P: { holes: 0.32, gap: 1.3, H: 17, cb: 0.3, cr: 4, shape: 'ovoid', lumps: 6, lumpA: 0.25, r0: 0.2, flare: 0.3, lean: 0.03, wob: 0.3, leader: 0.9, bark: UKB.BIRCH, bc: UKBC.birch, nB: 14, el: [38, 70], bCurve: 0.6, bSin: 0.9, nSub: 4, subLen: 0.5, droop: 0.9, hang: 0.5, tiles: [UKT.BIRCH], card: 1.05, cpc: 4, clumpR: 0.6, fill: 30, flutter: 2, leaf: { t: UKL.BIRCH, L: 0.065, asp: 0.8, n: 20, droop: 0.6, col: [1.08, 1.1, 0.78] } }, sp: [1.04, 1.05, 0.88], v: [0.6, 0.06, 2.0, 0], m: [0.25, 1.15, 0, 0.05] },
-  { k: 'PLANE', gen: 'tree', h: [10, 32], a: [0.3, 0.55], P: { holes: 0.2, H: 25, cb: 0.3, cr: 10, shape: 'dome', lumps: 10, lumpA: 0.32, r0: 0.55, flare: 0.35, lean: 0.02, wob: 0.5, leader: 0.55, bark: UKB.PLANE, bc: UKBC.plane, nB: 12, el: [24, 64], bCurve: 0.6, bSin: 1.6, nSub: 6, subLen: 0.55, tiles: [UKT.PLANE], card: 1.5, cpc: 5, clumpR: 0.6, fill: 140, leaf: { t: UKL.PALM, L: 0.22, asp: 1.0, n: 12, droop: 0.4, col: [0.98, 1.02, 0.8] } }, sp: [1.0, 1.02, 0.9], v: [0.6, 0.05, 1, 0], m: [0.15, 1.05, 0, 0.0] },
-  { k: 'LIME', gen: 'tree', h: [8, 28], a: [0.2, 0.42], P: { holes: 0.1, H: 22, cb: 0.25, cr: 6, shape: 'column', lumps: 5, lumpA: 0.12, r0: 0.42, flare: 0.45, lean: 0.015, wob: 0.25, leader: 0.85, bark: UKB.LIME, bc: UKBC.lime, nB: 15, el: [28, 70], bCurve: 0.7, sag: 0.3, bSin: 1.0, nSub: 5, subLen: 0.5, tiles: [UKT.LIME], card: 1.2, cpc: 6, clumpR: 0.5, fill: 120, leaf: { t: UKL.HEART, L: 0.1, asp: 0.85, n: 18, droop: 0.3, col: [0.95, 1.0, 0.78] } }, sp: [0.98, 1.0, 0.88], v: [0.6, 0.04, 1.1, 0], m: [0.15, 1.1, 0, 0.05] },
-  { k: 'HAWTHORN', gen: 'tree', h: [3, 9], a: [0.35, 0.8], P: { H: 6.5, cb: 0.25, cr: 3.2, shape: 'round', lumps: 8, lumpA: 0.25, r0: 0.14, flare: 0.3, lean: 0.04, wob: 0.3, nStem: 2, stemEl: 76, leader: 0.5, bark: UKB.HAWTHORN, bc: UKBC.hawth, nB: 10, el: [14, 60], bCurve: 0.5, bSin: 2.0, nSub: 5, subLen: 0.55, tiles: [UKT.HAWTHORN], card: 0.9, cpc: 6, clumpR: 0.5, fill: 30, leaf: { t: UKL.HAWTH, L: 0.055, asp: 0.8, n: 20, col: [0.85, 0.92, 0.72] } }, sp: [0.92, 0.96, 0.85], v: [0.6, 0.05, 1, 0], m: [0.3, 0.9, 0, 0.1] },
-  { k: 'HAWTHORN_WIND', gen: 'tree', h: [2, 6], a: [0.5, 1.2], P: { H: 4.5, cb: 0.2, cr: 2.8, shape: 'lean', leanAz: 0, lumps: 8, lumpA: 0.18, r0: 0.13, flare: 0.3, lean: 0.16, wob: 0.25, leader: 0.55, bark: UKB.HAWTHORN, bc: UKBC.hawth, nB: 11, el: [6, 40], bCurve: 0.1, bSin: 1.8, nSub: 5, subLen: 0.55, tiles: [UKT.HAWTHORN], card: 0.85, cpc: 6, clumpR: 0.45, fill: 34, leaf: { t: UKL.HAWTH, L: 0.045, asp: 0.8, n: 12, col: [0.82, 0.9, 0.7] } }, sp: [0.9, 0.94, 0.82], v: [0.5, 0.08, 0.6, 0], m: [0.3, 0.85, 0, 0] },
+  { k: 'OAK', gen: 'tree', h: [10, 24], a: [0.38, 0.7], P: { ivy: 300, holes: 0.2, H: 18, cb: 0.22, cr: 9.5, shape: 'dome', lumps: 9, lumpA: 0.32, r0: 0.56, flare: 0.45, lean: 0.02, wob: 0.45, leader: 0.45, bark: UKB.OAK, bc: UKBC.oak, nB: 12, el: [12, 60], bCurve: 0.5, bSin: 2.2, nSub: 6, subLen: 0.55, limbR: 0.72, tiles: [UKT.OAK], card: 1.4, cpc: 5, clumpR: 0.6, fill: 130, leaf: { t: UKL.OAK, L: 0.15, asp: 0.55, n: 10, droop: 0.2, col: [0.92, 0.95, 0.85] } }, sp: [0.95, 0.97, 0.9], v: [0.8, 0.03, 1, 0], m: [0.2, 0.95, 0, 0.3] },
+  { k: 'OAK_W', gen: 'tree', h: [14, 28], a: [0.2, 0.4], P: { ivy: 350, holes: 0.18, H: 22, cb: 0.45, cr: 6.5, shape: 'ovoid', lumps: 8, lumpA: 0.26, r0: 0.42, flare: 0.4, lean: 0.03, wob: 0.4, leader: 0.68, bark: UKB.OAK, bc: UKBC.oak, nB: 11, el: [22, 68], bCurve: 0.6, bSin: 2.0, nSub: 5, subLen: 0.55, limbR: 0.65, tiles: [UKT.OAK], card: 1.3, cpc: 5, clumpR: 0.6, fill: 90, leaf: { t: UKL.OAK, L: 0.15, asp: 0.55, n: 9, droop: 0.2, col: [0.92, 0.95, 0.85] } }, sp: [0.95, 0.97, 0.9], v: [0.8, 0.03, 1, 0], m: [0.2, 0.95, 0, 0.45] },
+  { k: 'BEECH', gen: 'tree', h: [14, 32], a: [0.22, 0.5], P: { ivy: 250, holes: 0.12, H: 25, cb: 0.3, cr: 9, shape: 'ovoid', lumps: 6, lumpA: 0.2, r0: 0.44, flare: 0.55, lean: 0.015, wob: 0.2, leader: 0.75, bark: UKB.BEECH, bc: UKBC.beech, nB: 13, el: [18, 64], bCurve: 0.9, bSin: 0.8, nSub: 6, subLen: 0.5, tiles: [UKT.BEECH], card: 1.3, cpc: 5, clumpR: 0.55, droop: 0.15, fill: 105, leaf: { t: UKL.BEECH, L: 0.11, asp: 0.6, n: 10, droop: 0.15, col: [0.95, 1.0, 0.8] } }, sp: [0.9, 0.95, 0.88], v: [0.6, 0.02, 1, 0], m: [0.5, 1.0, 0, 0.25] },
+  { k: 'ASH', gen: 'tree', h: [12, 30], a: [0.2, 0.42], P: { ivy: 320, holes: 0.36, gap: 1.3, H: 23, cb: 0.38, cr: 8, shape: 'ovoid', lumps: 7, lumpA: 0.3, r0: 0.38, flare: 0.35, lean: 0.03, wob: 0.3, leader: 0.7, bark: UKB.ASH, bc: UKBC.ash, nB: 12, el: [34, 76], bCurve: 1.4, bSin: 1.0, nSub: 4, subLen: 0.5, subEl: 0.2, tiles: [UKT.ASH], card: 1.3, aspect: 0.9, cpc: 4, clumpR: 0.7, fill: 60, leaf: { t: UKL.LANCE, L: 0.26, asp: 0.32, n: 2, comp: 'pinnate', droop: 0.3, col: [1.0, 1.05, 0.82] } }, sp: [0.97, 1.0, 0.88], v: [0.7, 0.04, 1.2, 0], m: [0.15, 1.05, 0, 0.35] },
+  { k: 'SYCAMORE', gen: 'tree', h: [8, 24], a: [0.36, 0.65], P: { ivy: 280, holes: 0.1, H: 18, cb: 0.22, cr: 8.5, shape: 'dome', lumps: 7, lumpA: 0.15, r0: 0.5, flare: 0.4, lean: 0.02, wob: 0.3, leader: 0.5, bark: UKB.SYCAMORE, bc: UKBC.syc, nB: 12, el: [22, 64], bCurve: 0.8, bSin: 1.1, nSub: 6, subLen: 0.55, tiles: [UKT.SYCAMORE], card: 1.4, cpc: 6, clumpR: 0.55, fill: 115, leaf: { t: UKL.PALM, L: 0.18, asp: 1.0, n: 9, droop: 0.4, col: [0.85, 0.9, 0.78] } }, sp: [0.92, 0.95, 0.88], v: [0.7, 0.03, 1, 0], m: [0.15, 1.05, 0, 0.3] },
+  { k: 'SYCAMORE_W', gen: 'tree', h: [12, 28], a: [0.2, 0.4], P: { ivy: 350, holes: 0.12, H: 21, cb: 0.42, cr: 6.5, shape: 'ovoid', lumps: 7, lumpA: 0.15, r0: 0.4, flare: 0.35, lean: 0.03, wob: 0.3, leader: 0.7, bark: UKB.SYCAMORE, bc: UKBC.syc, nB: 11, el: [28, 70], bCurve: 0.8, bSin: 1.1, nSub: 5, subLen: 0.55, tiles: [UKT.SYCAMORE], card: 1.35, cpc: 6, clumpR: 0.55, fill: 90, leaf: { t: UKL.PALM, L: 0.18, asp: 1.0, n: 8, droop: 0.4, col: [0.85, 0.9, 0.78] } }, sp: [0.92, 0.95, 0.88], v: [0.7, 0.03, 1, 0], m: [0.15, 1.05, 0, 0.45] },
+  { k: 'HCHESTNUT', gen: 'tree', h: [10, 26], a: [0.36, 0.6], P: { holes: 0.08, H: 20, cb: 0.18, cr: 9, shape: 'dome', lumps: 6, lumpA: 0.12, r0: 0.55, flare: 0.4, lean: 0.015, wob: 0.3, leader: 0.5, bark: UKB.HCHESTNUT, bc: UKBC.hc, nB: 13, el: [8, 58], bCurve: 1.1, sag: 0.9, bSin: 0.9, nSub: 6, subLen: 0.5, tiles: [UKT.HCHESTNUT], card: 1.5, cpc: 6, clumpR: 0.55, droop: 0.35, fill: 115, leaf: { t: UKL.OBOV, L: 0.17, asp: 0.4, n: 3, comp: 'palmate', droop: 0.5, col: [0.86, 0.92, 0.75] } }, sp: [0.95, 0.97, 0.88], v: [0.6, 0.22, 0.8, 0], m: [0.15, 1.0, 0, 0.1] },
+  { k: 'HOLMOAK', gen: 'tree', h: [6, 22], a: [0.35, 0.65], P: { ivy: 180, holes: 0.06, H: 15, cb: 0.12, cr: 7.5, shape: 'round', lumps: 8, lumpA: 0.2, r0: 0.48, flare: 0.4, lean: 0.03, wob: 0.4, leader: 0.45, bark: UKB.HOLM, bc: UKBC.holm, nB: 12, el: [8, 58], bCurve: 0.4, sag: 0.5, bSin: 1.4, nSub: 7, subLen: 0.55, tiles: [UKT.HOLM], card: 1.1, cpc: 7, clumpR: 0.5, droop: 0.3, fill: 90, leaf: { t: UKL.HOLM, L: 0.07, asp: 0.45, n: 12, droop: 0.3, col: [0.62, 0.7, 0.62] } }, sp: [0.85, 0.9, 0.88], v: [0.5, 0, 0.5, 0], m: [0.6, 0.45, 0.25, 0.2] },
+  { k: 'SCOTSPINE', gen: 'tree', h: [10, 28], a: [0.15, 0.36], P: { flatCards: 1, holes: 0.45, gap: 1.2, H: 21, cb: 0.62, cr: 7, shape: 'flat', lumps: 9, lumpA: 0.4, r0: 0.36, flare: 0.25, lean: 0.025, wob: 0.5, leader: 0.92, bark: UKB.SCOTS, bc: UKBC.scots, bcTop: UKBC.scotsTop, nB: 15, whorl: 3, el: [0, 26], bCurve: 1.0, bSin: 1.4, nSub: 3, subLen: 0.45, tiles: [UKT.SCOTS], card: 1.05, cpc: 8, clumpR: 0.75, fill: 40, leaf: { t: UKL.NEEDLE, L: 0.085, asp: 0.55, n: 5, comp: 'needles', droop: 0.1, col: [0.78, 0.92, 1.1] } }, sp: [0.9, 0.98, 1.05], v: [0.5, 0, 0.3, 0], m: [0.3, 0.5, 0, 0.1] },
+  { k: 'MONTPINE', gen: 'tree', h: [10, 30], a: [0.3, 0.6], P: { holes: 0.2, H: 22, cb: 0.3, cr: 9, shape: 'umbrella', lumps: 9, lumpA: 0.3, r0: 0.6, flare: 0.4, lean: 0.03, wob: 0.5, leader: 0.65, bark: UKB.MONTEREY, bc: UKBC.mont, nB: 14, whorl: 4, el: [14, 54], bCurve: 0.8, bSin: 1.2, nSub: 5, subLen: 0.5, tiles: [UKT.MONTEREY], card: 1.4, cpc: 7, clumpR: 0.5, fill: 110, leaf: { t: UKL.NEEDLE, L: 0.14, asp: 0.6, n: 5, comp: 'needles', droop: 0.15, col: [0.95, 1.05, 0.75] } }, sp: [0.95, 1.0, 0.85], v: [0.5, 0, 0.3, 0], m: [0.35, 0.5, 0, 0.1] },
+  { k: 'BIRCH', gen: 'tree', h: [6, 22], a: [0.15, 0.35], P: { holes: 0.32, gap: 1.0, H: 17, cb: 0.25, cr: 4.5, shape: 'ovoid', lumps: 6, lumpA: 0.25, r0: 0.2, flare: 0.3, lean: 0.03, wob: 0.3, leader: 0.9, bark: UKB.BIRCH, bc: UKBC.birch, nB: 18, el: [38, 70], bCurve: 0.6, bSin: 0.9, nSub: 4, subLen: 0.5, droop: 0.9, hang: 0.5, tiles: [UKT.BIRCH], card: 0.9, cpc: 4, clumpR: 0.6, fill: 60, flutter: 2, leaf: { t: UKL.BIRCH, L: 0.065, asp: 0.8, n: 12, droop: 0.6, col: [1.08, 1.1, 0.78] } }, sp: [1.04, 1.05, 0.88], v: [0.6, 0.06, 2.0, 0], m: [0.25, 1.15, 0, 0.05] },
+  { k: 'PLANE', gen: 'tree', h: [10, 32], a: [0.3, 0.55], P: { holes: 0.2, H: 25, cb: 0.3, cr: 10, shape: 'dome', lumps: 10, lumpA: 0.32, r0: 0.55, flare: 0.35, lean: 0.02, wob: 0.5, leader: 0.55, bark: UKB.PLANE, bc: UKBC.plane, nB: 12, el: [24, 64], bCurve: 0.6, bSin: 1.6, nSub: 6, subLen: 0.55, tiles: [UKT.PLANE], card: 1.5, cpc: 5, clumpR: 0.6, fill: 140, leaf: { t: UKL.PALM, L: 0.22, asp: 1.0, n: 8, droop: 0.4, col: [0.98, 1.02, 0.8] } }, sp: [1.0, 1.02, 0.9], v: [0.6, 0.05, 1, 0], m: [0.15, 1.05, 0, 0.0] },
+  { k: 'LIME', gen: 'tree', h: [8, 28], a: [0.2, 0.42], P: { ivy: 120, holes: 0.1, H: 22, cb: 0.25, cr: 6, shape: 'column', lumps: 5, lumpA: 0.12, r0: 0.42, flare: 0.45, lean: 0.015, wob: 0.25, leader: 0.85, bark: UKB.LIME, bc: UKBC.lime, nB: 15, el: [28, 70], bCurve: 0.7, sag: 0.3, bSin: 1.0, nSub: 5, subLen: 0.5, tiles: [UKT.LIME], card: 1.2, cpc: 6, clumpR: 0.5, fill: 95, leaf: { t: UKL.HEART, L: 0.1, asp: 0.85, n: 10, droop: 0.3, col: [0.95, 1.0, 0.78] } }, sp: [0.98, 1.0, 0.88], v: [0.6, 0.04, 1.1, 0], m: [0.15, 1.1, 0, 0.05] },
+  { k: 'HAWTHORN', gen: 'tree', h: [3, 9], a: [0.35, 0.8], P: { ivy: 90, H: 6.5, cb: 0.25, cr: 3.2, shape: 'round', lumps: 8, lumpA: 0.25, r0: 0.14, flare: 0.3, lean: 0.04, wob: 0.3, nStem: 2, stemEl: 76, leader: 0.5, bark: UKB.HAWTHORN, bc: UKBC.hawth, nB: 10, el: [14, 60], bCurve: 0.5, bSin: 2.0, nSub: 5, subLen: 0.55, tiles: [UKT.HAWTHORN], card: 0.9, cpc: 6, clumpR: 0.5, fill: 30, leaf: { t: UKL.HAWTH, L: 0.055, asp: 0.8, n: 12, col: [0.85, 0.92, 0.72] } }, sp: [0.92, 0.96, 0.85], v: [0.6, 0.05, 1, 0], m: [0.3, 0.9, 0, 0.1] },
+  { k: 'HAWTHORN_WIND', gen: 'tree', h: [2, 6], a: [0.5, 1.2], P: { H: 3.8, cb: 0.18, cr: 3.2, shape: 'lean', leanAz: 0, lumps: 8, lumpA: 0.18, r0: 0.13, flare: 0.3, lean: 0.3, wob: 0.25, leader: 0.55, bark: UKB.HAWTHORN, bc: UKBC.hawth, nB: 11, el: [6, 40], bCurve: 0.1, bSin: 1.8, nSub: 5, subLen: 0.55, tiles: [UKT.HAWTHORN], card: 0.85, cpc: 6, clumpR: 0.45, fill: 34, leaf: { t: UKL.HAWTH, L: 0.045, asp: 0.8, n: 12, col: [0.82, 0.9, 0.7] } }, sp: [0.9, 0.94, 0.82], v: [0.5, 0.08, 0.6, 0], m: [0.3, 0.85, 0, 0] },
   { k: 'BLACKTHORN', gen: 'tree', h: [1.5, 4.5], a: [0.5, 1.4], P: { H: 3.2, cb: 0.1, cr: 2.6, shape: 'round', lumps: 9, lumpA: 0.3, r0: 0.06, flare: 0.2, lean: 0.02, wob: 0.15, nStem: 7, stemEl: 70, leader: 0.7, bark: UKB.BLACKTHORN, bc: UKBC.black, nB: 14, el: [20, 70], bCurve: 0.3, bSin: 2.5, nSub: 3, subLen: 0.6, tiles: [UKT.BLACKTHORN], card: 0.8, cpc: 6, clumpR: 0.5, fill: 26, leaf: { t: UKL.ELL, L: 0.035, asp: 0.5, n: 12, col: [0.7, 0.78, 0.62] } }, sp: [0.88, 0.92, 0.85], v: [0.5, 0.03, 0.8, 0], m: [0.3, 0.8, 0, 0] },
-  { k: 'HOLLY', gen: 'tree', h: [1.5, 12], a: [0.2, 0.5], P: { H: 7, cb: 0.08, cr: 2.4, shape: 'cone', lumps: 6, lumpA: 0.15, r0: 0.15, flare: 0.3, lean: 0.02, wob: 0.2, leader: 0.9, bark: UKB.HOLLY, bc: UKBC.holly, nB: 16, el: [24, 56], bCurve: 0.5, bSin: 1.0, nSub: 4, subLen: 0.5, tiles: [UKT.HOLLY], card: 0.85, cpc: 6, clumpR: 0.45, fill: 36, leaf: { t: UKL.HOLLY, L: 0.08, asp: 0.55, n: 16, col: [0.62, 0.72, 0.62] } }, sp: [0.85, 0.9, 0.88], v: [0.4, 0, 0.4, 0], m: [1.0, 0.35, 0, 0] },
+  { k: 'HOLLY', gen: 'tree', h: [1.5, 12], a: [0.2, 0.5], P: { H: 7, cb: 0.08, cr: 2.4, shape: 'cone', lumps: 6, lumpA: 0.15, r0: 0.15, flare: 0.3, lean: 0.02, wob: 0.2, leader: 0.9, bark: UKB.HOLLY, bc: UKBC.holly, nB: 16, el: [24, 56], bCurve: 0.5, bSin: 1.0, nSub: 4, subLen: 0.5, tiles: [UKT.HOLLY], card: 0.85, cpc: 6, clumpR: 0.45, fill: 36, leaf: { t: UKL.HOLLY, L: 0.08, asp: 0.55, n: 10, col: [0.62, 0.72, 0.62] } }, sp: [0.85, 0.9, 0.88], v: [0.4, 0, 0.4, 0], m: [1.0, 0.35, 0, 0] },
   { k: 'CORDYLINE', gen: 'cordyline', h: [2, 9], a: [0.2, 0.6], P: { H: 5.5, cr: 1.6 }, sp: [1.0, 1.0, 0.92], v: [0.5, 0, 0.8, 1], m: [0.35, 0.8, 0, 0] },
   { k: 'SEABUCKTHORN', gen: 'tree', h: [1, 4.5], a: [0.4, 1.2], P: { H: 2.6, cb: 0.1, cr: 1.8, shape: 'round', lumps: 8, lumpA: 0.25, r0: 0.05, flare: 0.2, lean: 0.02, wob: 0.1, nStem: 6, stemEl: 65, leader: 0.7, bark: UKB.SHRUB, bc: UKBC.shrub, nB: 12, el: [24, 70], bCurve: 0.5, bSin: 1.5, nSub: 3, subLen: 0.6, tiles: [UKT.BUCKTHORN], card: 0.8, cpc: 6, clumpR: 0.5, fill: 22, leaf: { t: UKL.BUCK, L: 0.06, asp: 0.22, n: 12, col: [1.2, 1.0, 1.9] } }, sp: [1.0, 1.0, 1.0], v: [0.4, 0, 0.8, 0], m: [0.1, 0.5, 0.6, 0] },
   { k: 'SHRUB', gen: 'tree', h: [0.6, 3.5], a: [0.4, 1.2], P: { H: 2.2, cb: 0.04, cr: 1.5, shape: 'round', lumps: 7, lumpA: 0.18, r0: 0.05, flare: 0.2, lean: 0.01, wob: 0.1, nStem: 6, stemEl: 60, leader: 0.7, bark: UKB.SHRUB, bc: UKBC.shrub, nB: 12, el: [20, 70], bCurve: 0.5, bSin: 1.3, nSub: 3, subLen: 0.6, tiles: [UKT.ESCALLONIA], card: 0.8, cpc: 6, clumpR: 0.45, fill: 26, leaf: { t: UKL.ELL, L: 0.035, asp: 0.5, n: 12, col: [0.7, 0.8, 0.65] } }, sp: [0.9, 0.95, 0.88], v: [0.5, 0, 0.6, 0], m: [0.9, 0.6, 0, 0] },
   { k: 'LAUREL', gen: 'tree', h: [1, 5], a: [0.4, 1.0], P: { H: 3.4, cb: 0.04, cr: 2.2, shape: 'round', lumps: 7, lumpA: 0.18, r0: 0.07, flare: 0.2, lean: 0.01, wob: 0.15, nStem: 5, stemEl: 62, leader: 0.7, bark: UKB.SHRUB, bc: UKBC.shrub, nB: 12, el: [16, 66], bCurve: 0.5, bSin: 1.2, nSub: 3, subLen: 0.6, tiles: [UKT.LAUREL], card: 1.0, cpc: 6, clumpR: 0.5, fill: 26, leaf: { t: UKL.ELL, L: 0.15, asp: 0.38, n: 7, col: [0.62, 0.75, 0.6] } }, sp: [0.88, 0.94, 0.9], v: [0.4, 0, 0.5, 0], m: [1.0, 0.5, 0, 0] },
   { k: 'HYDRANGEA', gen: 'tree', h: [0.5, 2.2], a: [0.5, 1.4], P: { H: 1.5, cb: 0.02, cr: 1.2, shape: 'round', lumps: 6, lumpA: 0.15, r0: 0.035, flare: 0.1, lean: 0.01, wob: 0.05, nStem: 8, stemEl: 60, leader: 0.7, bark: UKB.SHRUB, bc: UKBC.shrub, nB: 10, el: [20, 70], bCurve: 0.4, bSin: 1.0, nSub: 2, subLen: 0.6, tiles: [UKT.HYDRANGEA], card: 0.75, cpc: 6, clumpR: 0.45, fill: 20, leaf: { t: UKL.ELL, L: 0.12, asp: 0.6, n: 5, col: [0.82, 0.9, 0.72] } }, sp: [0.95, 0.98, 0.95], v: [0.4, 0, 0.6, 0], m: [0.2, 0.9, 0, 0] },
   { k: 'LEYLAND', gen: 'tree', h: [4, 20], a: [0.12, 0.35], P: { H: 12, cb: 0.03, cr: 2.6, shape: 'cone', lumps: 5, lumpA: 0.1, r0: 0.24, flare: 0.3, lean: 0.01, wob: 0.1, leader: 0.95, bark: UKB.SHRUB, bc: [0.2, 0.13, 0.1], nB: 24, el: [32, 62], bCurve: 0.5, bSin: 0.6, nSub: 4, subLen: 0.5, tiles: [UKT.LEYLAND], card: 0.95, cpc: 6, clumpR: 0.45, fill: 60, leaf: { t: UKL.ELL, L: 0.05, asp: 0.6, n: 6, col: [0.62, 0.74, 0.62] } }, sp: [0.86, 0.92, 0.88], v: [0.35, 0, 0.3, 0], m: [0.2, 0.4, 0, 0] },
-  { k: 'HEDGE_PRIVET', gen: 'hedge', h: [0.8, 2.6], a: [0, 9], P: { L: 1.6, W: 0.75, H: 1.7, face: UKT.F_PRIVET, sprig: [UKT.PRIVET], sprigL: 0.3, leafDens: 240, leaf: { t: UKL.ELL, L: 0.04, asp: 0.5, col: [0.85, 0.95, 0.75] } }, sp: [0.95, 0.98, 0.9], v: [0.35, 0, 0.3, 2], m: [0.7, 0.45, 0, 0], sink: 0.05 },
-  { k: 'HEDGE_BEECH', gen: 'hedge', h: [1, 3], a: [0, 9], P: { L: 1.6, W: 0.8, H: 1.9, face: UKT.F_BEECH, sprig: [UKT.BEECH], sprigL: 0.4, leafDens: 160, leaf: { t: UKL.BEECH, L: 0.075, asp: 0.6, col: [1.0, 1.05, 0.8] } }, sp: [1.0, 1.0, 0.9], v: [0.35, 0.08, 0.5, 2], m: [0.4, 0.6, 0, 0], sink: 0.05 },
-  { k: 'HEDGE_HAWTHORN', gen: 'hedge', h: [1.4, 3.5], a: [0, 9], P: { L: 2.2, W: 2.0, H: 2.4, rough: 1, face: UKT.F_HEDGEROW, sprig: [UKT.HAWTHORN, UKT.BLACKTHORN, UKT.BRAMBLE, UKT.HAWTHORN], sprigL: 0.75, leafDens: 110, leaf: { t: UKL.HAWTH, L: 0.05, asp: 0.8, col: [0.85, 0.92, 0.72] } }, sp: [0.92, 0.96, 0.86], v: [0.45, 0.04, 0.7, 2], m: [0.3, 0.8, 0, 0], sink: 0.1 },
-  { k: 'HEDGE_ESCALLONIA', gen: 'hedge', h: [0.8, 2.4], a: [0, 9], P: { L: 1.6, W: 0.9, H: 1.6, face: UKT.F_ESCALLONIA, sprig: [UKT.ESCALLONIA], sprigL: 0.35, leafDens: 220, leaf: { t: UKL.ELL, L: 0.035, asp: 0.5, col: [0.7, 0.8, 0.65] } }, sp: [0.9, 0.95, 0.88], v: [0.35, 0, 0.4, 2], m: [0.9, 0.45, 0, 0], sink: 0.05 },
+  { k: 'HEDGE_PRIVET', gen: 'hedge', h: [0.8, 2.6], a: [0, 9], P: { L: 1.6, W: 0.75, H: 1.7, face: UKT.F_PRIVET, sprig: [UKT.PRIVET], sprigL: 0.3, leafDens: 240, leaf: { t: UKL.ELL, L: 0.04, asp: 0.5, col: [0.62, 0.86, 0.5] } }, sp: [0.95, 0.98, 0.9], v: [0.35, 0, 0.3, 2], m: [0.7, 0.45, 0, 0], sink: 0.05 },
+  { k: 'HEDGE_BEECH', gen: 'hedge', h: [1, 3], a: [0, 9], P: { L: 1.6, W: 0.8, H: 1.9, face: UKT.F_BEECH, sprig: [UKT.BEECH], sprigL: 0.4, leafDens: 160, leaf: { t: UKL.BEECH, L: 0.075, asp: 0.6, col: [0.78, 0.92, 0.6] } }, sp: [1.0, 1.0, 0.9], v: [0.35, 0.08, 0.5, 2], m: [0.4, 0.6, 0, 0], sink: 0.05 },
+  { k: 'HEDGE_HAWTHORN', gen: 'hedge', h: [1.4, 3.5], a: [0, 9], P: { L: 2.2, W: 2.0, H: 2.4, rough: 1, face: UKT.F_HEDGEROW, sprig: [UKT.HAWTHORN, UKT.BLACKTHORN, UKT.BRAMBLE, UKT.HAWTHORN], sprigL: 0.75, leafDens: 110, leaf: { t: UKL.HAWTH, L: 0.05, asp: 0.8, col: [0.7, 0.85, 0.55] } }, sp: [0.92, 0.96, 0.86], v: [0.45, 0.04, 0.7, 2], m: [0.3, 0.8, 0, 0], sink: 0.1 },
+  { k: 'HEDGE_ESCALLONIA', gen: 'hedge', h: [0.8, 2.4], a: [0, 9], P: { L: 1.6, W: 0.9, H: 1.6, face: UKT.F_ESCALLONIA, sprig: [UKT.ESCALLONIA], sprigL: 0.35, leafDens: 220, leaf: { t: UKL.ELL, L: 0.035, asp: 0.5, col: [0.55, 0.75, 0.5] } }, sp: [0.9, 0.95, 0.88], v: [0.35, 0, 0.4, 2], m: [0.9, 0.45, 0, 0], sink: 0.05 },
   { k: 'HEDGE_LEYLAND', gen: 'hedge', h: [1.5, 5], a: [0, 9], P: { L: 1.8, W: 1.0, H: 2.6, face: UKT.F_LEYLAND, sprig: [UKT.LEYLAND], sprigL: 0.45, leafDens: 60, leaf: { t: UKL.ELL, L: 0.05, asp: 0.6, col: [0.62, 0.74, 0.62] } }, sp: [0.86, 0.92, 0.88], v: [0.3, 0, 0.2, 2], m: [0.2, 0.35, 0, 0], sink: 0.05 },
   { k: 'BRAMBLE', gen: 'ground', kind: 'bramble', h: [0.5, 2], a: [0, 9], sp: [0.92, 0.95, 0.88], v: [0.5, 0, 0.7, 0], m: [0.3, 0.85, 0, 0], sink: 0.05 },
   { k: 'FERN', gen: 'ground', kind: 'fern', h: [0.3, 1.5], a: [0, 9], sp: [1.0, 1.02, 0.85], v: [0.5, 0.05, 1, 0], m: [0.1, 1.0, 0, 0], sink: 0.03 },
@@ -843,7 +868,7 @@ const UK_MIX = {
   holiday: [[UKS.CORDYLINE, 20], [UKS.LEYLAND, 18], [UKS.HOLMOAK, 12], [UKS.MONTPINE, 12], [UKS.SYCAMORE, 10], [UKS.HAWTHORN_WIND, 10], [UKS.BIRCH, 8], [UKS.SEABUCKTHORN, 10]],
   seafront: [[UKS.CORDYLINE, 48], [UKS.MONTPINE, 16], [UKS.HOLMOAK, 16], [UKS.SCOTSPINE, 6], [UKS.SYCAMORE, 6], [UKS.HAWTHORN_WIND, 8]],
   dune: [[UKS.SEABUCKTHORN, 50], [UKS.HAWTHORN_WIND, 30], [UKS.BLACKTHORN, 20]],
-  backdune: [[UKS.SEABUCKTHORN, 34], [UKS.HAWTHORN_WIND, 30], [UKS.BLACKTHORN, 20], [UKS.HOLMOAK, 8], [UKS.MONTPINE, 8]],
+  backdune: [[UKS.SEABUCKTHORN, 38], [UKS.HAWTHORN_WIND, 32], [UKS.BLACKTHORN, 22], [UKS.HOLMOAK, 4], [UKS.MONTPINE, 4]],
   scrub: [[UKS.HAWTHORN, 36], [UKS.BLACKTHORN, 30], [UKS.HAWTHORN_WIND, 6], [UKS.HOLLY, 8], [UKS.SYCAMORE, 8], [UKS.ASH, 7], [UKS.OAK, 5]],
   fieldedge: [[UKS.OAK, 36], [UKS.ASH, 32], [UKS.SYCAMORE, 14], [UKS.HAWTHORN, 10], [UKS.HOLLY, 3], [UKS.BEECH, 3], [UKS.BLACKTHORN, 2]],
 };
@@ -899,7 +924,7 @@ function ukGround(x, y, z, kind, size, seed) {
 }
 // the floor of a wood: ivy carpet in the shade, male ferns, bramble where light comes in, holly seedlings
 function ukWoodFloor(x, y, z, seed, light) {
-  const u = ukSeed(seed), l = light === undefined ? 0.3 : sat(light), r = fract(u * 11.3);
+  const u = ukSeed(seed), l = light === undefined ? 0.3 : sat(light), r = fract(u * 11.3); UKV.stats.floor++;
   if (r < 0.42 - 0.2 * l) return ukGround(x, y, z, 'ivy', lerp(0.8, 1.3, fract(u * 5.1)), u);
   if (r < 0.62) return ukGround(x, y, z, 'fern', lerp(0.7, 1.25, fract(u * 4.3)), u);
   if (r < 0.62 + 0.25 * l) return ukGround(x, y, z, 'bramble', lerp(0.6, 1.15, fract(u * 6.7)), u);
@@ -944,7 +969,7 @@ function ukHedge(pts, kind, opt) {
   UKV.stats.hedge += n; UKV.stats.hedgeM += along;
   return n;
 }
-function ukBegin(push) { UKV.push = push; UKV.stats.trees = UKV.stats.shrubs = UKV.stats.ground = UKV.stats.hedge = UKV.stats.hedgeM = 0; UKV.t0 = performance.now(); if (window.__cap) window.__cap.ukv = UKV; }
+function ukBegin(push) { UKV.push = push; UKV.stats.trees = UKV.stats.shrubs = UKV.stats.ground = UKV.stats.hedge = UKV.stats.hedgeM = UKV.stats.floor = 0; UKV.t0 = performance.now(); if (window.__cap) window.__cap.ukv = UKV; }
 
 // ------------------------------------------------------------------------- the old archetype roles on the town map
 // townVegPlace pushes archetypes 0..8 of the Serra's set; here they become British species chosen from the zone under
@@ -1002,6 +1027,8 @@ function ukGalleryPlace(V, half) {
   ukHedge([hx, Z + 14, hx, Z + 26], UKS.HEDGE_LEYLAND, { h: 2.4, yAt: y0, seed: 4 });
   ukHedge([hx, Z + 34, hx - 2, Z + 60, hx + 1, Z + 92], UKS.HEDGE_HAWTHORN, { h: 2.4, trees: 4, yAt: y0, seed: 5 });
   ukHedge([hx - 4, Z - 60, hx - 14, Z - 60], UKS.HEDGE_PRIVET, { h: 0.9, yAt: y0, seed: 6 });   // a low front-garden hedge round a corner
+  const bs = []; for (let k = 0; k < 6; k++) bs.push(hx - 16, Z - 52 + k * 3, hx - 16, Z - 49 + k * 3, 3, 1.2, 0);   // (a boundary as the town hands it over)
+  ukBoundaryHedges(bs);
   const patch = (kind, zc, n, r) => { for (let k = 0; k < n; k++) { const a = rnd() * TAU, d = Math.sqrt(rnd()) * r; ukGround(X - 100 + Math.cos(a) * d, 0, Z + zc + Math.sin(a) * d, kind, 0, rnd()); } };
   patch('bramble', -40, 5, 2.5); patch('fern', -25, 9, 2.5); patch('ivy', -10, 9, 3); patch('grass', 20, 18, 3);
   for (let k = 0; k < 70; k++) { const a = rnd() * TAU, d = Math.sqrt(rnd()) * 6; ukDunes(X - 100 + Math.cos(a) * d, 0, Z + 5 + Math.sin(a) * d, sat(d / 6 - 0.3), rnd()); }
@@ -1056,17 +1083,20 @@ if (Q.get('scene') === 'uktrees') queueMicrotask(() => BUILD.push(async () => {
 // along front gardens (garden cells next to the pavement or the road), and round the fields beside lanes, tracks and
 // gardens (hawthorn hedgerows with their oaks and ashes). Each ~22 m plot of frontage gets one kind or none (walls,
 // fences, open drives), so a street reads house by house. Modules are laid 1.5 m apart along the edge, turned to it.
-function ukZoneHedges() {
+// fieldsOnly: only the field boundaries away from roads (field to garden, grass or wood): when the town builds its own
+// front-garden and lane boundaries (TOWN.bsegs), those are its job (see ukBoundaryHedges).
+function ukZoneHedges(fieldsOnly) {
   const T = TOWN; if (!T.on || !T.zone) return 0;
   const Z = T.zone, zw = T.zw, zh = T.zh, st = 2, gs = 1.4, near = new Map(), gk = (i, j) => i * 65536 + j;
   const front = new Uint8Array(18), lane = new Uint8Array(18);
-  for (const c of [TZ.PAVE, TZ.ROAD, TZ.KERB]) front[c] = 1;
-  for (const c of [TZ.ROAD, TZ.KERB, TZ.PAVE, TZ.TRACK, TZ.PATH, TZ.GARDEN, TZ.GRASS]) lane[c] = 1;
+  if (!fieldsOnly) for (const c of [TZ.PAVE, TZ.ROAD, TZ.KERB]) front[c] = 1;
+  for (const c of fieldsOnly ? [TZ.GARDEN, TZ.GRASS, TZ.WOOD] : [TZ.ROAD, TZ.KERB, TZ.PAVE, TZ.TRACK, TZ.PATH, TZ.GARDEN, TZ.GRASS]) lane[c] = 1;
   const at = (i, j) => i < 0 || j < 0 || i >= zw || j >= zh ? TZ.OUT : Z[j * zw + i];
   let n = 0; const rot = new Float64Array(1);
   for (let j = 2; j < zh - 2; j += st) for (let i = 2; i < zw - 2; i += st) {
-    const c = Z[j * zw + i]; if (c !== TZ.GARDEN && c !== TZ.FIELD) continue;
+    const c = Z[j * zw + i]; if ((c !== TZ.GARDEN || fieldsOnly) && c !== TZ.FIELD) continue;
     const isEdge = c === TZ.GARDEN ? front : lane;
+    if (!isEdge[Z[j * zw + i + 2]] && !isEdge[Z[j * zw + i - 2]] && !isEdge[Z[(j + 2) * zw + i]] && !isEdge[Z[(j - 2) * zw + i]]) continue;   // (inside the plot)
     let ex = 0, ez = 0, cnt = 0;   // the outward direction: sum over the 5x5 ring of the neighbours across the edge
     for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) { if (!di && !dj) continue; if (isEdge[at(i + di, j + dj)]) { ex += di; ez += dj; cnt++; } }
     if (!cnt || cnt > 14) continue;
@@ -1094,5 +1124,57 @@ function ukZoneHedges() {
   UKV.stats.hedge += n;
   return n;
 }
-// end of the town's planting: the zone hedges if the map code laid none
-function ukEnd() { const t = performance.now(); if (TOWN.on && !UKV.stats.hedge && !Q.has('nohedge')) ukZoneHedges(); UKV.time.zoneHedges = performance.now() - t; UKV.time.place = performance.now() - UKV.t0; }
+// British hedges for the town's boundary segments: TOWN.bsegs = [x0, z0, x1, z1, code, height, look] x n, code 3 =
+// hedge (13_wsm_town.js, townBoundaries). Joins the pieces into polylines and plants them with ukHedge: hawthorn
+// hedgerows along the village and country lanes (north of Worlebury Hill, or beside fields), elsewhere the front
+// gardens' privet, escallonia, beech or Leyland cypress, one kind per ~22 m of frontage. For the town code to call in
+// place of its green boxes for code 3 (then nothing else plants hedges there).
+function ukBoundaryHedges(segs) {
+  segs = segs || TOWN.bsegs; if (!segs || !UKV.push) return 0;
+  const T = TOWN, zoneAt = (x, z) => { if (!T.zone) return TZ.OUT; const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i < 0 || j < 0 || i >= T.zw || j >= T.zh ? TZ.OUT : T.zone[j * T.zw + i]; };
+  let n = 0, line = null, h = 0, lx = 1e9, lz = 1e9;
+  const flush = () => {
+    if (!line) return; const mx = line[line.length >> 1 & ~1], mz = line[(line.length >> 1 & ~1) + 1], north = mz < -2000;
+    let field = false; for (let a = 0; a < 4 && !field; a++) field = zoneAt(mx + Math.cos(a * PI / 2) * 3, mz + Math.sin(a * PI / 2) * 3) === TZ.FIELD;
+    const ph = hash2(Math.floor(mx / 22) + 4099, Math.floor(mz / 22) + 7919);
+    const kind = field || (north && h >= 1.5) ? UKS.HEDGE_HAWTHORN : north ? (ph < 0.4 ? UKS.HEDGE_ESCALLONIA : ph < 0.7 ? UKS.HEDGE_PRIVET : UKS.HEDGE_LEYLAND)
+      : ph < 0.55 ? UKS.HEDGE_PRIVET : ph < 0.72 ? UKS.HEDGE_ESCALLONIA : ph < 0.86 ? UKS.HEDGE_BEECH : UKS.HEDGE_LEYLAND;
+    n += ukHedge(line, kind, { h: kind === UKS.HEDGE_HAWTHORN ? Math.max(1.8, h + 0.3) : h, seed: ph * 1000, trees: kind === UKS.HEDGE_HAWTHORN ? 1.5 : 0 });
+    line = null;
+  };
+  for (let q = 0; q + 6 < segs.length; q += 7) {
+    if (segs[q + 4] !== 3) continue;
+    const ax = segs[q], az = segs[q + 1], bx = segs[q + 2], bz = segs[q + 3], hg = segs[q + 5] || 1.5;
+    if (line && Math.abs(ax - lx) < 0.05 && Math.abs(az - lz) < 0.05 && Math.abs(hg - h) < 0.05) line.push(bx, bz);
+    else { flush(); line = [ax, az, bx, bz]; h = hg; }
+    lx = bx; lz = bz;
+  }
+  flush();
+  return n;
+}
+// the floor of the woods along their roads, tracks and paths (where it is seen from): ivy carpet, ferns, bramble where
+// the light comes in at the edge, holly seedlings; ~3.2 m apart up to 40 m into the wood
+function ukWoodEdges() {
+  const T = TOWN; if (!T.on || !T.zone) return 0;
+  const Z = T.zone, zw = T.zw, zh = T.zh, rnd = mkRng(6151), gw = 3.2, way = new Uint8Array(18); for (const c of [TZ.ROAD, TZ.PATH, TZ.TRACK, TZ.KERB]) way[c] = 1;
+  const at = (x, z) => { const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i < 0 || j < 0 || i >= zw || j >= zh ? TZ.OUT : Z[j * zw + i]; };
+  let n = 0;
+  for (let z0 = T.z0 + 16; z0 < T.z1 - 16; z0 += gw) for (let x0 = T.x0 + 16; x0 < T.x1 - 16; x0 += gw) {
+    if (at(x0, z0) !== TZ.WOOD) continue;
+    let d = 99; for (const r of [6, 14, 26, 40]) { for (let a = 0; a < 8; a++) if (way[at(x0 + Math.cos(a * 0.785) * r, z0 + Math.sin(a * 0.785) * r)]) { d = r; break; } if (d < 99) break; }
+    if (d > 40) continue;
+    const x = x0 + rnd() * gw, z = z0 + rnd() * gw; if (at(x, z) !== TZ.WOOD) continue;
+    n += ukWoodFloor(x, hfAt(x, z), z, rnd(), d <= 6 ? 0.9 : d <= 14 ? 0.55 : 0.3);
+  }
+  return n;
+}
+// end of the town's planting: hedges from the zone raster if the map code laid none (only the field boundaries when the
+// town builds its own front-garden and lane boundaries), the woods' floor along their ways if it planted none;
+// ?nohedge, ?nofloor turn them off
+function ukEnd() {
+  const t = performance.now();
+  if (TOWN.on && !UKV.stats.hedge && !Q.has('nohedge')) ukZoneHedges(!!TOWN.bsegs);
+  UKV.time.zoneHedges = performance.now() - t;
+  if (TOWN.on && !UKV.stats.floor && !Q.has('nofloor')) UKV.stats.floorAuto = ukWoodEdges();
+  UKV.time.place = performance.now() - UKV.t0;
+}

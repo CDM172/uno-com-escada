@@ -53,7 +53,7 @@ fn surf(in: V2F, ff: bool) -> Surface {
   let wetM = 1.0 - smoothstep(0.0, 3.5, hs + (nA.g - 0.5) * 2.0);
   var md = mix(vec3f(0.15, 0.13, 0.1), vec3f(0.075, 0.068, 0.055), wetM) * (0.85 + 0.3 * nB.b) * (0.9 + 0.2 * nC.r);
   // ---- hard standing (yards, paving, car parks)
-  var hd = vec3f(0.17, 0.165, 0.155) * (0.75 + 0.4 * nB.r) * (0.85 + 0.3 * nC.b);
+  var hd = vec3f(0.17, 0.165, 0.155) * (0.75 + 0.4 * nB.r) * (0.85 + 0.3 * nC.r);   // (fbm: the cellular channel read as dots)
   hd = mix(hd, vec3f(0.08, 0.08, 0.085), smoothstep(0.5, 0.7, nA.b) * 0.6);
   let wsum = gr + sa + mu + forest + hard + 1e-4;
   var alb = (g * gr + sd * sa + md * mu + lit * forest + hd * hard) / wsum;
