@@ -509,7 +509,7 @@ def bake_caravans(areas, bl, lidar, lu_lookup, log):
                 ht = float(min(3.6, max(2.4, np.percentile(chm[cj.astype(int), ci.astype(int)], 70) - 0.35)))
                 ang = math.remainder(math.atan2(uz, ux), math.pi)
                 if ang < 0: ang += math.pi
-                out.append((cx, cz, ring2, 0, ht, 1, ang, hc, lu_lookup(cx, cz), 0.35, 1))
+                out.append((cx, cz, ring2, 0, ht, 1, ang, hc, lu_lookup(cx, cz), 0.22, 1))
     log(f'static caravans from the LIDAR: {len(out)} on {nsite} caravan sites')
     return out
 

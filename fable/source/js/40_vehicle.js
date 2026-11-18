@@ -271,7 +271,7 @@ function vehicleStep(keys) {
 }
 // colisão com as barreiras laterais: testa os 4 cantos, empurra de volta e reflete a velocidade
 function vehicleCollide() {
-  if (TOWN.on) { townCollide(); return; }   // Weston-super-Mare: buildings, the sea and the edge of the map
+  if (TOWN.on) { townCollide(); if (TRAF.on) trafficCollide(); return; }   // Weston-super-Mare: buildings, the sea and the edge of the map; parked and moving cars (43_traffic.js)
   const V = VEH, P = VP, c = Math.cos(V.yaw), s = Math.sin(V.yaw);
   for (let k = 0; k < 4; k++) {
     const lx = k < 2 ? P.front : -P.rear, lz = (k & 1) ? P.halfW : -P.halfW;

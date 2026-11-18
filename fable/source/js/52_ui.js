@@ -38,7 +38,7 @@ function uiInit() {
       b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('car', c); location.search = q.toString(); };
       list.appendChild(b);
     }
-    if (CARSEL === 'oxa') UI.garage.open = true;
+    if (CARSEL === 'oxa') { UI.garage.open = true; const sb = list.querySelector('.sel'); if (sb) requestAnimationFrame(() => { list.scrollTop = sb.offsetTop - list.offsetTop - list.clientHeight / 2 + sb.offsetHeight; }); }
   }
   // Graphics chooser (start screen and pause menu): picking the other mode reloads the page with ?gfx=..., which is saved.
   const gfxNow = GFX === 'fast' ? 'fast' : 'full';

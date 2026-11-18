@@ -98,6 +98,12 @@ function oxaTorque(r) {
   const u = (r - P.rpmT) / (P.rpmMax - P.rpmT); return P.tq * (1 - (1 - P.tqE) * u * u);
 }
 
+// Material variant of a lamp lens (id 22) of a garage car: a clear lens behind the rear axle covers a tail lamp (the converter
+// names the clear covers "lens"; drawn opaque, they would hide the red lamp under them), so it is drawn red (a = 1).
+function oxaLensA(ch, pos, sc, L) {
+  if (ch.id !== 22 || ch.a) return ch.a || 0;
+  let x = 0; for (let q = 0; q < ch.nv; q++) x += pos[q * 3]; return x * sc / ch.nv < -L / 2 - 0.2 ? 1 : 0;
+}
 // model year, from the id (audi_q7_2015 → 2015)
 function oxaYear(id) { const m = id.match(/(19|20)\d\d/); return m ? m[0] : ''; }
 
@@ -125,39 +131,41 @@ function oxaTable(e) {
 }
 const BC_OXA = CARSEL === 'oxa' ? oxaTable(OXA_CARS[OXA.i]) : null;
 
-// ---- any garage car as plain meshes (the Weston-super-Mare traffic): body and the four wheels in the car's frame, the
-// paint colour written into the vertex colours (paint = null: left white, for a colour per object slot); glass apart.
-// Wheels: the one wheel of the data at the four hubs, turned round on the left. lowWheel: a plain 12-sided wheel instead
-// (parked cars far away: a fifth of the triangles). Returns {mb, glass, tris}.
-async function oxaMeshes(i, paint, lowWheel) {
-  const e = OXA_CARS[i], M = e.meta, k = M.car, sc = 1 / M.scale, buf = await bcInflate(e.b64);
-  const mb = new MeshBuilder(1 << 13), gl = new MeshBuilder(1 << 10), wheel = []; let off = 0;
-  const emit = (dst, ch, pos, nrm, idx, c) => {
-    const v0 = dst.nv; dst.mat(ch.id, ch.a || 0); dst.color(c[0], c[1], c[2]);
-    for (let q = 0; q < ch.nv; q++) dst.v(pos[q * 3] * sc, pos[q * 3 + 1] * sc, pos[q * 3 + 2] * sc, nrm[q * 4], nrm[q * 4 + 1], nrm[q * 4 + 2], 1, 0);
-    for (let q = 0; q < ch.ni; q += 3) dst.tri(v0 + idx[q], v0 + idx[q + 1], v0 + idx[q + 2]);
-  };
+// ---- any garage car as plain meshes (the Weston-super-Mare traffic, 43_traffic.js). oxaChunks decodes car i once into
+// its chunks (typed-array views of the inflated data); oxaEmit writes them into MeshBuilders through their current
+// transform: body and the four wheels into mb (the one wheel of the data at the four hubs, turned round on the left), the
+// glass into gl, the paint colour into the vertex colours (paint = null: white, for a colour per object slot). lowWheel:
+// a plain 12-sided wheel instead of the model's (parked cars: a fifth of the triangles).
+async function oxaChunks(i) {
+  const e = OXA_CARS[i], M = e.meta, buf = await bcInflate(e.b64), out = { car: M.car, sc: 1 / M.scale, body: [], glass: [], wheel: [] }; let off = 0;
   for (const ch of M.chunks) {
     const nv = ch.nv, ni = ch.ni;
     const pos = new Int16Array(buf, off, nv * 3); off = (off + nv * 6 + 3) & ~3;
     const nrm = new Int8Array(buf, off, nv * 4); off += nv * 4;
     if (ch.uv) off += nv * 8;
     const idx = ch.i32 ? new Uint32Array(buf, off, ni) : new Uint16Array(buf, off, ni); off = (off + ni * (ch.i32 ? 4 : 2) + 3) & ~3;
-    const c = ch.id === 20 && paint ? paint : ch.c || [1, 1, 1];
-    if (ch.t === 'wheel') { if (!lowWheel) wheel.push([ch, pos, nrm, idx, c]); }
-    else emit(ch.t === 'glass' ? gl : mb, ch, pos, nrm, idx, c);
+    (ch.t === 'glass' ? out.glass : ch.t === 'wheel' ? out.wheel : out.body).push([ch, pos, nrm, idx]);
   }
-  // the four wheels, baked in (the wheel frame: axle along Z, outer face +Z; on the left turned half round about Y)
+  return out;
+}
+function oxaEmit(mb, gl, md, paint, lowWheel) {
+  const sc = md.sc, k = md.car;
+  const emit = (dst, [ch, pos, nrm, idx]) => {
+    const c = ch.id === 20 && paint ? paint : ch.id === 22 && ch.a === 0 && oxaLensA(ch, pos, sc, k.wheelbase) ? [0.6, 0.02, 0.015] : ch.c || [1, 1, 1], v0 = dst.nv;
+    dst.mat(ch.id, oxaLensA(ch, pos, sc, k.wheelbase)); dst.color(c[0], c[1], c[2]);
+    for (let q = 0; q < ch.nv; q++) dst.v(pos[q * 3] * sc, pos[q * 3 + 1] * sc, pos[q * 3 + 2] * sc, nrm[q * 4], nrm[q * 4 + 1], nrm[q * 4 + 2], 1, 0);
+    for (let q = 0; q < ch.ni; q += 3) dst.tri(v0 + idx[q], v0 + idx[q + 1], v0 + idx[q + 2]);
+  };
+  for (const c of md.body) emit(mb, c);
+  for (const c of md.glass) emit(gl, c);
   const t = m4();
   for (let w = 0; w < 4; w++) {
     const hb = k.hubs[w], left = (w & 1) === 0;
     t.fill(0); t[0] = left ? -1 : 1; t[5] = 1; t[10] = left ? -1 : 1; t[15] = 1; t[12] = hb[0]; t[13] = hb[1]; t[14] = hb[2];
     mb.push(t);
-    if (lowWheel) oxaLowWheel(mb, k.wheelR);
-    else for (const [ch, pos, nrm, idx, c] of wheel) emit(mb, ch, pos, nrm, idx, c);
+    if (lowWheel) oxaLowWheel(mb, k.wheelR); else for (const c of md.wheel) emit(mb, c);
     mb.pop();
   }
-  return { mb, glass: gl, tris: (mb.ni + gl.ni) / 3 };
 }
 // a plain wheel in the wheel frame: 12-sided tyre (tread and both walls) and a silver disc on the outer face
 function oxaLowWheel(mb, R) {

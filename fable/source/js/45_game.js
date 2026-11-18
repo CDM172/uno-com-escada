@@ -164,6 +164,7 @@ function gameRestart() {
   const V = VEH; V.lapS = 0; V.offCount = 0; V.hits = 0; V.laps = 0; V.time = 0; V.steps = 0; V.spin.fill(0); V.susp.fill(0);
   vehicleReset(TRK.L + TRK.startS, TRK.startD, 0); GS.held = 0; GS.tick60 = 0; GS.acc = 0; GS.sub = 0; GS.keys = GS.prevKeys = 0; GS.cam = +(Q.get('cam') || 0); GS.chaseInit = false; GS.tvCur = -1; GS.cut = true;
   if (typeof fxReset === 'function') fxReset();
+  if (TRAF.on) trafficReset();   // Weston-super-Mare traffic: back to its first places (43_traffic.js)
   if (GAD.on) { gadReset(); AI.script = GS.replayOn ? AI_DEMO : null; }   // the scripted lap of the DB5 changes cameras and shows the gadgets
   GS.lapSeen = GS.lapMax = 0; LAP[0] = LAP[1] = LAP[3] = 0;
   GS.alpha = 1; gamePose(); gameCamera();
@@ -185,6 +186,7 @@ function gameStep() {
   }
   GS.sub++;
   vehicleStep(GS.keys);
+  if (TRAF.on) trafficStep();
   if (VEH.laps !== GS.lapSeen) lapCross();
   if (GAD.on) gadStep(GS.keys);
   if (GS.fxOn && typeof fxStep === 'function') fxStep();
@@ -258,6 +260,7 @@ function gamePose() {
   const f = FR.data, o = FO.car; f[o] = bp[0]; f[o + 1] = GS.speed; f[o + 2] = GS.steer; f[o + 3] = 0;
   f[FO.car2] = (GS.tick60 < 30 && GS.speed < 0.5) ? 1 : 0;   // luzes de largada: acesas só enquanto o carro espera no grid
   R.cube.pos[0] = B[4] * 1.15 + B[12]; R.cube.pos[1] = B[5] * 1.15 + B[13]; R.cube.pos[2] = B[6] * 1.15 + B[14];
+  if (TRAF.on) trafficPose();
 }
 // rotações lendo o ângulo do registrador ROTQ[0] (sem números por argumento)
 const ROTQ = new Float64Array(1);

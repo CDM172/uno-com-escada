@@ -42,7 +42,9 @@ fn surf(in: V2F, ff: bool) -> Surface {
   let hedge = (1.0 - smoothstep(0.02, 0.06, abs(fcell - 0.5) - 0.0)) * rough * select(0.0, 1.0, !wmIn(xz));
   g = mix(g, vec3f(0.035, 0.06, 0.02), hedge * 0.8);
   // ---- woodland floor
-  let lit = mix(vec3f(0.05, 0.04, 0.025), vec3f(0.04, 0.07, 0.02), nC.g) * (0.7 + 0.5 * nD.r);
+  // (brown leaf litter with patches of ivy: under the beeches of Weston Woods there is little grass)
+  let ivy = smoothstep(0.45, 0.75, nB.g);
+  let lit = mix(mix(vec3f(0.062, 0.042, 0.024), vec3f(0.045, 0.034, 0.02), nC.g), vec3f(0.026, 0.045, 0.018), ivy * 0.8) * (0.7 + 0.5 * nD.r);
   // ---- sand: dry and pale at the top of the beach, darker and wet towards the water
   let wetS = 1.0 - smoothstep(1.2, 4.5, hs + (nB.r - 0.5) * 1.5);
   var sd = mix(vec3f(0.46, 0.36, 0.22), vec3f(0.22, 0.17, 0.11), wetS) * (0.88 + 0.2 * nC.r) * (0.94 + 0.12 * nD.b * near2);

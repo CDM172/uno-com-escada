@@ -325,7 +325,8 @@ function townRasterBuild() {
 // The sea wall: along the edges of the beach polygons, wherever the ground just inland stands a metre or more above the
 // sand just seaward, a grey stone wall from the sand to a parapet 0.9 m above the promenade (solid; gaps at the slipways).
 function townSeaWalls() {
-  const T = TOWN, A = T.ad, ai = T.ainfo, W = T.walls; let r = 0; W.length = 0;
+  const T = TOWN, A = T.ad, ai = T.ainfo, W = T.walls, Z = T.zone, natural = new Uint8Array(18); let r = 0; W.length = 0;
+  for (const c of [TZ.DUNE, TZ.GRASS, TZ.WOOD, TZ.FIELD, TZ.GARDEN]) natural[c] = 1;
   for (let q = 0; q < ai.length / 2; q++) {
     const c = ai[q * 2], nr = ai[q * 2 + 1];
     if (c === 6) for (let rr = r; rr < r + nr; rr++) {
@@ -341,6 +342,9 @@ function townSeaWalls() {
           if (mx < T.x0 + 20 || mz < T.z0 + 20 || mx > T.x1 - 20 || mz > T.z1 - 20) continue;
           const hb = hfAt(mx + ix * 5, mz + iz * 5), hl = Math.max(hfAt(mx - ix * 4, mz - iz * 4), hfAt(mx - ix * 7, mz - iz * 7));
           if (hl - hb < 1.0) continue;
+          // a promenade stands behind a sea wall; dunes, grass and woods slope down to the beach (Sand Bay, Uphill)
+          const zc = Z[Math.min(T.zh - 1, Math.max(0, (mz - iz * 6 - T.z0) | 0)) * T.zw + Math.min(T.zw - 1, Math.max(0, (mx - ix * 6 - T.x0) | 0))];
+          if (natural[zc]) continue;
           W.push(x0, z0, x1, z1, Math.min(hb, hfAt(mx, mz)) - 0.6, hl + 0.9);
         }
       }

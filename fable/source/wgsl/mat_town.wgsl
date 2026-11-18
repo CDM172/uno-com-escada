@@ -33,7 +33,7 @@ fn tarmac(in: V2F, N: vec3f, dist: f32) -> Surface {
   var a = vec3f(0.092, 0.09, 0.087) * (0.78 + 0.44 * n1.r) * (0.84 + 0.3 * n2.r);
   let patchM = smoothstep(0.6, 0.66, n1.g * 0.7 + n2.b * 0.4);
   a = mix(a, vec3f(0.052, 0.052, 0.054), patchM * 0.8);
-  a *= 1.0 + (n3.b - 0.5) * 0.12 + (n4.b - 0.5) * 0.1 * near2;
+  a *= 1.0 + (n3.r - 0.5) * 0.12 + (n4.g - 0.5) * 0.08 * near2;   // (fbm channels: the cellular one read as cobbles)
   s.albedo = a; s.rough = 0.86 - 0.08 * patchM;
   let g = (n3.rg - 0.5) * 0.1 * near + (n4.rg - 0.5) * 0.2 * near2;
   s.normal = bumpXZ(N, g);
@@ -66,7 +66,7 @@ fn roadSurf(in: V2F, N: vec3f) -> Surface {
     let leaves = smoothstep(0.62, 0.74, lf.b) * (0.06 + 0.94 * (1.0 - smoothstep(0.35, 1.3, e)));
     let lc = mix(vec3f(0.22, 0.12, 0.04), vec3f(0.3, 0.2, 0.06), lf.r) * (0.7 + 0.5 * lf.g);
     s.albedo = mix(s.albedo, lc, leaves * 0.85); s.rough = mix(s.rough, 0.92, max(leaves, edgeW));
-    s.albedo *= 0.88 + 0.12 * ln.b;                                                                  // damp under the canopy
+    s.albedo *= 0.88 + 0.12 * ln.r;                                                                  // damp under the canopy
   }
   s.albedo = mix(s.albedo, vec3f(0.62, 0.62, 0.6), m);
   s.albedo = mix(s.albedo, vec3f(0.6, 0.42, 0.04), y);

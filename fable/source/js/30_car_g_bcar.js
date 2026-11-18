@@ -119,7 +119,7 @@ function bcarDecode(buf) {
     let side = -1, side2 = -1;
     if (opt.split) { let zs = 0; for (let i = 0; i < nv; i++) zs += pos[i * 3 + 2]; side = zs >= 0 ? 1 : 0; if (ch.m) side2 = 1 - side; }
     const gr = group(tg, kind, side, glass, !!glow), mb = gr.mb, v0 = mb.nv, i0 = mb.ni, c = ch.id === 20 && BC.paint ? BC.paint : ch.c || [1, 1, 1];   // (garage cars: the paint colour goes into the vertex colour)
-    if (glow) mb.mat(glow, 0); else mb.mat(ch.id, ch.a || 0);
+    if (glow) mb.mat(glow, 0); else mb.mat(ch.id, BC.paint ? oxaLensA(ch, pos, sc, BCG.wheelbase) : ch.a || 0);   // (garage cars: clear covers of the tail lamps drawn red)
     mb.color(c[0], c[1], c[2]);
     const b = bb[ch.t] || (bb[ch.t] = [1e9, -1e9, 1e9, -1e9, 1e9, -1e9, 1e9, -1e9]);
     for (let i = 0; i < nv; i++) {

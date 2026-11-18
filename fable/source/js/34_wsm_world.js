@@ -736,8 +736,8 @@ function townTollBuild(mb, rs) {
     const tx = (bx - ax) / L, tz = (bz - az) / L, ang = Math.atan2(tz, tx);
     // (the W profile: two ridges either side of a groove, on a spacer, on steel posts)
     mb.push(m4mul(m4(), m4translate(m4(), (ax + bx) / 2, 0, (az + bz) / 2), m4rotY(m4(), -ang)));
-    mb.mat(15).color(0.25, 0.26, 0.27, 1); mb.box(0, y + 0.66, 0, L + 0.05, 0.13, 0.09); mb.box(0, y + 0.47, 0, L + 0.05, 0.13, 0.09);
-    mb.color(0.15, 0.155, 0.16, 1); mb.box(0, y + 0.565, 0, L + 0.05, 0.08, 0.05);
+    mb.mat(15).color(0.15, 0.155, 0.16, 1); mb.box(0, y + 0.66, 0, L + 0.05, 0.13, 0.09); mb.box(0, y + 0.47, 0, L + 0.05, 0.13, 0.09);
+    mb.color(0.09, 0.095, 0.1, 1); mb.box(0, y + 0.565, 0, L + 0.05, 0.08, 0.05);
     mb.pop();
     mb.color(0.17, 0.175, 0.18, 1); mb.box(ax, y + 0.36, az, 0.12, 0.82, 0.08);
   }
