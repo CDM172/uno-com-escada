@@ -682,8 +682,67 @@ def load_survey(path, log):
     return ways, corners, summ
 
 
+def _survey_near(st, sx, sz, x, z, tx, tz, r2=36.0):
+    """the nearest station to (x, z) within sqrt(r2) m, turned into the direction (tx, tz): (station, kerb points (or
+    None) left and right in world space, pl, pr, el, er) or None"""
+    d2 = (sx - x) ** 2 + (sz - z) ** 2; j = int(np.argmin(d2))
+    if d2[j] > r2:
+        return None
+    X, Z, hd, kl, kr, pl, pr, el, er, cl, cr = st[j]
+    nx, nz = -math.sin(math.radians(hd)), math.cos(math.radians(hd))
+    Lp = (X + nx * kl, Z + nz * kl) if kl is not None else None
+    Rp = (X + nx * kr, Z + nz * kr) if kr is not None else None
+    if tx * math.cos(math.radians(hd)) + tz * math.sin(math.radians(hd)) < 0:     # (the road runs against the way)
+        Lp, Rp, pl, pr, el, er = Rp, Lp, pr, pl, er, el
+    return Lp, Rp, pl, pr, el, er
+
+
+def _resample(part, step):
+    """points every <= step m along a polyline (its own vertices kept), with their tangents"""
+    out = [part[0]]
+    for (ax, az), (bx, bz) in zip(part, part[1:]):
+        L = math.hypot(bx - ax, bz - az); n = max(1, int(math.ceil(L / step)))
+        for k in range(1, n + 1): out.append((ax + (bx - ax) * k / n, az + (bz - az) * k / n))
+    tg = []
+    for i in range(len(out)):
+        a, b = out[max(0, i - 1)], out[min(len(out) - 1, i + 1)]; l = math.hypot(b[0] - a[0], b[1] - a[1]) or 1
+        tg.append(((b[0] - a[0]) / l, (b[1] - a[1]) / l))
+    return out, tg
+
+
+def survey_shift(part, st, wmed):
+    """the part moved onto the surveyed carriageway's centre (smoothly, back onto the OSM line within 10 m of each end,
+    where it meets other roads), every 5 m; unchanged where nothing was measured"""
+    if not st or len(part) < 2:
+        return part
+    pts, tg = _resample(part, 5.0)
+    sx = np.array([q[0] for q in st]); sz = np.array([q[1] for q in st])
+    n = len(pts); c = np.full(n, np.nan)
+    for i, ((x, z), (tx, tz)) in enumerate(zip(pts, tg)):
+        q = _survey_near(st, sx, sz, x, z, tx, tz)
+        if not q: continue
+        Lp, Rp = q[0], q[1]; nx, nz = -tz, tx
+        l = ((Lp[0] - x) * nx + (Lp[1] - z) * nz) if Lp else None; r = ((Rp[0] - x) * nx + (Rp[1] - z) * nz) if Rp else None
+        if l is not None and r is not None and r - l > 2.0: c[i] = (l + r) / 2
+        elif wmed and l is not None: c[i] = l + wmed / 2
+        elif wmed and r is not None: c[i] = r - wmed / 2
+    if np.all(np.isnan(c)):
+        return part
+    idx = np.arange(n); ok = ~np.isnan(c)
+    c = np.interp(idx, idx[ok], c[ok])                       # (gaps: between the measured stretches)
+    if n >= 5: c = np.convolve(np.pad(c, 2, mode='edge'), np.ones(5) / 5, mode='valid')   # (+-10 m)
+    s = np.concatenate([[0], np.cumsum([math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:])])]); L = s[-1]
+    taper = np.clip(np.minimum(s, L - s) / 10.0, 0, 1); taper = taper * taper * (3 - 2 * taper)
+    c = np.clip(c, -3.0, 3.0) * taper
+    if np.max(np.abs(c)) < 0.15:
+        return part
+    out = [(x - tz * ci, z + tx * ci) for (x, z), (tx, tz), ci in zip(pts, tg, c)]
+    return dedupe(dp_simplify(out, 0.08), 0.1)
+
+
 def survey_samples(part, st):
-    """[kl, kr, pl, pr (dm; 0 unknown), edges (left | right << 4)] every SURVEY_STEP m along the part"""
+    """[kl, kr, pl, pr (dm; 0 unknown), edges (left | right << 4)] every SURVEY_STEP m along the part: the surveyed
+    kerb points (world space) measured across the part as it now lies"""
     seg = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(part, part[1:])]
     L = sum(seg)
     m = max(2, int(math.ceil(L / SURVEY_STEP)) + 1)
@@ -696,15 +755,13 @@ def survey_samples(part, st):
         f = 0.0 if seg[k] < 1e-6 else min(1.0, max(0.0, (s - acc) / seg[k]))
         (ax, az), (bx, bz) = part[k], part[k + 1]
         x = ax + (bx - ax) * f; z = az + (bz - az) * f; tx = (bx - ax) / (seg[k] or 1); tz = (bz - az) / (seg[k] or 1)
-        d2 = (sx - x) ** 2 + (sz - z) ** 2; j = int(np.argmin(d2))
-        if d2[j] > 16.0:
+        q = _survey_near(st, sx, sz, x, z, tx, tz)
+        if not q:
             out.append((0, 0, 0, 0, 0)); continue
-        _, _, hd, kl, kr, pl, pr, el, er, cl, cr = st[j]
-        rev = tx * math.cos(math.radians(hd)) + tz * math.sin(math.radians(hd)) < 0
-        if rev:
-            kl, kr, pl, pr, el, er, cl, cr = (-kr if kr is not None else None), (-kl if kl is not None else None), pr, pl, er, el, cr, cl
-        L_ = 0 if (kl is None or cl == 'D') else int(min(255, max(1, round(-kl * 10))))
-        R_ = 0 if (kr is None or cr == 'D') else int(min(255, max(1, round(kr * 10))))
+        Lp, Rp, pl, pr, el, er = q; nx, nz = -tz, tx
+        l = -((Lp[0] - x) * nx + (Lp[1] - z) * nz) if Lp else None; r = ((Rp[0] - x) * nx + (Rp[1] - z) * nz) if Rp else None
+        L_ = 0 if l is None else int(min(255, max(1, round(l * 10))))
+        R_ = 0 if r is None else int(min(255, max(1, round(r * 10))))
         out.append((L_, R_, int(min(255, round(pl * 10))), int(min(255, round(pr * 10))), SURVEY_EDGE.get(el, 0) | (SURVEY_EDGE.get(er, 0) << 4)))
     return out
 
@@ -1379,6 +1436,7 @@ def main():
                     flags &= ~32; lanes &= ~(32 | 64)
                     if sm[1] < 0.25 and sm[2] < 0.25: flags |= 32
                     else: lanes |= (32 if sm[1] < 0.25 else 0) | (64 if sm[2] < 0.25 else 0)
+            if sm and survey is not None: part = survey_shift(part, survey[0].get(oid), sm[0])   # (onto the measured carriageway)
             rd.append((part, cls, wp, flags, lanes, oid))
     for oid, t, pts in piers:                       # pier decks (Birnbeck Pier and its jetty)
         for part in clip_polyline(pts, 0):

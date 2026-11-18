@@ -43,9 +43,15 @@ Output (gzipped JSON, --out, default tools/osm/road_survey.json.gz):
              (kl + kr) / 2 (> 0: the carriageway lies right of the OSM line).
     ql, qr   confidence 0..1 of each edge value
     el, er   edge type per station (one character each):
-             K raised kerb (step >= 5 cm)   k low kerb / lip (2.5 - 5 cm)   S step or bank up (> 25 cm: walls, sea wall,
+             K raised kerb (step >= 6 cm)   k low kerb / lip (4 - 6 cm)   S step or bank up (> 25 cm: walls, sea wall,
              hedge banks)   D drop-off (> 25 cm down)   O open edge (slope break, no kerb: lanes, verges)
-             H building front   W OSM wall / fence / hedge   V wall / hedge / fence seen in the DSM (the road runs up to it)
+             H building front   W OSM wall / fence / hedge   V wall / hedge / fence seen in the DSM (the road runs up to it;
+             overhanging hedges: the edge may lie up to 1 m under them, the raw DTM is checked there)
+             G soft edge: end of the hard surface where no kerb or bank is seen (grass verge, hedge base, bracken):
+               the share of samples with DSM == DTM (1 cm), 0.8 - 0.95 on asphalt and paving, falls half way to its
+               verge level
+             N bounded by a parallel carriageway (dual carriageway / service road alongside, no edge seen between them)
+             J junction mouth: between the junction node and the tangent point of a corner arc (draw the arc there)
              u unknown (no measurement on this way: class default)
     cl, cr   source per station: L LIDAR measured   I interpolated between LIDAR values (gap <= 40 m)
              M median of the way's LIDAR values (long gap)   D class default (nothing measured)
@@ -53,17 +59,33 @@ Output (gzipped JSON, --out, default tools/osm/road_survey.json.gz):
     pl, pr   pavement width (m) from the kerb face outward, 0 = no pavement
     bl, br   pavement back edge: H building  W OSM wall/fence/hedge  V DSM wall/hedge/fence/parked row  T level step
              (garden wall base, bank)  N no data  E class maximum reached (open: square, car park, wide pavement)  - none
-    psl, psr pavement source per station: L LIDAR  O OSM tag (sidewalk=*: no -> 0, yes -> default width when not seen)
+    psl, psr pavement source per station: L LIDAR  D class default width (kerb seen, no back edge within the class
+             maximum: front gardens without walls, squares)  O OSM tag (sidewalk=*: no -> 0, yes -> default width when not seen)
     vl, vr   grass verge (m) between the kerb and the footway (OSM grass area right behind the kerb), 0 = none seen
     wmed     median carriageway width of the part (m);  hw, name: OSM tags;  in_town: inside bake_wsm.TOWN
   junction: {"node": osm node id, "x", "z", "arms": [{"way", "dir" (+1 the way leaves the node in node order, -1 it
-             arrives), "hd" (heading of the arm away from the node, deg), "hw"}...] clockwise on the map,
-             "corners": [{"arms": [i, j], "r": radius m, "src": "lidar"|"default", "score": kerb step (m) along the
-             fitted arc, "p0": [x, z], "p1": [x, z] tangent points on arm i's / arm j's kerb line, "c": [x, z] arc centre,
-             "kind": "K" kerb | "O" open}...], "mini_roundabout": bool, "signals": bool, "give_way": bool}
+             arrives), "hd" (heading of the arm away from the node, deg), "hw", "free" (m to the next junction node or
+             the way's end), "next_node"}...] clockwise on the map, "cluster": junction nodes joined to this one by a way
+             shorter than 40 m (triangles, staggered junctions),
+             "corners": [{"arms": [i, j] (arm i's clockwise side to arm j's anticlockwise side), "r": radius m,
+             "src": "lidar"|"default", "score": kerb step (m) along the fitted arc, "p0": [x, z], "p1": [x, z] tangent
+             points on arm i's / arm j's kerb line, "c": [x, z] arc centre, "kind": "K" kerbed | "O" open (walls, verges)
+             | "I" inside a junction cluster (island corner, tight radius), "ends": [{"way", "side" ("l"/"r" of that
+             way), "s" (chainage of the tangent point), "s_node" (chainage of the junction node)} x 2]}...],
+             "mini_roundabout": bool, "signals": bool, "give_way": bool}
+             Corner radius fit: the best of 0.5 m steps (1.5 - 25 m; 0.5 - 4 m for island corners) by the median DTM
+             step (pavement side - road side, 0.7 m either side of the arc, objects left out); default by class
+             (service 4, residential 6, tertiary+ 9, primary 12 m, island 1.5 m) limited by the free arm lengths.
+  dual:      [{"way_a", "part_a", "way_b", "part_b", "length" (m), "width_med" (central reservation width, m: lateral
+             distance between the centrelines - kr_a - kr_b), "kerbed_share", "samples": [[s_a, centreline distance,
+             reservation width, kerbed both sides, s_b]...]}]  (one-way parts side by side in opposite directions)
+  islands:   [{"way", "part", "s0", "s1", "y" (lateral offset of the island centre), "width", "height" (m), "length",
+             "x", "z"}]  raised strips 0.75 - 4.5 m wide, 2 - 60 m long inside the carriageway, with kerbed sides
+             (top-hat of the cross profile with a 5 m element >= 7 cm, side slopes >= 9 %): refuges, splitter islands
   roundabout: {"ways": [...], "x", "z" (centre), "r_ring" (mean radius of the OSM ring = middle of the circulatory
              carriageway), "r_island" (central island kerb radius), "src", "kind": "roundabout"|"circular"}
-  mini_roundabout / crossing_islands: OSM nodes {"node", "x", "z", ...}
+  mini_roundabouts / crossing_islands: OSM nodes {"node", "x", "z", ...}; crossing_islands also get "lidar_island" (an
+             island was detected within 8 m)
 Load:   import gzip, json; S = json.load(gzip.open('tools/osm/road_survey.json.gz', 'rt')); S['ways']['<id>'][0]['kr']
 
 Command (repository root; same inputs as bake_wsm.py):
@@ -91,8 +113,8 @@ except Exception:                                           # (osmium missing: t
     M_LON = 111412.84 * math.cos(_phi) - 93.5 * math.cos(3 * _phi)
     TOWN = (-1400.0, -5100.0, 2900.0, 3300.0)
 
-REGIONS = {'town': (TOWN[0], TOWN[1], TOWN[2], TOWN[3]),
-           'kewstoke': (300.0, -5150.0, 3700.0, -1250.0)}       # Kewstoke, Sand Bay, Worlebury, the Toll Road, Collum Lane
+KEWSTOKE = (300.0, -5150.0, 3700.0, -1250.0)        # Kewstoke, Sand Bay, Worlebury, the Toll Road, Collum Lane, Anson Road
+REGIONS = {'town': [tuple(TOWN)], 'kewstoke': [KEWSTOKE], 'all': [tuple(TOWN), KEWSTOKE]}
 
 DRIVE = ('motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link', 'tertiary',
          'tertiary_link', 'unclassified', 'residential', 'living_street', 'road', 'service')
@@ -317,12 +339,21 @@ def way_len(p):
     return float(np.hypot(*(P[1:] - P[:-1]).T).sum()) if len(P) > 1 else 0.0
 
 
-def clip_parts(pts, box):
-    """runs of the polyline inside box, each with the chainage of its first point (m from the way's first node)"""
+def in_boxes(x, z, boxes):
+    return any(b[0] <= x <= b[2] and b[1] <= z <= b[3] for b in boxes)
+
+
+def bbox_of(boxes):
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def clip_parts(pts, boxes):
+    """runs of the polyline inside the region (a list of boxes), each with the chainage of its first point (m from the
+    way's first node)"""
     out, cur, s, s0 = [], [], 0.0, 0.0
     for i, p in enumerate(pts):
         if i: s += math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1])
-        if box[0] <= p[0] <= box[2] and box[1] <= p[1] <= box[3]:
+        if in_boxes(p[0], p[1], boxes):
             if not cur: s0 = s
             cur.append(p)
         else:
@@ -449,7 +480,8 @@ class Part:
         L = self.L
         cen = np.arange(min(1.0, L / 2), L - min(1.0, L / 2) + 1e-6, STEP) if L > 4 else np.array([L / 2])
         n, ny = len(cen), len(offs)
-        f = {k: np.zeros((n, ny), np.float32) for k in ('med', 'raw', 'obj', 'bld', 'bar', 'grs', 'nan')}
+        f = {k: np.zeros((n, ny), np.float32) for k in ('med', 'raw', 'obj', 'bld', 'bar', 'grs', 'nan', 'bare')}
+        hard = (np.abs(h) <= 0.01) & np.isfinite(dt); soft_ok = np.isfinite(dt) & ~obj
         Ar = np.where(np.isfinite(dt) & ~bld, A, np.nan)
         f['cnt'] = np.zeros((n, ny), np.int16)
         Ac = np.where(clean, A, np.nan)
@@ -460,6 +492,8 @@ class Part:
             f['med'][k] = nanmed(B, 0); f['cnt'][k] = np.isfinite(B).sum(0); f['raw'][k] = nanmed(Ar[i0:i1], 0)
             f['obj'][k] = obj[i0:i1].mean(0); f['bld'][k] = bld[i0:i1].mean(0); f['bar'][k] = bar[i0:i1].mean(0)
             f['grs'][k] = grs[i0:i1].mean(0); f['nan'][k] = (~np.isfinite(dt[i0:i1])).mean(0)
+            nok = soft_ok[i0:i1].sum(0)
+            f['bare'][k] = np.where(nok >= 3, (hard[i0:i1] & soft_ok[i0:i1]).sum(0) / np.maximum(nok, 1), np.nan)
         # buildings within the transect on each side over +-25 m: none on a lane outside the village = no pavement there
         bl_side = np.stack([bld[:, offs < 0].any(1), bld[:, offs > 0].any(1)], 1).astype(float)
         self.bnear = np.zeros((n, 2), bool)
@@ -500,9 +534,13 @@ class Part:
         med, _ = flip(self.win['med'], self.offs, sg); raw, _ = flip(self.win['raw'], self.offs, sg)
         prof_d = np.where(np.isfinite(raw), raw, med)          # banks under hedges and bracken; the DTM under parked cars is flat road
         dy, dt_, dd, ds_ = departures(prof_d, o, np.minimum(inner, 0.25), inner, outer)
+        bare, _ = flip(self.win['bare'], self.offs, sg)
+        gy, gc = soft_edges(bare, o, inner, outer)
         out = []
         for k in range(n):
             cl = window_candidates(k, fp, K, c, p, rms, cnt, med[k], o, inner[k], outer[k], (dy[k], dt_[k], dd[k], ds_[k]))
+            if np.isfinite(gy[k]):
+                cl.append(dict(y=float(gy[k]), t='G', K=float(gc[k]), c=0.0, p=0.0, T=float(gc[k]) * 60.0)); cl.sort(key=lambda q: q['y'])
             big = [q['y'] for q in cl if q['t'] in 'SD' and abs(q['K']) >= 0.5]
             if big: cl = [q for q in cl if q['y'] <= min(big) + 0.3]           # nothing drivable beyond a wall or a drop
             lim, lc = lims[k]
@@ -545,9 +583,10 @@ class Part:
         for k in range(n):
             if not np.isfinite(y[k]): continue
             c = tr[k]; t = c['t']
-            if t == 'K': typ[k] = 'K' if c['K'] >= 0.05 else 'k'; conf[k] = float(np.clip(c['T'] / 40.0, 0.35, 1.0)); K[k] = c['K']
+            if t == 'K': typ[k] = 'K' if c['K'] >= 0.06 else 'k'; conf[k] = float(np.clip(c['T'] / 40.0, 0.35, 1.0)); K[k] = c['K']
             elif t == 'B': typ[k] = c.get('lim', 'V'); conf[k] = 0.55 if typ[k] != 'N' else 0.3
             elif t in 'SD': typ[k] = t; conf[k] = 0.8
+            elif t == 'G': typ[k] = 'G'; conf[k] = float(np.clip(0.25 + c['K'] * 0.6, 0.3, 0.6))
             else: typ[k] = 'O'; conf[k] = float(np.clip(0.3 + abs(c['K']) * 2, 0.3, 0.7))
         meas = np.isfinite(y)
         if meas.sum() >= 2:
@@ -650,7 +689,8 @@ def window_candidates(k, fp, K, c, p, rms, cnt, prof, o, inner, outer, dep=None)
         return np.median(prof[sel]) if sel.sum() >= 2 else np.nan
     for i in np.nonzero(ok)[0]:
         l = T[i - 1] if i > 0 and np.isfinite(T[i - 1]) else -1e9; r = T[i + 1] if i + 1 < n and np.isfinite(T[i + 1]) else -1e9
-        if T[i] >= l and T[i] >= r and 0.025 <= Kk[i] <= 0.32 and abs(pk[i]) < 0.25 and abs(ck[i]) < 0.25 and T[i] >= 4.0:
+        # (steps under 4 cm are not told apart from the curvature of a cambered or cross-fall surface)
+        if T[i] >= l and T[i] >= r and 0.04 <= Kk[i] <= 0.32 and abs(pk[i]) < 0.25 and abs(ck[i]) < 0.25 and T[i] >= 4.0:
             dl = lev(fp[i] + 0.6, fp[i] + 1.4) - lev(fp[i] - 1.4, fp[i] - 0.6)
             if np.isfinite(dl) and 0.015 <= dl <= 0.4:
                 cl.append(dict(y=float(fp[i]), t='K', K=float(Kk[i]), c=float(ck[i]), p=float(pk[i]), T=float(T[i])))
@@ -661,6 +701,38 @@ def window_candidates(k, fp, K, c, p, rms, cnt, prof, o, inner, outer, dep=None)
     if len(cl) > 10:
         keep = sorted(range(len(cl)), key=lambda i: -cl[i]['T'])[:10]; cl = [cl[i] for i in sorted(keep)]
     return cl
+
+
+def soft_edges(B, o, inner, outer):
+    """edge of the hard surface per window: on asphalt and paving the DSM equals the DTM (both from the same ground
+    points); on grass verges, hedge bases and bracken it often does not. B: fraction of the window's non-object
+    samples with |DSM - DTM| <= 1 cm per column (outward along o). The edge is where B, smoothed over 0.75 m, passes
+    half way between its level near the centreline and its level 0.5 - 3 m beyond the first drop.
+    returns (outward position or NaN, contrast) per window"""
+    n = B.shape[0]; gy = np.full(n, np.nan); gc = np.zeros(n)
+    Bs = np.where(np.isfinite(B), B, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        Bm = np.stack([np.nanmean(Bs[:, max(0, j - 1):j + 2], 1) for j in range(B.shape[1])], 1)
+    for k in range(n):
+        b = Bm[k]; core_sel = (np.abs(o) <= 1.0) & np.isfinite(b)
+        if core_sel.sum() < 3: continue
+        core = float(np.median(b[core_sel]))
+        if core < 0.55: continue
+        js = np.nonzero((o >= max(inner[k], 0.5)) & (o <= outer[k]) & np.isfinite(b))[0]
+        drop = [j for j in js if b[j] < core - 0.15]
+        if not drop: continue
+        j1 = drop[0]
+        far = np.isfinite(b) & (o >= o[j1] + 0.5) & (o <= o[j1] + 3.0)
+        if far.sum() < 3: continue
+        verge = float(np.median(b[far]))
+        if core - verge < 0.25: continue
+        half = (core + verge) / 2
+        j = j1
+        while j > 0 and np.isfinite(b[j - 1]) and b[j - 1] < half and o[j - 1] >= max(inner[k], 0.5): j -= 1
+        if o[j] < max(inner[k], 0.5): continue
+        gy[k] = o[j]; gc[k] = core - verge
+    return gy, gc
 
 
 def departures(P, o, start, inner, outer):
@@ -707,6 +779,7 @@ def emission(c, n_inner):
     elif t == 'S': s = 4.5 + min(c['K'], 1.0)
     elif t == 'D': s = 4.0
     elif t == 'O': s = 2.2 + min(abs(c['K']), 0.25) * 8
+    elif t == 'G': s = 2.4 + min(c['K'], 0.8) * 3.0
     else: s = 3.2
     return s - 1.5 * n_inner
 
@@ -816,86 +889,95 @@ def junctions(roads, parts_by_way, lidar, furn, box):
     for fid, x, z, code, sub, tags in furn:
         hwv = tags.get('highway')
         if hwv in ('mini_roundabout', 'traffic_signals', 'give_way', 'stop'): fnode[fid].add(hwv)
-    out = []
-    for nd, lst in use.items():
+    def n_arms(nd):
+        return sum(2 if 0 < i2 < len(info[w2][2]) - 1 else 1 for w2, i2 in use.get(nd, ()))
+    jn = {nd for nd in use if n_arms(nd) >= 3}
+    nodes_arms = {}
+    for nd in jn:
         arms = []
-        for wid, i in lst:
+        for wid, i in use[nd]:
             t, p, ids = info[wid]
             for dirn in (1, -1):
                 if 0 <= i + dirn < len(ids):
                     a = arm_heading(p, i, dirn)
-                    if a is not None: arms.append(dict(way=wid, i=i, dir=dirn, a=a, hw=t.get('highway')))
+                    if a is not None:
+                        L, nxt = arm_walk(wid, i, dirn, info, jn)
+                        arms.append(dict(way=wid, i=i, dir=dirn, a=a, hw=t.get('highway'), dnext=L, nxt=nxt))
+        arms.sort(key=lambda q: q['a'])               # clockwise on the map (x east, z south)
+        nodes_arms[nd] = arms
+    # junction nodes joined by a short way (< 40 m): clusters (triangles, staggered junctions)
+    near = collections.defaultdict(set)
+    for nd, arms in nodes_arms.items():
+        for q in arms:
+            if q['nxt'] is not None and q['dnext'] < 40.0: near[nd].add(q['nxt'])
+    out = []
+    for nd, arms in nodes_arms.items():
         if len(arms) < 3: continue
-        for a in arms: a['dnext'] = arm_free_length(a, info, use)
-        t, p, ids = info[lst[0][0]]; x, z = p[lst[0][1]]
-        if not (box[0] <= x <= box[2] and box[1] <= z <= box[3]): continue
-        if any(info[w][0].get('junction') in ('roundabout', 'circular') for w, _ in lst) and len(arms) <= 4:
-            pass                                       # (ring entries: corners are still useful)
-        arms.sort(key=lambda a: a['a'])               # clockwise on the map (x east, z south)
+        wid0, i0 = use[nd][0]; x, z = info[wid0][1][i0]
+        if not in_boxes(x, z, box): continue
         J = {'node': nd, 'x': round(x, 2), 'z': round(z, 2),
-             'arms': [{'way': a['way'], 'dir': a['dir'], 'hd': round(math.degrees(a['a']), 1), 'hw': a['hw']} for a in arms],
-             'mini_roundabout': 'mini_roundabout' in fnode.get(nd, ()), 'signals': 'traffic_signals' in fnode.get(nd, ()),
-             'give_way': bool(fnode.get(nd, set()) & {'give_way', 'stop'}), 'corners': []}
+             'arms': [{'way': q['way'], 'dir': q['dir'], 'hd': round(math.degrees(q['a']), 1), 'hw': q['hw'], 'free': round(q['dnext'], 1),
+                       'next_node': q['nxt']} for q in arms],
+             'cluster': sorted(near.get(nd, ())), 'mini_roundabout': 'mini_roundabout' in fnode.get(nd, ()),
+             'signals': 'traffic_signals' in fnode.get(nd, ()), 'give_way': bool(fnode.get(nd, set()) & {'give_way', 'stop'}), 'corners': []}
         for ia in range(len(arms)):
             ib = (ia + 1) % len(arms)
             A, B = arms[ia], arms[ib]
             ang = (B['a'] - A['a']) % (2 * math.pi)
             if ang < math.radians(20) or ang > math.radians(160): continue      # no kerb corner between (nearly) straight arms
-            ca = corner_fit(A, B, ang, info, parts_by_way, lidar, (x, z))
+            # a corner inside a small block of road (triangle island, the space between two close junctions)
+            island = (A['nxt'] is not None and B['nxt'] is not None and A['dnext'] < 40 and B['dnext'] < 40 and
+                      (A['nxt'] == B['nxt'] or B['nxt'] in near.get(A['nxt'], ()) or A['nxt'] in near.get(B['nxt'], ())))
+            ca = corner_fit(A, B, ang, info, parts_by_way, lidar, (x, z), island)
             if ca: ca['arms'] = [ia, ib]; J['corners'].append(ca)
         out.append(J)
     return out
 
 
-def arm_free_length(arm, info, use):
-    """distance along the arm's way from the junction node to the next junction node (3+ arms) or the way's end"""
-    t, p, ids = info[arm['way']]
-    j, acc = arm['i'], 0.0
-    while 0 <= j + arm['dir'] < len(ids):
-        acc += math.hypot(p[j + arm['dir']][0] - p[j][0], p[j + arm['dir']][1] - p[j][1]); j += arm['dir']
-        n_arms = sum(2 if 0 < i2 < len(info[w2][2]) - 1 else 1 for w2, i2 in use.get(ids[j], ()))
-        if n_arms >= 3: return acc
-    return acc
+def arm_walk(wid, i, dirn, info, jn):
+    """(distance along the way to the next junction node or the way's end, that junction node or None)"""
+    t, p, ids = info[wid]
+    j, acc = i, 0.0
+    while 0 <= j + dirn < len(ids):
+        acc += math.hypot(p[j + dirn][0] - p[j][0], p[j + dirn][1] - p[j][1]); j += dirn
+        if ids[j] in jn: return acc, ids[j]
+    return acc, None
 
 
 def arm_kerb(arm, side_out, info, parts_by_way, node_xy, dist=14.0):
-    """kerb line of an arm on its outbound side_out ('r' = clockwise side when leaving the node, 'l'): (point, unit dir, type)"""
+    """kerb line of an arm on its outbound side ('r' = clockwise side when leaving the node, 'l'):
+    (point, unit direction, edge type, confidence, |offset|, part, way side, chainage of the node on the way)"""
     t, p, ids = info[arm['way']]
     dist = float(np.clip(0.6 * arm.get('dnext', dist), 3.0, dist))
     P = np.asarray(p, float); seg = np.hypot(*(P[1:] - P[:-1]).T); S = np.concatenate([[0], np.cumsum(seg)])
-    s_node = S[arm['i']]; s_q = s_node + arm['dir'] * dist
-    s_q = float(np.clip(s_q, 0, S[-1]))
-    # which part holds it
+    s_node = S[arm['i']]; s_q = float(np.clip(s_node + arm['dir'] * dist, 0, S[-1]))
     for prt in parts_by_way.get(arm['way'], []):
         sl = s_q - prt.s0
         if -1 <= sl <= prt.L + 1:
             way_side = side_out if arm['dir'] > 0 else ('l' if side_out == 'r' else 'r')
             y, typ, conf, src = prt.kerb_at(sl, way_side)
-            # offset along the outbound right normal
-            yo = y if arm['dir'] > 0 else -y
+            yo = y if arm['dir'] > 0 else -y                     # offset along the outbound right normal
             px = np.interp(s_q, S, P[:, 0]); pz = np.interp(s_q, S, P[:, 1])
             a = arm['a']; dx, dz = math.cos(a), math.sin(a); nx, nz = -dz, dx
-            return np.array([px + nx * yo, pz + nz * yo]), np.array([dx, dz]), typ, conf, abs(yo)
+            return np.array([px + nx * yo, pz + nz * yo]), np.array([dx, dz]), typ, conf, abs(yo), prt, way_side, s_node
     return None
 
 
-def corner_fit(A, B, ang, info, parts_by_way, lidar, node_xy):
+def corner_fit(A, B, ang, info, parts_by_way, lidar, node_xy, island=False):
     ka = arm_kerb(A, 'r', info, parts_by_way, node_xy); kb = arm_kerb(B, 'l', info, parts_by_way, node_xy)
     if ka is None or kb is None: return None
-    pa, da, ta, qa, ha = ka; pb, db, tb, qb, hb = kb
-    # intersection of the two kerb lines (pa + u da, pb + v db), both running back toward the junction (u, v < 0)
+    pa, da, ta, qa, ha, pra, sda, sna = ka; pb, db, tb, qb, hb, prb, sdb, snb = kb
     M = np.array([[da[0], -db[0]], [da[1], -db[1]]])
     if abs(np.linalg.det(M)) < 1e-3: return None
     u, v = np.linalg.solve(M, pb - pa)
-    P = pa + u * da
-    phi = math.pi - ang if ang <= math.pi else None       # interior angle of the corner between the outbound directions
+    P = pa + u * da                                       # where the two kerb lines meet
     th = (math.atan2(db[1], db[0]) - math.atan2(da[1], da[0])) % (2 * math.pi)
     if th <= 0.05 or th >= math.pi - 0.05: return None
-    # fillet tangent to both lines: distance from P along each outbound direction t = R / tan(th / 2)
     kerbed = ta in ('K', 'k') and tb in ('K', 'k')
     tan_h = math.tan(th / 2)
     tmax = min(20.0, 0.8 * min(A.get('dnext', 30.0), B.get('dnext', 30.0)) + 0.5 * min(ha, hb))
-    Rs = np.arange(1.5, 25.01, 0.5); Rs = Rs[Rs / tan_h <= tmax]
+    rmax = 4.0 if island else 25.0
+    Rs = np.arange(0.5 if island else 1.5, rmax + 0.01, 0.5); Rs = Rs[Rs / tan_h <= tmax]
     if len(Rs) == 0: Rs = np.array([max(0.5, tmax * tan_h)])
     bis = (da + db); bis /= max(np.linalg.norm(bis), 1e-9)
     scores = []
@@ -906,29 +988,47 @@ def corner_fit(A, B, ang, info, parts_by_way, lidar, node_xy):
         a0 = math.atan2(p0[1] - C[1], p0[0] - C[0]); a1 = math.atan2(p1[1] - C[1], p1[0] - C[0])
         d = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi
         aa = a0 + np.linspace(0.1, 0.9, 9) * d
-        ex, ez = np.cos(aa), np.sin(aa)                   # unit vectors from the centre (outward = away from the road? no: toward the road)
-        # the arc's centre lies on the pavement side; the road is outside the circle
+        ex, ez = np.cos(aa), np.sin(aa)                   # from the arc centre (on the pavement side) toward the road
+        if R - 0.7 <= 0.2: scores.append(np.nan); continue
         xi = C[0] + ex * (R + 0.7); zi = C[1] + ez * (R + 0.7)        # road side
         xo = C[0] + ex * (R - 0.7); zo = C[1] + ez * (R - 0.7)        # pavement side
-        if R - 0.7 <= 0.2: scores.append(np.nan); continue
         zr = lidar.sample('dtm', xi, zi); zp = lidar.sample('dtm', xo, zo)
         dsr = lidar.sample('dsm', xi, zi) - zr; dsp = lidar.sample('dsm', xo, zo) - zp
         ok = np.isfinite(zr) & np.isfinite(zp) & (np.abs(dsr) < 0.35) & (np.abs(dsp) < 0.35)
         scores.append(float(np.median((zp - zr)[ok])) if ok.sum() >= 5 else np.nan)
     sc = np.array(scores)
     rank = min(RANK.get(hwb(A['hw']), 6), RANK.get(hwb(B['hw']), 6))
-    Rdef = 4.0 if rank >= 8 else 6.0 if rank >= 6 else 9.0 if rank >= 4 else 12.0
-    Rdef = float(min(Rdef, max(1.0, min(12.0, tmax) * tan_h)))
+    Rdef = 1.5 if island else 4.0 if rank >= 8 else 6.0 if rank >= 6 else 9.0 if rank >= 4 else 12.0
+    Rdef = float(min(Rdef, max(0.5, min(12.0, tmax) * tan_h)))
     src, R, score = 'default', Rdef, None
-    if np.isfinite(sc).sum() >= 5 and kerbed:
+    if np.isfinite(sc).sum() >= (3 if island else 5) and kerbed:
         i = int(np.nanargmax(sc))
         if sc[i] >= 0.05 and sc[i] - np.nanmin(sc) >= 0.03:
             R, score, src = float(Rs[i]), float(sc[i]), 'lidar'
     tt = R / tan_h
     C = P + bis * (R / math.sin(th / 2)); p0 = P + da * tt; p1 = P + db * tt
-    return {'r': round(R, 1), 'src': src, 'score': None if score is None else round(score, 3), 'kind': 'K' if kerbed else 'O',
+    # chainage of the tangent points on each arm's way (the kerb line of that side ends there; the arc takes over)
+    sa = sna + A['dir'] * float(np.dot(p0 - np.array(node_xy), da)); sb = snb + B['dir'] * float(np.dot(p1 - np.array(node_xy), db))
+    return {'r': round(R, 1), 'src': src, 'score': None if score is None else round(score, 3), 'kind': ('I' if island else 'K' if kerbed else 'O'),
             'p0': [round(float(p0[0]), 2), round(float(p0[1]), 2)], 'p1': [round(float(p1[0]), 2), round(float(p1[1]), 2)],
-            'c': [round(float(C[0]), 2), round(float(C[1]), 2)]}
+            'c': [round(float(C[0]), 2), round(float(C[1]), 2)],
+            'ends': [{'way': A['way'], 'side': sda, 's': round(sa, 1), 's_node': round(sna, 1)},
+                     {'way': B['way'], 'side': sdb, 's': round(sb, 1), 's_node': round(snb, 1)}]}
+
+
+def mark_mouths(recs, J):
+    """the stations of a kerb line between a junction node and the tangent point of its corner arc: edge type 'J'"""
+    for j in J:
+        for c in j['corners']:
+            for e in c['ends']:
+                for rec in recs.get(str(e['way']), []):
+                    s = np.array(rec['s'], float); lo, hi = sorted((e['s_node'], e['s']))
+                    m = (s >= lo - 0.5) & (s <= hi + 0.5)
+                    if not m.any(): continue
+                    key = 'e' + e['side']; arr = list(rec[key])
+                    for i in np.nonzero(m)[0]: arr[i] = 'J'
+                    rec[key] = ''.join(arr)
+        # mouths with no corner (the side road arm itself, straight-on arms): nothing to mark
 
 
 def roundabouts(roads, parts_by_way, box):
@@ -949,7 +1049,7 @@ def roundabouts(roads, parts_by_way, box):
     for root, ws in rings.items():
         pts = np.array([q for w in ws for q in ways[w][1]], float)
         c = pts.mean(0)
-        if not (box[0] <= c[0] <= box[2] and box[1] <= c[1] <= box[3]): continue
+        if not in_boxes(c[0], c[1], box): continue
         r = np.hypot(*(pts - c).T)
         rr = float(np.median(r))
         if rr > 80: continue
@@ -967,12 +1067,168 @@ def roundabouts(roads, parts_by_way, box):
     return out
 
 
+# ---------------------------------------------------------------- dual carriageways and traffic islands (post passes)
+def _arr(v):
+    return np.array([np.nan if a is None else a for a in v], float)
+
+
+def dual_carriageways(recs, roads):
+    """pairs of one-way parts side by side in opposite directions: central reservation between their inner edges"""
+    oneway = {str(wid) for wid, t, p, ids in roads if t.get('oneway') in ('yes', '1', 'true', '-1') and t.get('junction') not in ('roundabout', 'circular')}
+    parts = [(wid, i, r) for wid, ps in recs.items() if wid in oneway for i, r in enumerate(ps) if len(r['s']) >= 3]
+    geo = []
+    for wid, i, r in parts:
+        x, z, hd = _arr(r['x']), _arr(r['z']), np.radians(_arr(r['hd']))
+        geo.append((wid, i, r, x, z, np.cos(hd), np.sin(hd)))
+    out = []
+    for a in range(len(geo)):
+        wa, ia, ra, xa, za, dxa, dza = geo[a]
+        bx0, bx1, bz0, bz1 = xa.min() - 45, xa.max() + 45, za.min() - 45, za.max() + 45
+        for b in range(len(geo)):
+            wb, ib, rb, xb, zb, dxb, dzb = geo[b]
+            if wb == wa or xb.max() < bx0 or xb.min() > bx1 or zb.max() < bz0 or zb.min() > bz1: continue
+            # A's right normal lines against B's centreline segments
+            nx, nz = -dza, dxa
+            ex, ez = np.diff(xb), np.diff(zb)
+            det = nx[:, None] * (-ez[None, :]) - nz[:, None] * (-ex[None, :])
+            rx = xb[None, :-1] - xa[:, None]; rz = zb[None, :-1] - za[:, None]
+            with np.errstate(all='ignore'):
+                t = (rx * (-ez[None, :]) - rz * (-ex[None, :])) / det; u = (nx[:, None] * rz - nz[:, None] * rx) / det
+            el = np.hypot(ex, ez)
+            anti = (dxa[:, None] * ex[None, :] + dza[:, None] * ez[None, :]) / np.maximum(el[None, :], 1e-9) < -0.85
+            good = np.isfinite(t) & (u >= 0) & (u <= 1) & anti & (t > 2.0) & (t < 40.0)
+            if good.sum() < 4: continue
+            samples = []
+            kra, era = _arr(ra['kr']), ra['er']; krb = _arr(rb['kr']); erb = rb['er']; sb = _arr(rb['s'])
+            for k in np.nonzero(good.any(1))[0]:
+                j = int(np.argmin(np.where(good[k], t[k], np.inf))); d = float(t[k, j]); uu = float(u[k, j])
+                kb = float(krb[j] * (1 - uu) + krb[j + 1] * uu)
+                eb = erb[j] if uu < 0.5 else erb[j + 1]
+                w = d - kra[k] - kb
+                samples.append([float(ra['s'][k]), round(d, 2), round(w, 2), bool(era[k] in 'Kk' and eb in 'Kk'),
+                                round(float(sb[j] * (1 - uu) + sb[j + 1] * uu), 1)])
+            if len(samples) < 4: continue
+            ws = np.array([q[2] for q in samples])
+            out.append({'way_a': int(wa), 'part_a': ia, 'way_b': int(wb), 'part_b': ib, 'length': round(OUT_STEP * len(samples), 1),
+                        'width_med': round(float(np.median(ws)), 2), 'kerbed_share': round(float(np.mean([q[3] for q in samples])), 2),
+                        'samples': samples})
+    return out
+
+
+def detect_islands(recs, lidar, furn=None, step=1.0):
+    """raised strips inside the carriageway (refuges, splitter islands, kerbed medians): top-hat of the cross profile"""
+    out = []
+    W5 = int(round(5.0 / DY))
+    for wid, ps in recs.items():
+        for pi, r in enumerate(ps):
+            s = _arr(r['s']); n = len(s)
+            if n < 3 or s[-1] - s[0] < 8: continue
+            x, z, hd = _arr(r['x']), _arr(r['z']), np.radians(_arr(r['hd'])); kl, kr = _arr(r['kl']), _arr(r['kr'])
+            ss = np.arange(s[0], s[-1] + 1e-6, step)
+            X = np.interp(ss, s, x); Z = np.interp(ss, s, z)
+            ca = np.interp(ss, s, np.cos(hd)); sa = np.interp(ss, s, np.sin(hd)); nn = np.hypot(ca, sa); ca /= nn; sa /= nn
+            KL = np.interp(ss, s, kl) + 0.7; KR = np.interp(ss, s, kr) - 0.7
+            wmax = float(np.nanmax(KR - KL)) if len(KR) else 0
+            if not np.isfinite(wmax) or wmax < 3.0: continue
+            y0 = float(np.nanmin(KL)); y1 = float(np.nanmax(KR))
+            offs = np.arange(math.floor(y0 / DY) * DY, y1 + 1e-6, DY)
+            nx, nz = -sa, ca
+            XX = X[:, None] + nx[:, None] * offs; ZZ = Z[:, None] + nz[:, None] * offs
+            dt = lidar.sample('dtm', XX, ZZ); h = lidar.sample('dsm', XX, ZZ) - dt
+            inside = (offs[None, :] >= KL[:, None]) & (offs[None, :] <= KR[:, None])
+            clean = np.isfinite(dt) & ~((h > OBJ_LO) & (h < OBJ_HI)) & inside
+            A = np.where(clean, dt, np.nan)
+            # median of 3 transects
+            M = np.full(A.shape, np.nan)
+            for k in range(len(ss)):
+                M[k] = nanmed(A[max(0, k - 1):k + 2], 0)
+            # top-hat with a 5 m flat element (features narrower than 5 m)
+            Mf = np.where(np.isfinite(M), M, np.inf)
+            pad = np.full((len(ss), W5 // 2), np.inf)
+            Mp = np.concatenate([pad, Mf, pad], 1)
+            ero = _swv(Mp, W5 + 1 - (W5 % 2 == 0), axis=1).min(2)[:, :Mf.shape[1]]
+            ero = np.where(np.isfinite(ero), ero, np.nan)
+            Ep = np.concatenate([np.full((len(ss), W5 // 2), -np.inf), np.where(np.isfinite(ero), ero, -np.inf), np.full((len(ss), W5 // 2), -np.inf)], 1)
+            opn = _swv(Ep, W5 + 1 - (W5 % 2 == 0), axis=1).max(2)[:, :Mf.shape[1]]
+            th = np.where(np.isfinite(M) & np.isfinite(opn), M - opn, np.nan)
+            hits = []
+            for k in range(len(ss)):
+                row = th[k]; on = np.isfinite(row) & (row >= 0.06)
+                j = 0
+                while j < len(row):
+                    if not on[j]: j += 1; continue
+                    j0 = j
+                    while j < len(row) and on[j]: j += 1
+                    wdt = (j - j0) * DY
+                    if 0.75 <= wdt <= 4.5 and np.nanmax(row[j0:j]) >= 0.07:
+                        # kerbed sides: the steepest slope (over 0.5 m) within 1 m of each side >= 9 % (a camber crown is
+                        # gentler: <= 5 %), both sides lower by >= 6 cm
+                        def steep(a, b):
+                            seg = M[k, max(0, a):min(len(row), b)]
+                            g = np.abs(seg[2:] - seg[:-2]) / (2 * DY) if seg.size >= 3 else np.array([np.nan])
+                            return np.nanmax(g) if np.isfinite(g).any() else 0.0
+                        lo = M[k, max(0, j0 - 4):j0]; hi = M[k, j:min(len(row), j + 4)]; top = np.nanmax(M[k, j0:j])
+                        if lo.size and hi.size and np.isfinite(lo).any() and np.isfinite(hi).any() and \
+                           top - np.nanmin(lo) >= 0.06 and top - np.nanmin(hi) >= 0.06 and \
+                           steep(j0 - 4, j0 + 2) >= 0.09 and steep(j - 2, j + 4) >= 0.09 and \
+                           offs[j0] > KL[k] + 0.3 and offs[j - 1] < KR[k] - 0.3:
+                            hits.append((k, offs[j0], offs[j - 1] + DY, float(np.nanmax(row[j0:j]))))
+            # group hits along the way
+            hits.sort()
+            groups = []
+            for hk in hits:
+                for g in groups:
+                    if hk[0] - g[-1][0] <= 2 and min(hk[2], g[-1][2]) - max(hk[1], g[-1][1]) > 0:
+                        g.append(hk); break
+                else:
+                    groups.append([hk])
+            for g in groups:
+                L = (g[-1][0] - g[0][0] + 1) * step
+                if L < 2.0 or L > 60.0: continue
+                k0, k1 = g[0][0], g[-1][0]; km = (k0 + k1) // 2
+                yc = float(np.median([(a + b) / 2 for _, a, b, _ in g])); wv = float(np.median([b - a for _, a, b, _ in g]))
+                hgt = float(np.median([q[3] for q in g]))
+                out.append({'way': int(wid), 'part': pi, 's0': round(float(ss[k0]), 1), 's1': round(float(ss[k1]), 1), 'y': round(yc, 2),
+                            'width': round(wv, 2), 'height': round(hgt, 3), 'length': round(L, 1),
+                            'x': round(float(X[km] + nx[km] * yc), 2), 'z': round(float(Z[km] + nz[km] * yc), 2)})
+    return out
+
+
 # ---------------------------------------------------------------- main
-def run(roads, areas, buildings, furn, bars, lidar_dirs, box, fetch=False, only=None):
+class Stub:
+    """what the junction and roundabout passes need of a surveyed part"""
+    def __init__(self, prt):
+        self.wid, self.s0, self.L, self.cen, self.side = prt.wid, prt.s0, prt.L, prt.cen, prt.side
+
+    kerb_at = lambda self, s_local, side_key: Part.kerb_at(self, s_local, side_key)
+
+
+_CTX = None
+
+
+def _survey_chunk(idx):
+    sel, lidar, masks, node_xy, way_nodes, segidx = _CTX
+    out = []
+    for i in idx:
+        wid, t, s0, pts = sel[i]
+        if way_len(pts) < 6: continue
+        try:
+            prt = Part(wid, t, s0, pts, lidar, masks)
+            if not prt.ok: continue
+            prt.set_neighbours({nd: node_xy[nd] for nd in way_nodes[wid] if nd in node_xy}, segidx)
+            prt.track()
+            out.append((i, prt.record(), Stub(prt)))
+        except Exception as e:                           # (one bad way must not stop the survey)
+            log(f'way {wid}: {type(e).__name__}: {e}')
+    return out
+
+
+def run(roads, areas, buildings, furn, bars, lidar_dirs, box, fetch=False, only=None, jobs=1):
     t0 = time.time()
-    lidar = Lidar(lidar_dirs, (box[0] - 60, box[1] - 60, box[2] + 60, box[3] + 60), fetch)
+    bb = bbox_of(box)
+    lidar = Lidar(lidar_dirs, (bb[0] - 60, bb[1] - 60, bb[2] + 60, bb[3] + 60), fetch)
     if lidar.mo.missing: log('missing LIDAR tiles:', ' '.join(lidar.mo.missing))
-    masks = Masks(box, buildings, bars, areas)
+    masks = Masks(bb, buildings, bars, areas)
     sel = select_ways(roads, box)
     if only: sel = [s for s in sel if s[0] in only]
     log(f'{len(sel)} parts, {sum(way_len(p) for _, _, _, p in sel) / 1000:.1f} km')
@@ -983,23 +1239,49 @@ def run(roads, areas, buildings, furn, bars, lidar_dirs, box, fetch=False, only=
             for nd, q in zip(ids, p): node_xy[nd] = q
     way_nodes = {wid: ids for wid, t, p, ids in roads}
     parts_by_way, recs = collections.defaultdict(list), {}
-    for n, (wid, t, s0, pts) in enumerate(sel):
-        if way_len(pts) < 6: continue
-        prt = Part(wid, t, s0, pts, lidar, masks)
-        if not prt.ok: continue
-        prt.set_neighbours({nd: node_xy[nd] for nd in way_nodes[wid] if nd in node_xy}, segidx)
-        prt.track()
-        recs.setdefault(str(wid), []).append(prt.record())
-        prt.win = None                                   # (memory)
-        parts_by_way[wid].append(prt)
-        if n % 200 == 0: log(f'  {n}/{len(sel)}  {time.time() - t0:.0f} s')
+    global _CTX
+    _CTX = (sel, lidar, masks, node_xy, way_nodes, segidx)
+    order = sorted(range(len(sel)), key=lambda i: -way_len(sel[i][3]))       # long ones first (load balance)
+    chunks = [order[i::max(1, jobs * 8)] for i in range(max(1, jobs * 8))]
+    if jobs > 1:
+        import multiprocessing as mp
+        with mp.get_context('fork').Pool(jobs) as pool:
+            results = []
+            for k, res in enumerate(pool.imap_unordered(_survey_chunk, chunks)):
+                results.extend(res); log(f'  chunk {k + 1}/{len(chunks)}  {time.time() - t0:.0f} s')
+    else:
+        results = []
+        for k, ch in enumerate(chunks):
+            results.extend(_survey_chunk(ch)); log(f'  chunk {k + 1}/{len(chunks)}  {time.time() - t0:.0f} s')
+    for i, rec, stub in sorted(results, key=lambda r: r[0]):
+        wid = sel[i][0]
+        recs.setdefault(str(wid), []).append(rec); parts_by_way[wid].append(stub)
     J = junctions(roads, parts_by_way, lidar, furn, box)
+    mark_mouths(recs, J)
     RB = roundabouts(roads, parts_by_way, box)
+    minis, isl = osm_points(furn, box)
+    log(f'junctions {len(J)}, roundabouts {len(RB)}  {time.time() - t0:.0f} s')
+    return recs, J, RB, minis, isl, lidar
+
+
+def osm_points(furn, box):
     minis = [{'node': f[0], 'x': round(f[1], 2), 'z': round(f[2], 2)} for f in furn if f[5].get('highway') == 'mini_roundabout'
-             and box[0] <= f[1] <= box[2] and box[1] <= f[2] <= box[3]]
+             and in_boxes(f[1], f[2], box)]
     isl = [{'node': f[0], 'x': round(f[1], 2), 'z': round(f[2], 2), 'crossing': f[5].get('crossing')} for f in furn
-           if f[5].get('crossing:island') == 'yes' and box[0] <= f[1] <= box[2] and box[1] <= f[2] <= box[3]]
-    return recs, J, RB, minis, isl
+           if f[5].get('crossing:island') == 'yes' and in_boxes(f[1], f[2], box)]
+    return minis, isl
+
+
+def post_passes(doc, roads, lidar):
+    """dual carriageway reservations, LIDAR traffic islands, OSM crossing islands confirmed by them"""
+    doc['dual'] = dual_carriageways(doc['ways'], roads)
+    found = detect_islands(doc['ways'], lidar)
+    doc['islands'] = found
+    for c in doc.get('crossing_islands', []):
+        d = [math.hypot(c['x'] - q['x'], c['z'] - q['z']) for q in found]
+        c['lidar_island'] = bool(d and min(d) < 8.0)
+    log(f"dual carriageway pairs {len(doc['dual'])}, islands {len(found)}, OSM crossing islands seen "
+        f"{sum(1 for c in doc.get('crossing_islands', []) if c['lidar_island'])}/{len(doc.get('crossing_islands', []))}")
 
 
 def stats(recs):
@@ -1032,6 +1314,8 @@ def main():
     ap.add_argument('--only', help='comma separated way ids (debugging)')
     ap.add_argument('--merge', help='an earlier output to keep ways from (ways outside this run stay as they were)')
     ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'road_survey.json.gz'))
+    ap.add_argument('--post-only', action='store_true', help='only redo the post passes (dual carriageways, islands, stats) on --out')
+    ap.add_argument('--jobs', type=int, default=max(1, min(4, (os.cpu_count() or 2) - 1)), help='worker processes (fork)')
     a = ap.parse_args()
     if a.osm_pickle and os.path.exists(a.osm_pickle):
         with open(a.osm_pickle, 'rb') as f: roads, areas, buildings, trees, tree_rows, piers, furn, bars = pickle.load(f)
@@ -1039,19 +1323,33 @@ def main():
         roads, areas, buildings, trees, tree_rows, piers, furn, bars = BW.read_osm(a.pbf)
     else:
         sys.exit('need --osm-pickle or --pbf (with bake_wsm / osmium importable)')
-    box = REGIONS[a.region] if a.region in REGIONS else tuple(float(v) for v in a.region.split(','))
+    box = REGIONS[a.region] if a.region in REGIONS else [tuple(float(v) for v in a.region.split(','))]
+    if a.post_only:
+        doc = json.load(gzip.open(a.out, 'rt'))
+        reg = doc['region'] if isinstance(doc['region'][0], list) else [doc['region']]
+        bb = bbox_of(reg)
+        lidar = Lidar(a.lidar_cache, (bb[0] - 60, bb[1] - 60, bb[2] + 60, bb[3] + 60), a.fetch)
+        doc['mini_roundabouts'], doc['crossing_islands'] = osm_points(furn, reg)
+        post_passes(doc, roads, lidar)
+        doc['stats'] = stats(doc['ways'])
+        with gzip.open(a.out, 'wt', compresslevel=9) as f:
+            json.dump(doc, f, separators=(',', ':'))
+        log(f'rewrote {a.out}: {os.path.getsize(a.out) / 1e6:.2f} MB')
+        return
     only = set(int(v) for v in a.only.split(',')) if a.only else None
-    recs, J, RB, minis, isl = run(roads, areas, buildings, furn, bars, a.lidar_cache, box, a.fetch, only)
-    doc = {'format': 'road_survey', 'version': 1, 'created': time.strftime('%Y-%m-%d %H:%M'), 'region': list(box),
+    recs, J, RB, minis, isl, lidar = run(roads, areas, buildings, furn, bars, a.lidar_cache, box, a.fetch, only, a.jobs)
+    doc = {'format': 'road_survey', 'version': 1, 'created': time.strftime('%Y-%m-%d %H:%M'), 'region': [list(b) for b in box],
            'frame': {'origin_lat': ORIGIN_LAT, 'origin_lon': ORIGIN_LON, 'x': 'east (m)', 'z': 'south (m)', 'town': list(TOWN)},
            'sign': 'offsets along the right-hand normal n = (-sin hd, cos hd) of the way direction (OSM node order): y > 0 right, y < 0 left',
-           'codes': {'edge': {'K': 'raised kerb >= 5 cm', 'k': 'low kerb 2.5-5 cm', 'S': 'step / bank / wall up > 25 cm', 'D': 'drop-off > 25 cm',
+           'codes': {'edge': {'K': 'raised kerb >= 6 cm', 'k': 'low kerb 4-6 cm', 'S': 'step / bank / wall up > 25 cm', 'D': 'drop-off > 25 cm',
                               'O': 'open edge (slope break, no kerb)', 'H': 'building front', 'W': 'OSM wall/fence/hedge',
-                              'V': 'wall/hedge/fence seen in the DSM', 'u': 'unknown (default)'},
+                              'V': 'wall/hedge/fence seen in the DSM', 'N': 'parallel carriageway alongside (no edge seen)',
+                              'G': 'soft edge: end of the hard surface (grass verge, hedge base), from DSM == DTM',
+                              'J': 'junction mouth (corner arc takes over)', 'u': 'unknown (default)'},
                      'source': {'L': 'LIDAR', 'I': 'interpolated (gap <= 40 m)', 'M': 'way median (long gap)', 'D': 'class default'},
                      'back': {'H': 'building', 'W': 'OSM wall/fence/hedge', 'V': 'DSM object (wall, hedge, fence, parked row)', 'T': 'level step',
                               'N': 'no data', 'E': 'class maximum (open area)', '-': 'none'},
-                     'pave_source': {'L': 'LIDAR', 'O': 'OSM sidewalk tag'}},
+                     'pave_source': {'L': 'LIDAR', 'D': 'class default (no back edge seen)', 'O': 'OSM sidewalk tag'}},
            'ways': recs, 'junctions': J, 'roundabouts': RB, 'mini_roundabouts': minis, 'crossing_islands': isl}
     if a.merge and os.path.exists(a.merge):
         old = json.load(gzip.open(a.merge, 'rt'))
@@ -1063,8 +1361,9 @@ def main():
         RB.extend(r for r in old.get('roundabouts', []) if tuple(r['ways']) not in rbw)
         mn = {m['node'] for m in minis}; minis.extend(m for m in old.get('mini_roundabouts', []) if m['node'] not in mn)
         ii = {m['node'] for m in isl}; isl.extend(m for m in old.get('crossing_islands', []) if m['node'] not in ii)
-        x0 = min(box[0], old['region'][0]); z0 = min(box[1], old['region'][1]); x1 = max(box[2], old['region'][2]); z1 = max(box[3], old['region'][3])
-        doc['region'] = [x0, z0, x1, z1]
+        oreg = old['region'] if isinstance(old['region'][0], list) else [old['region']]
+        doc['region'] = [list(b) for b in box] + [b for b in oreg if list(b) not in [list(c) for c in box]]
+    post_passes(doc, roads, lidar)
     doc['stats'] = stats(recs)
     with gzip.open(a.out, 'wt', compresslevel=9) as f:
         json.dump(doc, f, separators=(',', ':'))
