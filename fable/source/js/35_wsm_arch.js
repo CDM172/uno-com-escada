@@ -48,8 +48,12 @@
 //     porches, shop fascias with their signs, awnings, balconies, dormers, conservatories, garden walls and hedges,
 //     static caravans; the windows and doors are drawn by the shader (wgsl/mat_arch.wgsl): recessed by parallax, with
 //     frames, sashes and glazing bars, reflecting glass, curtains, blinds and rooms behind them.
-//   detail (instanced, within 160 m, 64 m cells): sills, heads, doorsteps, gutters and downpipes, chimney pots, gate piers,
-//     railings, porch posts, aerials, caravan steps and verandas.
+//   detail (instanced, 64 m cells; within 200 m the larger pieces, within 120 m the small ones; shadows only in the two
+//     near cascades, none in the cube faces): fascias, soffits, bargeboards, gutters and downpipes, ridge and hip tiles,
+//     sills, heads, doorsteps, chimney pots, aerials, dishes, alarm boxes, bins, gate piers, copings, railings, porch
+//     posts, caravan steps and verandas.
+//   Not for the kit (archStyle -> NONE): the pier pavilion, ruins, shelters and the landmark looks 2 and 3; for churches
+//   the kit builds the nave only (the towers and spires stay with 34_wsm_world.js).
 //   Each building's colours, materials and window programme live in one record (4 texels of a rgba32uint texture);
 //   vertices carry the record index in their material bytes.
 const ARCH_S = {
@@ -1921,8 +1925,10 @@ function archUpload(ranges) {
   AG.S = null; AG.P = null;                                           // (the CPU copies are not needed any more)
 }
 function archFinish() {
-  if (!ARCH.reqs.length) return ARCH.stats;
+  if (!ARCH.reqs.length || ARCH.done) return ARCH.stats;
+  ARCH.done = true;
   const ranges = archGenerate();
+  ARCH.reqs.length = 0;                                               // (the requests are not needed any more)
   if (typeof G !== 'undefined' && G.dev) archUpload(ranges);
   window.__cap = window.__cap || {};
   window.__cap.arch = { stats: ARCH.stats, cnt: ARCH.cnt, views: ARCH.views, view: archView };
@@ -2067,12 +2073,3 @@ class ArchGround {
     pass.setVertexBuffer(0, this.m.vb); pass.setIndexBuffer(this.m.ib, 'uint32'); pass.drawIndexed(this.m.count);
   }
 }
-// ?map=wsm&arch=1 (a test): the whole baked town through the kit, drawn over the town's own buildings until
-// 34_wsm_world.js calls archFromTown() itself (then this flag is not needed). Nothing happens without the flag.
-if (TOWN.on && Q.has('arch')) queueMicrotask(() => BUILD.push(async () => {
-  const t0 = performance.now(); let n = 0;
-  for (let b = 0; b < TOWN.bd.n; b++) if (archFromTown(b)) n++;
-  const t1 = performance.now();
-  archFinish();
-  ARCH.stats.taken = n; ARCH.stats.requestMs = Math.round(t1 - t0); ARCH.stats.totalMs = Math.round(performance.now() - t0);
-}));

@@ -201,7 +201,7 @@ function townInOtherRoad(G, x, z, self) {
 const _rp = { x: new Float64Array(4096), z: new Float64Array(4096), s: new Float64Array(4096), nx: new Float64Array(4096), nz: new Float64Array(4096), m: new Float64Array(4096), ok: new Uint8Array(4096), jn: new Float64Array(4096) };
 const _tn = new Float64Array(3);
 function townRoad(mb, r, G) {
-  const T = TOWN, R = T.rd, ri = T.rinfo, cls = ri[r * 4], wd = ri[r * 4 + 1] * 0.1, fl = ri[r * 4 + 2], lanes = ri[r * 4 + 3];
+  const T = TOWN, R = T.rd, ri = T.rinfo, cls = ri[r * 4], wd = ri[r * 4 + 1] * 0.1, fl = ri[r * 4 + 2], lanes = ri[r * 4 + 3] & 15;   // (the high bits: roundabout, no pavement left or right)
   if (cls === 12) return;
   const P = _rp, k0 = R.off[r], k1 = R.off[r + 1]; let n = 0;
   // densify (6 m) so the ribbon follows the ground
@@ -303,6 +303,9 @@ const TB_WALL = {
   clad: [[0.3, 0.33, 0.36], [0.17, 0.24, 0.3], [0.24, 0.29, 0.22], [0.42, 0.42, 0.4]],
 };
 const TB_ROOF = { slate: [[0.06, 0.066, 0.078], [0.045, 0.05, 0.058], [0.07, 0.07, 0.075]], tile: [[0.3, 0.12, 0.07], [0.2, 0.11, 0.08], [0.24, 0.15, 0.1], [0.14, 0.14, 0.14]], flat: [[0.12, 0.12, 0.12], [0.2, 0.2, 0.19], [0.09, 0.09, 0.1]] };
+const TB_KEW_RENDER = [[0.7, 0.69, 0.65], [0.68, 0.66, 0.6], [0.64, 0.6, 0.5], [0.72, 0.71, 0.68]];
+const TB_KEW_PANTILE = [[0.33, 0.13, 0.065], [0.3, 0.15, 0.08], [0.26, 0.11, 0.07]];
+const TB_KEW_CONCRETE = [[0.2, 0.11, 0.08], [0.14, 0.14, 0.14], [0.17, 0.1, 0.07], [0.11, 0.11, 0.115]];
 const _bu = [], _bv = [], _bt = [];
 function townBuilding(mb, b) {
   const T = TOWN, B = T.bd, bi = T.binfo, k0 = B.off[b], n = B.off[b + 1] - k0; if (n < 3) return;
@@ -333,6 +336,7 @@ function townBuilding(mb, b) {
   }
   // ---- look: walls, roof and window style from the kind of building, the district and a per-building hash
   const centre = Math.hypot((cx - 250) / 1300, (cz + 50) / 1100) < 1, seafront = cx < 230 && cz > -420 && cz < 1700 && cx > -150;
+  const kew = cx > 1300 && cz < -1450, kewOld = kew && Math.hypot(cx - 1778, cz + 1891) < 330;   // (Kewstoke, Sand Bay; the old village)
   const pick = (a, h) => a[Math.min(a.length - 1, Math.floor(h * a.length))];
   let wall, wmat, rcol, rtile = 0, style = kind, storey = 3.0;
   const hh = (h0 * 7.31 + h1) % 1;
@@ -347,6 +351,11 @@ function townBuilding(mb, b) {
   } else if (centre && kind !== 6) {
     if (h0 < 0.4) { wall = pick(TB_WALL.render, h1); wmat = 0; } else if (h0 < 0.72) { wall = pick(TB_WALL.stone, h1); wmat = 2; } else { wall = pick(TB_WALL.brick, h1); wmat = 1; }
     if (kind === 0) style = 1; storey = 3.1;
+  } else if (kew && kind !== 6) {
+    // Kewstoke and Sand Bay: the village's old cottages in grey limestone rubble or whitewashed render; the bungalows and
+    // post-war houses round it rendered, pebbledashed or (fewer) in brick
+    if (kewOld) { if (h0 < 0.45) { wall = pick(TB_WALL.stone, h1 * 0.66); wmat = 2; } else if (h0 < 0.82) { wall = pick(TB_KEW_RENDER, h1); wmat = 0; } else if (h0 < 0.92) { wall = pick(TB_WALL.dash, h1); wmat = 0; } else { wall = pick(TB_WALL.brick, h1); wmat = 1; } storey = 2.6; }
+    else { if (h0 < 0.38) { wall = pick(TB_KEW_RENDER, h1); wmat = 0; } else if (h0 < 0.68) { wall = pick(TB_WALL.dash, h1); wmat = 0; } else if (h0 < 0.9) { wall = pick(TB_WALL.brick, h1); wmat = 1; } else { wall = pick(TB_WALL.stone, h1 * 0.66); wmat = 2; } storey = 2.55; }
   } else if (kind === 6) { if (h0 < 0.6) { wall = pick(TB_WALL.brick, h1); wmat = 1; } else { wall = pick(TB_WALL.dash, h1); wmat = 0; } }
   else {
     if (h0 < 0.55) { wall = pick(TB_WALL.brick, h1); wmat = 1; } else if (h0 < 0.85) { wall = pick(TB_WALL.dash, h1); wmat = 0; } else { wall = pick(TB_WALL.render, h1); wmat = 0; }
@@ -361,6 +370,8 @@ function townBuilding(mb, b) {
   if (kind === 8 || kind === 11) rcol = [0.62, 0.63, 0.62];
   else if (roof === 0 || roof === 3) rcol = pick(TB_ROOF.flat, hh);
   else if (centre || seafront || kind === 4) { if (hh < 0.75) rcol = pick(TB_ROOF.slate, hh / 0.75); else { rcol = pick(TB_ROOF.tile, (hh - 0.75) * 4); rtile = 1; } }
+  else if (kewOld) { if (hh < 0.4) rcol = pick(TB_ROOF.slate, hh / 0.4); else { rcol = pick(TB_KEW_PANTILE, (hh - 0.4) / 0.6); rtile = 1; } }   // (slate, Somerset clay pantiles)
+  else if (kew) { if (hh < 0.15) rcol = pick(TB_ROOF.slate, hh / 0.15); else { rcol = pick(TB_KEW_CONCRETE, (hh - 0.15) / 0.85); rtile = 1; } }   // (concrete interlocking tiles)
   else { if (hh < 0.3) rcol = pick(TB_ROOF.slate, hh / 0.3); else { rcol = pick(TB_ROOF.tile, (hh - 0.3) / 0.7); rtile = 1; } }
   // ---- ridge frame and roof function
   const cr = Math.cos(ridge), sr = Math.sin(ridge);
@@ -1352,6 +1363,25 @@ function townFurnitureBuild(mb, rs) {
     for (let q = 0; q < m; q++) {
       const f0 = q / m, f1 = (q + 1) / m, x0 = ax + (bx - ax) * f0, z0 = az + (bz - az) * f0, x1 = ax + (bx - ax) * f1, z1 = az + (bz - az) * f1, l = L / m;
       const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, y = Math.min(hfAt(x0, z0), hfAt(x1, z1), hfAt(mx, mz));
+      if ((code === 1 || code === 4) && look === 0) {   // grey limestone: coursed rubble faces (the wall shader), a coping
+        const hv = hash2(Math.round(mx * 3), Math.round(mz * 3)), h = hgt || (code === 4 ? 1.2 : 1.5), nx = -tz, nz = tx, t2 = 0.16, yb = y - 0.25, yt = y + h;
+        const u0 = ((x0 * tx + z0 * tz) % 200 + 200) % 200 + 20, kewOld = Math.hypot(mx - 1778, mz + 1891) < 420;   // (the old village: stones on edge)
+        mb.mat(10, 9, (2 << 6) | 30, 255).color(0.3 + hv * 0.05, 0.295 + hv * 0.05, 0.27 + hv * 0.04, hv).weight(Math.min(1, (h + 0.25) / 64));
+        for (const sd of [1, -1]) {
+          const ox = nx * sd * t2, oz = nz * sd * t2;
+          const A = mb.v(x0 + ox, yb, z0 + oz, nx * sd, 0, nz * sd, u0, 0), B = mb.v(x1 + ox, yb, z1 + oz, nx * sd, 0, nz * sd, u0 + l, 0);
+          const C = mb.v(x1 + ox, yt, z1 + oz, nx * sd, 0, nz * sd, u0 + l, h + 0.25), D = mb.v(x0 + ox, yt, z0 + oz, nx * sd, 0, nz * sd, u0, h + 0.25);
+          townQuad(mb, A, B, C, D, nx * sd, 0, nz * sd);
+        }
+        mb.weight(0);
+        rot(mx, mz, a); mb.mat(15).color(0.27 + hv * 0.04, 0.265 + hv * 0.04, 0.24 + hv * 0.03, 1);
+        if (kewOld && code === 1) {   // cock-and-hen: rough stones set on edge along the top, tall and short in turn
+          const ns = Math.max(1, Math.round(l / 0.26)), p = l / ns;
+          mb.box(0, yt + 0.02, 0, l + 0.02, 0.05, 0.36);
+          for (let e = 0; e < ns; e++) { const hs = (e & 1 ? 0.17 : 0.27) + hash2(Math.round(mx * 7) + e, 3) * 0.06; mb.box(-l / 2 + (e + 0.5) * p, yt + 0.04 + hs / 2, 0, p * 0.62, hs, 0.33 + hash2(e, Math.round(mz)) * 0.05); }
+        } else { mb.box(0, yt + 0.05, 0, l + 0.03, 0.1, 0.38); }
+        mb.pop(); continue;
+      }
       rot(mx, mz, a);
       if (code === 1 || code === 4) {          // wall: grey limestone rubble, red brick or render, with a coping
         const hv = hash2(Math.round(mx * 3), Math.round(mz * 3)) * 0.06, h = hgt || (code === 4 ? 1.2 : 1.5), c = look === 2 ? [0.3 + hv, 0.13 + hv * 0.4, 0.085] : look === 3 ? [0.46, 0.44, 0.39] : [0.22 + hv, 0.215 + hv, 0.19 + hv * 0.8];   // (weathered limestone, red brick, render)

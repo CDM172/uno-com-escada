@@ -361,6 +361,7 @@ DRIVE = {'trunk': 1, 'primary': 2, 'secondary': 3, 'tertiary': 4, 'unclassified'
 PAVED_PATH = {'pedestrian': 9, 'footway': 10, 'cycleway': 10, 'path': 11, 'track': 11, 'bridleway': 11}
 # road classes: 1 trunk 2 primary 3 secondary 4 tertiary 5 unclassified 6 residential 7 living street 8 service
 #               9 pedestrian street (paved, drivable) 10 footway/cycleway/promenade 11 path/track (gravel) 12 pier deck
+SPLIT_WAYS = False
 DEF_WIDTH = {1: 9.0, 2: 8.0, 3: 7.4, 4: 7.0, 5: 6.4, 6: 6.0, 7: 5.2, 8: 3.6, 9: 7.0, 10: 2.6, 11: 2.4, 12: 6.0}
 
 # land cover classes (painter's order: lower first)
@@ -599,6 +600,29 @@ def road_width(t, cls):
     if cls <= 6 and t.get('oneway') in ('yes', '-1', '1') and cls >= 4:
         w *= 0.75
     return w
+
+
+# Kewstoke, Sand Bay and the lanes over Worlebury Hill and round Norton: the narrow widths of the village street and the
+# country lanes (OSM's class defaults are a town's). Where OSM has a width tag, it stands. The village street (Kewstoke
+# Road past the church, between its stone walls) is the narrowest; Monk's Hill and the single-track lanes about 4 m.
+KEW_CHURCH = (1778.0, -1891.0)
+LANE_W = {'Kewstoke Road': 5.8, 'Monks Hill': 4.0, 'Crookes Lane': 4.4, 'Collum Lane': 3.8, 'Worlebury Hill Road': 4.2,
+          'Lower Norton Lane': 5.4, 'Elmsley Lane': 3.6, 'Foss Lane': 3.6, 'Newtons Road': 4.6, 'Norton Lane': 4.2,
+          'Sand Road': 6.0, 'Beach Road': 6.0, 'Lower Kewstoke Road': 5.8, 'Woodspring Lane': 3.4, 'Kewside': 5.0}
+
+
+def lane_width(t, cls, pts, w):
+    if not pts or cls > 8 or 'width' in t:
+        return w
+    x = sum(p[0] for p in pts) / len(pts); z = sum(p[1] for p in pts) / len(pts)
+    if not (z < -1450 and x > 1300):           # (north-east of Worlebury Hill: Kewstoke, Sand Bay, the Norton lanes)
+        return w
+    nm = t.get('name', '')
+    if nm == 'Kewstoke Road' and math.hypot(x - KEW_CHURCH[0], z - KEW_CHURCH[1]) < 280:
+        return 5.0
+    if nm in LANE_W:
+        return LANE_W[nm]
+    return {4: 5.8, 5: 4.4, 6: 5.4, 7: 4.8}.get(cls, w)
 
 
 def clip_polyline(pts, pad):
@@ -1175,7 +1199,9 @@ def main():
     ap.add_argument('--out', default=os.path.join(os.path.dirname(__file__), '..', '..', 'fable', 'source', 'js', '12_wsm_data.js'))
     ap.add_argument('--preview')
     ap.add_argument('--osm-pickle', help='development: cache of the parsed extract (read if present, else written)')
+    ap.add_argument('--split-ways', action='store_true', help='split the roads at their shared nodes (for the road model)')
     a = ap.parse_args()
+    global SPLIT_WAYS; SPLIT_WAYS = a.split_ways
     log = lambda s: print(s, flush=True)
     dem = Terrarium(a.dem_cache, a.fetch)
     lidar = Lidar(a.lidar_cache, a.fetch) if a.lidar_cache else None
@@ -1215,7 +1241,7 @@ def main():
         i = int((x - TOWN[0]) / LUR); j = int((z - TOWN[1]) / LUR)
         return LU_NAME[int(lu_arr[j, i])] if 0 <= i < lw and 0 <= j < lh else None
 
-    # ---- roads: clip, classify; segment grid for ridge directions. Every way is split at the nodes it shares with other
+    # ---- roads: clip, classify; segment grid for ridge directions. With --split-ways, every way is split at the nodes it shares with other
     # roads (and at the ones it passes twice): each polyline then runs from junction to junction, so the game knows the
     # exact topology (its junctions are where polylines end) and the simplification never moves a junction.
     rd = []
@@ -1235,7 +1261,7 @@ def main():
         if steps: w = min(w, 1.5)
         toll = 'Toll' in (t.get('alt_name', '') + t.get('old_name', '') + t.get('loc_name', '')) and t.get('highway') == 'tertiary'
         if toll: w = 5.0
-        cuts = [0] + [i for i in range(1, len(ids) - 1) if use[ids[i]] >= 2] + [len(pts) - 1] if (ids and len(ids) == len(pts) and cls <= 9 and not steps) else [0, len(pts) - 1]
+        cuts = [0] + [i for i in range(1, len(ids) - 1) if use[ids[i]] >= 2] + [len(pts) - 1] if (SPLIT_WAYS and ids and len(ids) == len(pts) and cls <= 9 and not steps) else [0, len(pts) - 1]
         pieces = [pts[cuts[k]:cuts[k + 1] + 1] for k in range(len(cuts) - 1)]
         if t.get('oneway') == '-1': pieces = [p[::-1] for p in pieces[::-1]]   # (one way against the drawing: turned round)
         rb = t.get('junction') in ('roundabout', 'circular')
@@ -1258,7 +1284,7 @@ def main():
             lanes |= (16 if rb else 0) | (32 if side_none & 1 else 0) | (64 if side_none & 2 else 0)
             if cls <= 7:
                 for (ax, az), (bx, bz) in zip(part, part[1:]): roadgrid.add(ax, az, bx, bz, cls)
-            rd.append((part, cls, w, flags, lanes))
+            rd.append((part, cls, w if toll or steps else lane_width(t, cls, part, w), flags, lanes))
     for oid, t, pts in piers:                       # pier decks (Birnbeck Pier and its jetty)
         for part in clip_polyline(pts, 0):
             if len(part) >= 2:

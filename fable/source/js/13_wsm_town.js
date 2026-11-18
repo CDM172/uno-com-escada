@@ -657,14 +657,15 @@ function townBoundaries() {
       const ax = R.p[k * 2], az = R.p[k * 2 + 1], bx = R.p[k * 2 + 2], bz = R.p[k * 2 + 3], L = Math.hypot(bx - ax, bz - az); if (L < 2) continue;
       if (!village((ax + bx) / 2, (az + bz) / 2)) continue;
       const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz, nz = tx, m = Math.ceil(L / 4);
+      const old = Math.hypot((ax + bx) / 2 - 1778, (az + bz) / 2 + 1891) < 420;   // (the old village round St Paul's: tall stone walls)
       for (const sd of [-1, 1]) {
-        const style = hash2(r * 3 + (sd > 0 ? 1 : 0), 41) < 0.55 ? 1 : 3;
+        const style = hash2(r * 3 + (sd > 0 ? 1 : 0), 41) < (old ? 0.88 : 0.55) ? 1 : 3;
         for (let q = 0; q < m; q++) {
           const f0 = q / m, f1 = (q + 1) / m, o = hw + 0.5, x0 = ax + (bx - ax) * f0 + nx * sd * o, z0 = az + (bz - az) * f0 + nz * sd * o, x1 = ax + (bx - ax) * f1 + nx * sd * o, z1 = az + (bz - az) * f1 + nz * sd * o;
           const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, zc = zoneAt(mx, mz); if (zc !== TZ.GARDEN && zc !== TZ.FIELD && zc !== TZ.NONE && zc !== TZ.GRASS && zc !== TZ.WOOD) continue;
           const zo = zoneAt(mx + nx * sd * 1.5, mz + nz * sd * 1.5); if (zo === TZ.ROAD || zo === TZ.PATH || zo === TZ.TRACK || zo === TZ.BLD) continue;   // (a junction, a drive, a path)
           if (hash2(r * 131 + k * 7 + q, sd + 5) < 0.06) continue;                                                                                // (a gateway)
-          out.push(x0, z0, x1, z1, style, style === 1 ? 1.1 + 0.3 * hash2(r, 3) : 1.6, 0); nv++;
+          out.push(x0, z0, x1, z1, style, style === 1 ? (old ? 1.45 + 0.5 * hash2(r, 3 + sd) : 1.1 + 0.3 * hash2(r, 3)) : 1.6, 0); nv++;
         }
       }
     }
