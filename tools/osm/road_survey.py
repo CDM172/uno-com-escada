@@ -357,6 +357,66 @@ def flip(arr, offs, sg):
     return (arr, offs) if sg > 0 else (arr[..., ::-1], -offs[::-1])
 
 
+class SegIndex:
+    """grid index of drivable way segments (for parallel neighbours: dual carriageways, service roads alongside)"""
+    def __init__(self, roads, cell=50.0):
+        self.cell = cell; self.g = collections.defaultdict(list); segs = []
+        for wid, t, p, ids in roads:
+            if t.get('highway') not in DRIVE or t.get('area') == 'yes': continue
+            for i in range(len(p) - 1):
+                segs.append((p[i][0], p[i][1], p[i + 1][0], p[i + 1][1], wid, ids[i], ids[i + 1]))
+        self.S = np.array([s_[:4] for s_ in segs], float); self.W = np.array([s_[4] for s_ in segs], np.int64)
+        self.N = np.array([s_[5:] for s_ in segs], np.int64)
+        for k, (ax, az, bx, bz) in enumerate(self.S):
+            for i in range(int(min(ax, bx) // cell), int(max(ax, bx) // cell) + 1):
+                for j in range(int(min(az, bz) // cell), int(max(az, bz) // cell) + 1):
+                    self.g[(i, j)].append(k)
+
+    def near(self, x0, z0, x1, z1):
+        c = self.cell; ks = set()
+        for i in range(int(x0 // c), int(x1 // c) + 1):
+            for j in range(int(z0 // c), int(z1 // c) + 1):
+                ks.update(self.g.get((i, j), ()))
+        return np.array(sorted(ks), np.int64)
+
+
+def neighbour_limits(cx, cz, dx, dz, wid, nodes, segidx, Y):
+    """per station: lateral distance to the nearest other drivable way that runs roughly parallel (< 35 deg) on the left
+    and on the right (inf if none within Y). Ways sharing a node with this way are ignored within 30 m of that node."""
+    n = len(cx); outL = np.full(n, np.inf); outR = np.full(n, np.inf)
+    ks = segidx.near(cx.min() - Y, cz.min() - Y, cx.max() + Y, cz.max() + Y)
+    if len(ks) == 0: return outL, outR
+    ks = ks[segidx.W[ks] != wid]
+    if len(ks) == 0: return outL, outR
+    S = segidx.S[ks]; ax, az, bx, bz = S.T
+    ex, ez = bx - ax, bz - az; el = np.hypot(ex, ez); ok = el > 0.1
+    S, ks, ax, az, ex, ez, el = S[ok], ks[ok], ax[ok], az[ok], ex[ok], ez[ok], el[ok]
+    nx, nz = -dz, dx                                       # right normals of the stations
+    # c + t n = a + u e  ->  t n - u e = a - c
+    det = nx[:, None] * (-ez[None, :]) - nz[:, None] * (-ex[None, :])
+    rx = ax[None, :] - cx[:, None]; rz = az[None, :] - cz[:, None]
+    with np.errstate(all='ignore'):
+        t = (rx * (-ez[None, :]) - rz * (-ex[None, :])) / det
+        u = (nx[:, None] * rz - nz[:, None] * rx) / det
+    cosang = np.abs(dx[:, None] * ex[None, :] + dz[:, None] * ez[None, :]) / el[None, :]
+    good = np.isfinite(t) & (u >= 0) & (u <= 1) & (cosang >= math.cos(math.radians(35))) & (np.abs(t) <= Y)
+    # ignore ways connected to this one near the station (slip roads, forks, the far side of a junction)
+    shared = segidx.N[ks]
+    conn = np.isin(shared, list(nodes)).any(1) if nodes else np.zeros(len(ks), bool)
+    if conn.any():
+        node_xy = nodes                                    # dict id -> (x, z)
+        for col in np.nonzero(conn)[0]:
+            for nd in shared[col]:
+                if nd in node_xy:
+                    qx, qz = node_xy[nd]
+                    good[np.hypot(cx - qx, cz - qz) < 30.0, col] = False
+    tt = np.where(good, t, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        outR = np.nanmin(np.where(tt > 0, tt, np.nan), 1); outL = np.nanmin(np.where(tt < 0, -tt, np.nan), 1)
+    return np.where(np.isfinite(outL), outL, np.inf), np.where(np.isfinite(outR), outR, np.inf)
+
+
 class Part:
     def __init__(self, wid, tags, s0, pts, lidar, masks):
         self.wid, self.tags, self.s0, self.pts = wid, tags, s0, pts
@@ -369,6 +429,12 @@ class Part:
         fl = masks.look(X, Z)
         self.ss, self.x, self.z, self.d, self.L, self.offs, self.Y = ss, x, z, d, L, offs, Y
         self.ok = self._windows(dt, h, fl)
+        self.nbr = (np.full(len(self.cen), np.inf), np.full(len(self.cen), np.inf)) if self.ok else None
+
+    def set_neighbours(self, nodes, segidx):
+        cx = np.interp(self.cen, self.ss, self.x); cz = np.interp(self.cen, self.ss, self.z)
+        dx = np.interp(self.cen, self.ss, self.d[:, 0]); dz = np.interp(self.cen, self.ss, self.d[:, 1]); dn = np.hypot(dx, dz)
+        self.nbr = neighbour_limits(cx, cz, dx / dn, dz / dn, self.wid, nodes, segidx, self.Y)
 
     def _windows(self, dt, h, fl):
         ss, offs = self.ss, self.offs
@@ -419,12 +485,17 @@ class Part:
         """per window: candidate edges (outward coordinate y >= inner[k])"""
         fp, (K, c, p, rms, cnt), o = self.side_scan(sg)
         n = len(self.cen); outer0 = self.Y - 2.5
-        lims, outer = [], np.full(n, outer0)
+        nb = self.nbr[0] if sg < 0 else self.nbr[1]
+        # another carriageway alongside (dual carriageway, service road): the edge lies before its centreline
+        nbl = np.where(np.isfinite(nb), np.maximum(nb - 2.2, nb * 0.5), np.inf)
+        lims, outer = [], np.minimum(np.full(n, outer0), nbl)
         for k in range(n):
             bld, _ = flip(self.win['bld'][k], self.offs, sg); bar, _ = flip(self.win['bar'][k], self.offs, sg)
             obj, _ = flip(self.win['obj'][k], self.offs, sg)
             lim, lc = hard_limit(o, bld, bar, obj, inner[k])
-            if lim is not None: outer[k] = min(outer0, lim + 0.2)
+            if lim is not None:
+                # a hedge or a bush seen in the DSM overhangs the edge: look up to 1 m under it (the raw DTM sees the bank)
+                outer[k] = min(outer[k], lim + (1.0 if lc == 'V' else 0.2))
             lims.append((lim, lc))
         med, _ = flip(self.win['med'], self.offs, sg); raw, _ = flip(self.win['raw'], self.offs, sg)
         prof_d = np.where(np.isfinite(raw), raw, med)          # banks under hedges and bracken; the DTM under parked cars is flat road
@@ -435,8 +506,11 @@ class Part:
             big = [q['y'] for q in cl if q['t'] in 'SD' and abs(q['K']) >= 0.5]
             if big: cl = [q for q in cl if q['y'] <= min(big) + 0.3]           # nothing drivable beyond a wall or a drop
             lim, lc = lims[k]
-            if lim is not None and lim - 0.3 >= inner[k]:
-                cl.append(dict(y=lim - 0.3, t='B', K=0.0, c=0.0, p=0.0, T=0.0, lim=lc)); cl.sort(key=lambda q: q['y'])
+            yb = None if lim is None else lim - (0.0 if lc == 'V' else 0.3)
+            if yb is not None and yb >= inner[k] and yb <= outer[k] + 0.3:
+                cl.append(dict(y=yb, t='B', K=0.0, c=0.0, p=0.0, T=0.0, lim=lc)); cl.sort(key=lambda q: q['y'])
+            elif np.isfinite(nbl[k]) and nbl[k] >= inner[k] and nbl[k] < outer0 and not any(q['y'] <= nbl[k] + 0.1 for q in cl):
+                cl.append(dict(y=float(nbl[k]), t='B', K=0.0, c=0.0, p=0.0, T=0.0, lim='N')); cl.sort(key=lambda q: q['y'])
             out.append(cl)
         return out, lims
 
@@ -472,7 +546,7 @@ class Part:
             if not np.isfinite(y[k]): continue
             c = tr[k]; t = c['t']
             if t == 'K': typ[k] = 'K' if c['K'] >= 0.05 else 'k'; conf[k] = float(np.clip(c['T'] / 40.0, 0.35, 1.0)); K[k] = c['K']
-            elif t == 'B': typ[k] = c.get('lim', 'V'); conf[k] = 0.55
+            elif t == 'B': typ[k] = c.get('lim', 'V'); conf[k] = 0.55 if typ[k] != 'N' else 0.3
             elif t in 'SD': typ[k] = t; conf[k] = 0.8
             else: typ[k] = 'O'; conf[k] = float(np.clip(0.3 + abs(c['K']) * 2, 0.3, 0.7))
         meas = np.isfinite(y)
@@ -496,7 +570,7 @@ class Part:
 
     def pavements(self, sg, y, typ):
         maxw = MAX_PAVE.get(self.hw, 5.0)
-        n = len(y); pw = np.full(n, np.nan); bc = np.array(['-'] * n, dtype='<U1'); vw = np.zeros(n)
+        n = len(y); pw = np.full(n, np.nan); bc = np.array(['-'] * n, dtype='<U1'); vw = np.zeros(n); ps = np.array(['L'] * n, dtype='<U1')
         rural = self.hw in ('unclassified', 'tertiary', 'secondary', 'primary', 'trunk', 'service', 'road')
         for k in range(n):
             if typ[k] not in ('K', 'k'): continue
@@ -505,6 +579,8 @@ class Part:
             prof, o = flip(self.win['med'][k], self.offs, sg)
             g = {nm: flip(self.win[nm][k], self.offs, sg)[0] for nm in ('bld', 'bar', 'obj', 'grs', 'nan')}
             pw[k], bc[k] = pavement_scan(prof, o, y[k], g, maxw)
+            if bc[k] in 'EN' and pw[k] > DEF_PAVE.get(self.hw, 1.8):
+                pw[k] = DEF_PAVE.get(self.hw, 1.8); ps[k] = 'D'           # (no back edge seen: front gardens, squares, car parks)
             j0 = np.searchsorted(o, y[k] + 0.2); j1 = np.searchsorted(o, y[k] + pw[k])
             gg = g['grs'][j0:j1] >= 0.5
             if len(gg) >= 3 and gg[:3].all():
@@ -512,7 +588,7 @@ class Part:
                 while v < len(gg) and gg[v]: v += 1
                 vw[k] = v * DY
         pw = _runmed(pw, 2)
-        return np.where(np.isfinite(pw), pw, 0.0), bc, vw
+        return np.where(np.isfinite(pw), pw, 0.0), bc, vw, ps
 
     def record(self):
         swL, swR = osm_sidewalk(self.tags)
@@ -528,10 +604,10 @@ class Part:
         self.side = {}
         for key, sg, swt in (('l', -1, swL), ('r', 1, swR)):
             y, typ, Kh, conf, src = self.side_values(key, sg)
-            pw, bc, vw = self.pavements(sg, y, typ)
+            pw, bc, vw, ps = self.pavements(sg, y, typ)
             self.side[key] = (y, typ, conf, src, pw)
-            y, typ, Kh, conf, src, pw, bc, vw = (a[ki] for a in (y, typ, Kh, conf, src, pw, bc, vw))
-            pw = pw.copy(); bc = bc.copy(); ps = np.array(['L'] * len(y), dtype='<U1')
+            y, typ, Kh, conf, src, pw, bc, vw, ps = (a[ki] for a in (y, typ, Kh, conf, src, pw, bc, vw, ps))
+            pw = pw.copy(); bc = bc.copy(); ps = ps.copy()
             if swt is False:
                 pw[:] = 0.0; bc[:] = '-'; ps[:] = 'O'
             elif swt is True or swt == 'sep':
@@ -900,11 +976,18 @@ def run(roads, areas, buildings, furn, bars, lidar_dirs, box, fetch=False, only=
     sel = select_ways(roads, box)
     if only: sel = [s for s in sel if s[0] in only]
     log(f'{len(sel)} parts, {sum(way_len(p) for _, _, _, p in sel) / 1000:.1f} km')
+    segidx = SegIndex(roads)
+    node_xy = {}
+    for wid, t, p, ids in roads:
+        if t.get('highway') in DRIVE:
+            for nd, q in zip(ids, p): node_xy[nd] = q
+    way_nodes = {wid: ids for wid, t, p, ids in roads}
     parts_by_way, recs = collections.defaultdict(list), {}
     for n, (wid, t, s0, pts) in enumerate(sel):
         if way_len(pts) < 6: continue
         prt = Part(wid, t, s0, pts, lidar, masks)
         if not prt.ok: continue
+        prt.set_neighbours({nd: node_xy[nd] for nd in way_nodes[wid] if nd in node_xy}, segidx)
         prt.track()
         recs.setdefault(str(wid), []).append(prt.record())
         prt.win = None                                   # (memory)

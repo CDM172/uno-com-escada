@@ -173,11 +173,14 @@ fn wallSurf(in: V2F, N0: vec3f) -> Surface {
     a = mix(a, vec3f(0.33, 0.31, 0.28), mort * 0.75);
     ao *= 1.0 - 0.25 * mort; rough = 0.88;
     gu = (n2.r - 0.5) * 0.12 * near; gv = (n2.g - 0.5) * 0.12 * near;
-  } else if (wmat == 2u) {              // coursed stone (grey Weston limestone), pale dressed quoins
-    let row = floor(v / 0.32); let bu = u / (0.55 + 0.25 * hash11(row + bh * 13.0)) + hash11(row * 3.1 + bh) ;
+  } else if (wmat == 2u) {              // coursed stone (grey Weston limestone), pale dressed quoins; style 9 (boundary walls,
+                                        // towers' plain faces): smaller rubble in rough courses of uneven height
+    let rub = style == 9u;
+    let ch = select(0.32, 0.17, rub);
+    let row = floor(v / ch); let bu = u / (select(0.55, 0.22, rub) + select(0.25, 0.2, rub) * hash11(row + bh * 13.0)) + hash11(row * 3.1 + bh) ;
     let bi = vec2f(floor(bu), row); let hb = hash21(bi + bh * 17.0);
-    let fu = abs(fract(bu) - 0.5); let fv = abs(fract(v / 0.32) - 0.5);
-    let jw = 0.03 + max(fwidth(bu), fwidth(v / 0.32)) * 0.7;
+    let fu = abs(fract(bu) - 0.5); let fv = abs(fract(v / ch) - 0.5);
+    let jw = select(0.03, 0.06, rub) + max(fwidth(bu), fwidth(v / ch)) * 0.7;
     let joint = (1.0 - smoothstep(0.5 - jw * 1.5, 0.5 - jw * 0.5, max(fu, fv))) * mid;
     a = a * (0.75 + 0.45 * hb) * (0.85 + 0.3 * n1.r);
     a = mix(a, a * 0.55, joint * 0.7); ao *= 1.0 - 0.3 * joint; rough = 0.9;

@@ -293,11 +293,11 @@ function townSteps(mb, r) {
   const tread = (ia, ib, yt, ynext) => {
     const a = at(ia), b = at(ib), ax = S[a * 3], az = S[a * 3 + 1], bx = S[b * 3], bz = S[b * 3 + 1], L = Math.hypot(bx - ax, bz - az) || 1e-3;
     const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz * hw, nz = tx * hw, h = hash2(ia, r);
-    mb.mat(15).color(0.33 + h * 0.05, 0.325 + h * 0.05, 0.3 + h * 0.04, 1);
+    mb.mat(15).color(0.19 + h * 0.05, 0.185 + h * 0.045, 0.165 + h * 0.035, 1);   // (worn limestone, darkened by the woods' damp)
     const A = mb.v(ax - nx, yt, az - nz, 0, 1, 0, 0, 0), B = mb.v(bx - nx, yt, bz - nz, 0, 1, 0, 0, 0), C = mb.v(bx + nx, yt, bz + nz, 0, 1, 0, 0, 0), D = mb.v(ax + nx, yt, az + nz, 0, 1, 0, 0, 0);
     townQuad(mb, A, B, C, D, 0, 1, 0);
     // the riser up to the next tread (facing down the flight), the skirts at both sides
-    mb.color(0.27 + h * 0.04, 0.265 + h * 0.04, 0.245 + h * 0.03, 1);
+    mb.color(0.13 + h * 0.03, 0.128 + h * 0.03, 0.115 + h * 0.02, 1);
     if (!ia) { const g0 = Math.min(hfAt(ax - nx, az - nz), hfAt(ax + nx, az + nz)) - 0.1, E = mb.v(ax - nx, g0, az - nz, -tx, 0, -tz, 0, 0), F = mb.v(ax + nx, g0, az + nz, -tx, 0, -tz, 0, 0), G = mb.v(ax + nx, yt, az + nz, -tx, 0, -tz, 0, 0), H = mb.v(ax - nx, yt, az - nz, -tx, 0, -tz, 0, 0); townQuad(mb, E, F, G, H, -tx, 0, -tz); }   // (the first riser, from the ground)
     if (ynext > yt + 0.01) { const E = mb.v(bx - nx, yt, bz - nz, -tx, 0, -tz, 0, 0), F = mb.v(bx + nx, yt, bz + nz, -tx, 0, -tz, 0, 0), G = mb.v(bx + nx, ynext, bz + nz, -tx, 0, -tz, 0, 0), H = mb.v(bx - nx, ynext, bz - nz, -tx, 0, -tz, 0, 0); townQuad(mb, E, F, G, H, -tx, 0, -tz); }
     for (const sd of [-1, 1]) {
@@ -362,7 +362,7 @@ function townRoad(mb, r, G) {
     else if (cls >= 4 && P.x[0] > 1300 && P.z[0] < -1450) {   // (Kewstoke and Sand Bay: the lanes under Worlebury's trees too)
       let wd = 0, nn = 0;
       for (let i = 0; i < n; i += 2) for (const sd of [-1, 1]) { const x = P.x[i] + P.nx[i] * sd * (hw + 3), z = P.z[i] + P.nz[i] * sd * (hw + 3), ii = (x - T.x0) | 0, jj = (z - T.z0) | 0; nn++; if (ii >= 0 && jj >= 0 && ii < T.zw && jj < T.zh && T.zone[jj * T.zw + ii] === TZ.WOOD) wd++; }
-      if (wd > nn * 0.55) fla |= 16;
+      if (wd > nn * 0.72) fla |= 16;
     }
   }
   if (cls === 10 && (fl & 16)) fla |= 32;  // steps
@@ -859,30 +859,30 @@ function townSpiresBuild(mb, rs) {
     const w = (S[i + 3] & 0xffff) * 0.1 || 5.2, ang = (S[i + 3] >>> 16) * PI / 180, ca = Math.cos(ang), sa = Math.sin(ang), hw = w / 2;
     const spire = hgt > 26, tt = spire ? Math.max(g + 10, top - Math.min(22, hgt * 0.45)) : top - 1.7;   // (the LIDAR's top: a pinnacle or the spire's tip)
     const h1 = g + (tt - g) * 0.55, pb = tt - 1.05, rnd = mkRng(i + 7);
-    mb.color(0.36, 0.35, 0.32, rnd());
+    mb.color(0.235, 0.23, 0.215, rnd());
     const W = (u, v) => [x + u * ca - v * sa, z + u * sa + v * ca];
     // plinth, lower stage, string course, belfry stage
     townStoneBox(mb, x, z, hw + 0.12, hw + 0.12, ca, sa, g - 0.6, g + 0.7, 9, 0, true);
     townStoneBox(mb, x, z, hw, hw, ca, sa, g + 0.7, h1, 4, 0.7, false);
-    mb.color(0.4, 0.39, 0.35, 1); townStoneBox(mb, x, z, hw + 0.1, hw + 0.1, ca, sa, h1, h1 + 0.24, 9, 0, true);
-    mb.color(0.35, 0.34, 0.31, rnd()); townStoneBox(mb, x, z, hw - 0.15, hw - 0.15, ca, sa, h1 + 0.24, pb, 4, 0, true);
+    mb.color(0.27, 0.262, 0.24, 1); townStoneBox(mb, x, z, hw + 0.1, hw + 0.1, ca, sa, h1, h1 + 0.24, 9, 0, true);
+    mb.color(0.228, 0.222, 0.208, rnd()); townStoneBox(mb, x, z, hw - 0.15, hw - 0.15, ca, sa, h1 + 0.24, pb, 4, 0, true);
     // diagonal buttresses at the four corners of the lower stage (stepping in once)
     for (const [du, dv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
       const [bx, bz] = W(du * (hw + 0.35), dv * (hw + 0.35)), da = ang + Math.atan2(dv, du), c2 = Math.cos(da), s2 = Math.sin(da), hb = h1 - g;
-      mb.color(0.35, 0.34, 0.31, rnd());
+      mb.color(0.228, 0.222, 0.208, rnd());
       townStoneBox(mb, bx, bz, 0.62, 0.36, c2, s2, g - 0.5, g + hb * 0.5, 9, 0, true);
       townStoneBox(mb, bx - c2 * 0.2, bz - s2 * 0.2, 0.42, 0.33, c2, s2, g + hb * 0.5, g + hb * 0.92, 9, hb * 0.5, true);
     }
     if (spire) {   // a slate-grey stone spire with a weathervane rod
-      mb.color(0.38, 0.37, 0.34, 1); townStoneBox(mb, x, z, hw - 0.05, hw - 0.05, ca, sa, pb, tt, 9, 0, true);
+      mb.color(0.25, 0.244, 0.226, 1); townStoneBox(mb, x, z, hw - 0.05, hw - 0.05, ca, sa, pb, tt, 9, 0, true);
       mb.push(m4mul(m4(), m4translate(m4(), x, 0, z), m4rotY(m4(), -ang + PI / 4)));
-      mb.mat(15).color(0.3, 0.3, 0.3, 1); mb.cyl(0, tt, 0, (hw - 0.2) * Math.SQRT2, top, 0.05, 4, true, false);
+      mb.mat(15).color(0.21, 0.21, 0.21, 1); mb.cyl(0, tt, 0, (hw - 0.2) * Math.SQRT2, top, 0.05, 4, true, false);
       mb.pop();
       mb.mat(13, 60).color(0.25, 0.22, 0.1, 1); mb.cyl(x, top, z, 0.04, top + 1.6, 0.04, 4, false, false);
       continue;
     }
     // battlemented parapet, corbelled out a little: a solid band and merlons
-    mb.color(0.38, 0.37, 0.34, 1); townStoneBox(mb, x, z, hw - 0.05, hw - 0.05, ca, sa, pb, pb + 0.55, 9, 0, true);
+    mb.color(0.25, 0.244, 0.226, 1); townStoneBox(mb, x, z, hw - 0.05, hw - 0.05, ca, sa, pb, pb + 0.55, 9, 0, true);
     const nm = Math.max(2, Math.round((w - 1.2) / 1.3));
     for (const [du, dv, ou, ov] of [[1, 0, 0, 1], [-1, 0, 0, 1], [0, 1, 1, 0], [0, -1, 1, 0]]) for (let m = 0; m < nm; m++) {
       const t = (m + 0.5) / nm * (w - 1.3) - (w - 1.3) / 2, [mx, mz] = W(du * (hw - 0.2) + ou * t, dv * (hw - 0.2) + ov * t);
@@ -894,15 +894,15 @@ function townSpiresBuild(mb, rs) {
       if (tur) continue;
       townStoneBox(mb, px, pz, 0.3, 0.3, ca, sa, pb, tt + 0.7, 9, 0, true);
       mb.push(m4mul(m4(), m4translate(m4(), px, 0, pz), m4rotY(m4(), -ang + PI / 4)));
-      mb.mat(15).color(0.37, 0.36, 0.33, 1); mb.cyl(0, tt + 0.7, 0, 0.42, Math.max(tt + 1.9, top), 0.03, 4, true, false);
+      mb.mat(15).color(0.245, 0.24, 0.222, 1); mb.cyl(0, tt + 0.7, 0, 0.42, Math.max(tt + 1.9, top), 0.03, 4, true, false);
       mb.pop();
     }
     // the stair turret: an octagon clasping one corner, up past the parapet, with a little spirelet
     const [qx, qz] = W(hw - 0.1, -(hw - 0.1)), O = [];
     for (let k = 0; k < 8; k++) { const t = ang + (k + 0.5) * PI / 4; O.push(qx + Math.cos(t) * 1.0, qz + Math.sin(t) * 1.0); }
-    mb.color(0.35, 0.34, 0.31, rnd()); townStoneWalls(mb, O, g + 0.7, tt + 0.9, 9, 0.7, false);
+    mb.color(0.228, 0.222, 0.208, rnd()); townStoneWalls(mb, O, g + 0.7, tt + 0.9, 9, 0.7, false);
     mb.push(m4mul(m4(), m4translate(m4(), qx, 0, qz), m4rotY(m4(), -ang - PI / 8)));
-    mb.mat(15).color(0.37, 0.36, 0.33, 1); mb.cyl(0, tt + 0.9, 0, 1.06, tt + 2.4, 0.04, 8, true, false);
+    mb.mat(15).color(0.245, 0.24, 0.222, 1); mb.cyl(0, tt + 0.9, 0, 1.06, tt + 2.4, 0.04, 8, true, false);
     mb.pop();
   }
   if (mb.ni > i0) { rs.addRange(mb, i0, mb.ni, 3); rs.addRange(mb, i0, mb.ni, 4, 600); }
@@ -1569,7 +1569,7 @@ function townFurnitureBuild(mb, rs) {
       if ((code === 1 || code === 4) && look === 0) {   // grey limestone: coursed rubble faces (the wall shader), a coping
         const hv = hash2(Math.round(mx * 3), Math.round(mz * 3)), h = hgt || (code === 4 ? 1.2 : 1.5), nx = -tz, nz = tx, t2 = 0.16, yb = y - 0.25, yt = y + h;
         const u0 = ((x0 * tx + z0 * tz) % 200 + 200) % 200 + 20, kewOld = Math.hypot(mx - 1778, mz + 1891) < 420;   // (the old village: stones on edge)
-        mb.mat(10, 9, (2 << 6) | 30, 255).color(0.3 + hv * 0.05, 0.295 + hv * 0.05, 0.27 + hv * 0.04, hv).weight(Math.min(1, (h + 0.25) / 64));
+        mb.mat(10, 9, (2 << 6) | 30, 255).color(0.205 + hv * 0.04, 0.2 + hv * 0.04, 0.185 + hv * 0.03, hv).weight(Math.min(1, (h + 0.25) / 64));
         for (const sd of [1, -1]) {
           const ox = nx * sd * t2, oz = nz * sd * t2;
           const A = mb.v(x0 + ox, yb, z0 + oz, nx * sd, 0, nz * sd, u0, 0), B = mb.v(x1 + ox, yb, z1 + oz, nx * sd, 0, nz * sd, u0 + l, 0);
@@ -1577,11 +1577,11 @@ function townFurnitureBuild(mb, rs) {
           townQuad(mb, A, B, C, D, nx * sd, 0, nz * sd);
         }
         mb.weight(0);
-        rot(mx, mz, a); mb.mat(15).color(0.27 + hv * 0.04, 0.265 + hv * 0.04, 0.24 + hv * 0.03, 1);
+        rot(mx, mz, a); mb.mat(15).color(0.19 + hv * 0.04, 0.186 + hv * 0.04, 0.17 + hv * 0.03, 1);
         if (kewOld && code === 1) {   // cock-and-hen: rough stones set on edge along the top, tall and short in turn
-          const ns = Math.max(1, Math.round(l / 0.26)), p = l / ns;
+          const ns = Math.max(1, Math.round(l / 0.15)), p = l / ns;
           mb.box(0, yt + 0.02, 0, l + 0.02, 0.05, 0.36);
-          for (let e = 0; e < ns; e++) { const hs = (e & 1 ? 0.17 : 0.27) + hash2(Math.round(mx * 7) + e, 3) * 0.06; mb.box(-l / 2 + (e + 0.5) * p, yt + 0.04 + hs / 2, 0, p * 0.62, hs, 0.33 + hash2(e, Math.round(mz)) * 0.05); }
+          for (let e = 0; e < ns; e++) { const hs = (e & 1 ? 0.13 : 0.2) + hash2(Math.round(mx * 7) + e, 3) * 0.05; mb.box(-l / 2 + (e + 0.5) * p, yt + 0.04 + hs / 2, 0, p * 0.82, hs, 0.3 + hash2(e, Math.round(mz)) * 0.06); }
         } else { mb.box(0, yt + 0.05, 0, l + 0.03, 0.1, 0.38); }
         mb.pop(); continue;
       }
@@ -1827,7 +1827,7 @@ function townGroundsBuild(mb, rs) {
   const zoneAt = (x, z) => { const i = (x - T.x0) | 0, j = (z - T.z0) | 0; return i < 0 || j < 0 || i >= T.zw || j >= T.zh ? TZ.OUT : T.zone[j * T.zw + i]; };
   const turf = (x, z) => { const c = zoneAt(x, z); return c === TZ.GRASS || c === TZ.NONE || c === TZ.GARDEN; };
   const M1 = m4(), M2 = m4(), M3 = m4(), M4 = m4();
-  const STONE = [[0.4, 0.39, 0.36], [0.45, 0.43, 0.38], [0.33, 0.33, 0.32], [0.16, 0.17, 0.18], [0.29, 0.28, 0.28], [0.5, 0.49, 0.46]];
+  const STONE = [[0.25, 0.245, 0.225], [0.28, 0.265, 0.235], [0.21, 0.21, 0.2], [0.11, 0.115, 0.125], [0.19, 0.185, 0.185], [0.31, 0.3, 0.28]];   // (weathered limestone, sandstone, slate, granite: lichen-dulled)
   const cemetery = (k0, k1) => {
     let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, ar = 0;
     for (let i = k0, j = k1 - 1; i < k1; j = i++) { x0 = Math.min(x0, A.p[i * 2]); x1 = Math.max(x1, A.p[i * 2]); z0 = Math.min(z0, A.p[i * 2 + 1]); z1 = Math.max(z1, A.p[i * 2 + 1]); ar += A.p[j * 2] * A.p[i * 2 + 1] - A.p[i * 2] * A.p[j * 2 + 1]; }
