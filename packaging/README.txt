@@ -115,6 +115,16 @@ tyres). Every engine and gadget sound is synthesised live as you drive.
 Weston-super-Mare is built from OpenStreetMap (streets and building footprints) and
 elevation data; the street circuit runs Royal Parade, Knightstone Road, the Boulevard,
 Alexandra Parade, Station Road, Walliscote Road and back along Beach Road.
+The town's 21,000 buildings stand on their real footprints. Their roofs, chimneys and
+dormers are measured from Environment Agency LIDAR. Each one is drawn in the style of its
+street:
+- Weston-stone and rendered Victorian terraces with bays and railings, villas, seafront
+  hotels, shops, 1930s semis, bungalows, flats and caravans;
+- in Kewstoke, grey limestone cottages, stone boundary walls and the church.
+The Town Hall, Grand Atlantic Hotel, Winter Gardens, the Art Deco cinema and the
+Tropicana are modelled in Blender from their footprints, LIDAR heights and photographs,
+as is the street furniture (lamp posts, benches, bins, Belisha beacons, bus stops and
+shelters, the promenade railings).
 
 Credits
 - Body proportions were measured from the "1965 Aston Martin DB5 Coupe" and

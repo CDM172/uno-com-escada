@@ -116,6 +116,17 @@ Under the three main cars, **More cars** opens a list of 37 more cars, vans and 
 
 Pick the map on the start screen (or `?map=wsm`). Parked cars line the streets and some traffic drives around town. The town is built from OpenStreetMap: real streets and building footprints, terrain from elevation data, the beach, the Marine Lake and the Grand Pier. Laps run on a 3.5 km street circuit (Royal Parade, Knightstone Road, the Boulevard, Alexandra Parade, Station Road, Walliscote Road, Beach Road), and you can leave it to drive anywhere in town. The bake script is [`tools/osm/bake_wsm.py`](tools/osm/bake_wsm.py).
 
+How the town is built:
+- **Buildings:** about 21,000 of them stand on their OSM footprints. Their eaves, ridges, roof shapes, chimneys and dormers are measured from the Environment Agency's 1 m LIDAR.
+- **Architecture kit** ([`js/35_wsm_arch.js`](fable/source/js/35_wsm_arch.js), [`wgsl/mat_arch.wgsl`](fable/source/wgsl/mat_arch.wgsl)): it draws each building in the style of its district.
+  - Weston-stone and rendered Victorian terraces with bays and railings, villas, seafront hotels, shops, 1930s semis, bungalows, flats and static caravans.
+  - Kewstoke's limestone cottages, stone walls and church.
+  - Windows and doors are parallax recesses.
+  - `?arch=0` falls back to plain extruded buildings.
+- **Modelled in Blender** ([`blender/wsm_props.py`](fable/source/blender/wsm_props.py), [`blender/wsm_landmarks.py`](fable/source/blender/wsm_landmarks.py)):
+  - the landmarks: the Town Hall, the Grand Atlantic Hotel, the Winter Gardens, the Art Deco cinema, the Tropicana;
+  - the street furniture.
+
 ## How it was made
 
 The [`prompts`](prompts) folder has the text the AI received, uncut (translated into English):
