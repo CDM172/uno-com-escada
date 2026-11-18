@@ -25,7 +25,9 @@ Command (from the repository root):
   node fable/source/build.mjs            # rebuilds fable/index.html with the new data
 
 Output: a JS file with WSM_META (JSON: layout, origin, credits) and WSM_B64 (base64 of a zlib stream holding typed
-arrays: terrain grids, the circuit, roads, buildings, land cover, trees, LIDAR road heights and tree crowns). Coordinates are metres in a local frame:
+arrays: terrain grids, the circuit, roads, buildings, land cover, trees, LIDAR road heights and tree crowns; and from
+terrain_wsm.py: 2 m terrain detail over the coast, Kewstoke, the Toll Road, Worlebury Hill and Uphill, the spill level
+of every 2 m node (the tide), the rhynes and ditches, the OSM coastline on the far grid). Coordinates are metres in a local frame:
 origin at the Grand Pier entrance, X east, Z south (the game's convention), quantised to 1/8 m. The result is
 deterministic for a given extract and tile set (no randomness, stable ordering, crc32 hashes for per-building variety).
 """
@@ -1275,8 +1277,10 @@ def main():
     else:
         w2, h2 = terrain_wsm.grid_nodes(TOWN); base2 = terrain_wsm.catrom_up(np.round(Hn / NEAR_Q) * NEAR_Q, NEAR_RES, terrain_wsm.DETAIL_RES, w2, h2)
     # ---- rhynes, ditches and streams (OSM waterway lines, culverts left out; cached next to the OSM pickle)
-    wways = terrain_wsm.read_waterways(a.pbf, TOWN, proj, unproj, (a.osm_pickle + '.waterways.pkl') if a.osm_pickle else None)
-    wlines, winfo_w = terrain_wsm.waterway_lines(wways, clip_polyline, dp_simplify, dedupe)
+    waters = terrain_wsm.read_waters(a.pbf, (fx0, fz0, fx0 + (fw - 1) * FAR_RES, fz0 + (fw - 1) * FAR_RES), proj, unproj, (a.osm_pickle + '.waters.pkl') if a.osm_pickle else None)
+    wlines, winfo_w = terrain_wsm.waterway_lines(waters['waterways'], clip_polyline, dp_simplify, dedupe)
+    farcoast = terrain_wsm.coast_raster(waters['coastline'], fx0, fz0, FAR_RES, fw, fw)
+    log(f'coastline: {len(waters["coastline"])} ways, {int(farcoast.sum())} far-grid nodes')
     log(f'waterways: {len(wlines)} lines, {sum(1 for i in winfo_w if i[0] == 3)} rhynes and ditches, {sum(1 for i in winfo_w if i[0] == 2)} streams, '
         f'{sum(1 for i in winfo_w if i[0] == 1)} rivers; {sum(len(l) for l in wlines)} points')
     # ---- spill levels on that 2 m heightfield (the tide: the sea reaches only what it can flow to over the ground)
@@ -1402,6 +1406,7 @@ def main():
     if len(dij):                     # 2 m detail tiles: (tile row, tile column) pairs, int8 residual codes (terrain_wsm.detail_encode), row by row
         blob.add('dtlij', np.ascontiguousarray(dij, '<u2').ravel()); blob.add('dtl', np.ascontiguousarray(dtl, np.int8).ravel())
     blob.add('spill', np.ascontiguousarray(spill, np.uint8).ravel())   # per 2 m node (terrain_wsm.spill_bytes)
+    blob.add('farcoast', np.ascontiguousarray(farcoast, np.uint8).ravel())   # the OSM coastline on the far grid (terrain_wsm.coast_raster)
     if wlines:                       # waterways: polylines + (type: 1 river, 2 stream, 3 rhyne/drain/ditch; width dm)
         cnt4, st4, d4 = enc_polys(wlines)
         blob.add('wwn', cnt4); blob.add('ww0', st4); blob.add('wwxz', d4); blob.add('wwinfo', np.asarray(winfo_w, 'u1').ravel())

@@ -247,25 +247,44 @@ WATERWAY = {'river': 1, 'canal': 1, 'stream': 2, 'drain': 3, 'ditch': 3}
 WATERWAY_WIDTH = {'river': 8.0, 'canal': 6.0, 'stream': 2.5, 'drain': 2.6, 'ditch': 1.8}
 
 
-def read_waterways(pbf, TOWN, proj, unproj, cache=None):
-    """[(osm id, tags, local points)] of the waterway lines near the region (cached in a pickle: one pass of the extract)"""
+def read_waters(pbf, box, proj, unproj, cache=None):
+    """{'waterways': [(osm id, tags, local points)] near the region, 'coastline': [(osm id, local points)] within box
+    (x0, z0, x1, z1: the far grid)}, cached in a pickle (one pass of the extract)"""
     if cache and os.path.exists(cache):
         with open(cache, 'rb') as f: return pickle.load(f)
     import osmium
-    W, S = unproj(TOWN[0] - 200, TOWN[3] + 200); E, N = unproj(TOWN[2] + 200, TOWN[1] - 200)
-    out = []
+    W, S = unproj(box[0], box[3]); E, N = unproj(box[2], box[1])
+    ww, coast = [], []
     for o in osmium.FileProcessor(pbf).with_locations():
         if not o.is_way(): continue
-        t = o.tags; ww = t.get('waterway')
-        if ww not in WATERWAY or t.get('tunnel') in ('culvert', 'yes', 'flooded') or t.get('location') == 'underground': continue
+        t = o.tags; w = t.get('waterway'); c = t.get('natural') == 'coastline'
+        if not c and (w not in WATERWAY or t.get('tunnel') in ('culvert', 'yes', 'flooded') or t.get('location') == 'underground'): continue
         try: lls = [(n.location.lon, n.location.lat) for n in o.nodes]
         except osmium.InvalidLocationError: continue
         if not any(W <= lo <= E and S <= la <= N for lo, la in lls): continue
-        out.append((o.id, dict(t), [proj(lo, la) for lo, la in lls]))
-    out.sort(key=lambda w: w[0])
+        pts = [proj(lo, la) for lo, la in lls]
+        if c: coast.append((o.id, pts))
+        else: ww.append((o.id, dict(t), pts))
+    ww.sort(key=lambda w_: w_[0]); coast.sort(key=lambda c_: c_[0])
+    out = {'waterways': ww, 'coastline': coast}
     if cache:
         with open(cache, 'wb') as f: pickle.dump(out, f)
     return out
+
+
+def coast_raster(coast, fx0, fz0, res, fw, fh):
+    """the OSM coastline (mean high water) on the far grid's nodes: 1 where it passes (an 8-connected line, which a
+    4-connected flood cannot cross). The game floods the far grid up to the tide's level behind it near the English
+    coast (the Somerset Levels lie behind sea banks and dunes the 100 m grid cannot see)."""
+    R = np.zeros((fh, fw), np.uint8)
+    for oid, pts in coast:
+        for (ax, az), (bx, bz) in zip(pts, pts[1:]):
+            n = max(1, int(math.ceil(math.hypot(bx - ax, bz - az) / (res * 0.45))))
+            for k in range(n + 1):
+                x = ax + (bx - ax) * k / n; z = az + (bz - az) * k / n
+                i = int(round((x - fx0) / res)); j = int(round((z - fz0) / res))
+                if 0 <= i < fw and 0 <= j < fh: R[j, i] = 1
+    return R
 
 
 def waterway_lines(ways, clip, simplify, dedupe):

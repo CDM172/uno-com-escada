@@ -68,7 +68,7 @@ async function townLoad() {
   // node, the lowest sea level that reaches it over the ground (bake: 0 = the node's own height, 255 = none below the
   // cap, else level = byte * q - 10)
   T.seaMid = M.sea; T.tides = M.tides || { low: -4.6, mid: M.sea, high: 6.2 }; T.tide = TIDESEL; T.sea = T.tides[T.tide];
-  T.spill = A.spill && M.spill ? A.spill : null; T.spillQ = M.spill ? M.spill.q : 0.1;
+  T.spill = A.spill && M.spill ? A.spill : null; T.spillQ = M.spill ? M.spill.q : 0.1; T.farCoast = A.farcoast || null;
   const n = M.near, f = M.far;
   T.nw = n.w; T.nh = n.h; T.nres = n.res; T.nx0 = n.x0; T.nz0 = n.z0; T.near = townGrid(A.near, n.w, n.h, n.q);
   T.fw = f.w; T.fh = f.h; T.fres = f.res; T.fx0 = f.x0; T.fz0 = f.z0; T.far = townGrid(A.far, f.w, f.h, f.q);
@@ -393,17 +393,33 @@ function townHeightsBuild() {
   townAiRoom();
 }
 // Where the sea is at this tide, for the water's mesh and shader and the terrain's culling: T.wet per 2 m node of the town
-// (255 = sea), from the spill levels; T.wetFar per cell of the far grid, flooded from its edge over cells below the tide
-// and below FAR_SHORE (100 m cells cannot see the dunes and sea banks that keep the Somerset Levels dry: the upper shore
-// stays dry out there, the Levels too)
-const FAR_SHORE = 3.0;
+// (255 = sea), from the spill levels; T.wetFar per node of the far grid, flooded from its edge over nodes below the tide.
+// 100 m cells cannot see the dunes and sea banks that keep the Somerset Levels dry, so the flood stops at FAR_SHORE m OD,
+// except near the town (FAR_NEAR m: Brean Down and its beach, Woodspring Bay) within FAR_COAST m of the OSM coastline
+// (mean high water, T.farCoast), which walls it in: there it rises with the tide to the high-water line. (Farther out the
+// estuaries of the Parrett and the Brue would let it into the Levels at this resolution.)
+const FAR_SHORE = 3.0, FAR_COAST = 2500, FAR_NEAR = 4000;
 function townWetBuild() {
   const T = TOWN, w = HF.w, h = HF.h, D = HF.d, S = T.spill, sq = T.spillQ, wet = T.wet = new Uint8Array(w * h);
   for (let k = 0; k < w * h; k++) { const b = S ? S[k] : 0; if (b === 255) continue; wet[k] = (b ? b * sq - 10 : D[k]) < T.sea ? 255 : 0; }
-  const fw = T.fw, fh = T.fh, F = T.far, lim = Math.min(T.sea, FAR_SHORE), fwet = T.wetFar = new Uint8Array(fw * fh), st = [];
-  const seed = k => { if (!fwet[k] && F[k] < lim) { fwet[k] = 255; st.push(k); } };
-  for (let i = 0; i < fw; i++) { seed(i); seed((fh - 1) * fw + i); }
-  for (let j = 0; j < fh; j++) { seed(j * fw); seed(j * fw + fw - 1); }
+  const fw = T.fw, fh = T.fh, F = T.far, fwet = T.wetFar = new Uint8Array(fw * fh), st = [], C = T.farCoast;
+  // the flood's ceiling per node: the tide near the coastline, FAR_SHORE farther out (a breadth-first distance in nodes)
+  const cap = new Float32Array(fw * fh).fill(Math.min(T.sea, FAR_SHORE));
+  if (C) {
+    const dist = new Int32Array(fw * fh).fill(-1), q = [], R = Math.round(FAR_COAST / T.fres);
+    for (let k = 0; k < fw * fh; k++) if (C[k]) { dist[k] = 0; q.push(k); }
+    for (let h = 0; h < q.length; h++) {
+      const k = q[h], i = k % fw, d = dist[k], x = T.fx0 + i * T.fres, z = T.fz0 + ((k / fw) | 0) * T.fres;
+      if ((Math.max(T.x0 - x, x - T.x1, 0) ** 2 + Math.max(T.z0 - z, z - T.z1, 0) ** 2) <= FAR_NEAR * FAR_NEAR) cap[k] = T.sea;
+      if (d >= R) continue;
+      for (const n of [i > 0 ? k - 1 : -1, i < fw - 1 ? k + 1 : -1, k - fw, k + fw]) if (n >= 0 && n < fw * fh && dist[n] < 0) { dist[n] = d + 1; q.push(n); }
+    }
+  }
+  const seed = k => { if (!fwet[k] && F[k] < cap[k] && !(C && C[k])) { fwet[k] = 255; st.push(k); } };
+  // (seeds: the open sea on the grid's edge, below FAR_SHORE; the edge also cuts through the Levels near the coast)
+  const lim = Math.min(T.sea, FAR_SHORE), edge = k => { if (F[k] < lim) seed(k); };
+  for (let i = 0; i < fw; i++) { edge(i); edge((fh - 1) * fw + i); }
+  for (let j = 0; j < fh; j++) { edge(j * fw); edge(j * fw + fw - 1); }
   while (st.length) { const k = st.pop(), i = k % fw; if (i > 0) seed(k - 1); if (i < fw - 1) seed(k + 1); if (k >= fw) seed(k - fw); if (k < fw * (fh - 1)) seed(k + fw); }
 }
 // is the sea at (x, z) at this tide? (the town's 2 m mask, the far grid's beyond it, the open sea beyond both)
@@ -512,8 +528,13 @@ function townRasterBuild() {
       for (let k = W.off[r]; k < W.off[r + 1] - 1; k++) townCapsule(W.p[k * 2], W.p[k * 2 + 1], W.p[k * 2 + 2], W.p[k * 2 + 3], hw, TZ.MUD, bed);
     }
   }
-  // the sea at the tide's level, over the ground it can flow to (the bake's spill levels: the fields behind Sand Bay's dunes
-  // and the town behind its sea wall stay dry below it); at low tide the sea bed it uncovers is mud, where nothing is mapped
+  // buildings
+  const B = T.bd; for (let b = 0; b < B.n; b++) if (T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11) townFill(B, b, b + 1, TZ.BLD, null);
+  // the sea wall (roads crossing it, the slipways, open it again below)
+  townSeaWalls(); { const W = T.walls, ov = new Uint8Array(18).fill(1); ov[TZ.WATER] = 0; ov[TZ.OUT] = 0; for (let i = 0; i < W.length; i += 6) townCapsule(W[i], W[i + 1], W[i + 2], W[i + 3], 0.7, TZ.WALL, ov); }
+  // the sea at the tide's level (after the buildings and the sea wall, so that neither depends on the tide), over the
+  // ground it can flow to (the bake's spill levels: the fields behind Sand Bay's dunes and the town behind its sea wall
+  // stay dry below it); at low tide the sea bed it uncovers is mud, where nothing is mapped
   const D = HF.d, hw = HF.w, S = T.spill, sq = T.spillQ, open = new Uint8Array(18);
   for (const c of [TZ.NONE, TZ.MUD, TZ.SAND, TZ.GRASS, TZ.FIELD, TZ.DUNE, TZ.WOOD, TZ.GARDEN, TZ.HARD]) open[c] = 1;
   for (let j = 0; j < zh; j++) for (let i = 0; i < zw; i++) {
@@ -526,10 +547,6 @@ function townRasterBuild() {
     if (lv < T.sea) Z[o] = TZ.WATER;
     else if (c === TZ.NONE && lv < T.seaMid) Z[o] = TZ.MUD;              // (the low tide's mud flats)
   }
-  // buildings
-  const B = T.bd; for (let b = 0; b < B.n; b++) if (T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11) townFill(B, b, b + 1, TZ.BLD, null);
-  // the sea wall (roads crossing it, the slipways, open it again below)
-  townSeaWalls(); { const W = T.walls, ov = new Uint8Array(18).fill(1); ov[TZ.WATER] = 0; ov[TZ.OUT] = 0; for (let i = 0; i < W.length; i += 6) townCapsule(W[i], W[i + 1], W[i + 2], W[i + 3], 0.7, TZ.WALL, ov); }
   // roads: pavements, then carriageways over them (junctions), paths and tracks only over soft ground
   const R = T.rd, ri = T.rinfo, soft = new Uint8Array(18), all = new Uint8Array(18).fill(1), pv = new Uint8Array(18);
   for (const c of [TZ.NONE, TZ.GRASS, TZ.GARDEN, TZ.FIELD, TZ.WOOD, TZ.MUD, TZ.SAND, TZ.HARD, TZ.DUNE]) soft[c] = 1;
