@@ -52,6 +52,13 @@ function uiInit() {
   const handMark = () => { for (const b of document.querySelectorAll('#hand .car')) { const sel = (b.dataset.hand === 'easy') === HAND.easy; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false'); } };
   for (const b of document.querySelectorAll('#hand .car')) b.onclick = () => { handSet(b.dataset.hand === 'easy'); handMark(); };
   handMark();
+  // Tide chooser (Weston-super-Mare, start screen and pause menu): picking another tide reloads the page with ?tide=...,
+  // which is saved (13_wsm_town.js: the sea, the sand and the mud flats are laid out for one tide at start-up)
+  UI.tide = TOWN.on ? $('tide') : null;
+  if (UI.tide) for (const b of document.querySelectorAll('#tide .car')) {
+    const t = b.dataset.tide, sel = t === TOWN.tide; b.classList.toggle('sel', sel); b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+    b.onclick = () => { if (sel) return; const q = new URLSearchParams(location.search); q.set('tide', t); location.search = q.toString(); };
+  }
   if (GAD.on) { $(CARSEL === 'v8' ? 'gcolv8' : 'gcol').style.display = ''; $('pk').textContent = '1 to ' + POSES.length; }
   UI.b0.onclick = () => { if (UI.st === ST.INICIO) { sndStart(); uiSet(ST.JOGO); } else uiResume(); };
   UI.b1.onclick = () => benchStart();
@@ -72,6 +79,7 @@ function uiSet(st) {
   if (UI.garage) UI.garage.style.display = st === ST.INICIO ? 'block' : 'none';
   if (UI.gfx) UI.gfx.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
   if (UI.hand) UI.hand.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
+  if (UI.tide) UI.tide.style.display = st === ST.INICIO || st === ST.PAUSA ? 'flex' : 'none';
   UI.tag.textContent = st === ST.BENCH ? 'Benchmark: 60 s demo lap · Esc cancels' : st === ST.FITA ? 'Demo lap · R takes the wheel · Esc menu' : st === ST.POSE ? 'Pose ' + (UI.pose + 1) + ' · ' + (POSES[UI.pose].label || POSES[UI.pose].nome) + ' · 1 to ' + POSES.length + ' switch · Esc back to driving' : '';
   UI.tag.style.display = UI.tag.textContent ? 'block' : 'none';
   hudShow(st === ST.JOGO || st === ST.FITA || (st === ST.PAUSA && UI.back !== ST.BENCH));

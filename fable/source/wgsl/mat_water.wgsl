@@ -1,7 +1,11 @@
 // Sea and lakes: an opaque surface with a film of water (the lighting adds the screen-space reflection), small waves that
 // move with the time, the colour of the silty Bristol Channel deepening offshore, and a line of foam at the water's edge.
 // colour of the vertex: r = depth 0 (shore) .. 1 (deep), g = 1 on lakes (calmer)
+// The sea lies at the tide's level (SEA_LVL) but only where it can flow at that tide (townWetBuild, 13_wsm_town.js): the
+// town's 2 m mask, the far grid's beyond it; land below the tide behind a dune ridge or a sea wall stays dry.
 #include mesh_vert
+@group(3) @binding(0) var tWet: texture_2d<f32>;
+@group(3) @binding(1) var tWetFar: texture_2d<f32>;
 fn wDist(wp: vec3f) -> f32 {
 #ifdef PASS_CUBE
   return distance(wp, P.camPos.xyz);
@@ -9,10 +13,17 @@ fn wDist(wp: vec3f) -> f32 {
   return distance(wp, F.camPos.xyz);
 #endif
 }
+fn seaHere(xz: vec2f) -> f32 {
+  if (wmIn(xz)) { return textureSampleLevel(tWet, sClamp, wmUV(xz, vec2f(textureDimensions(tWet))), 0.0).r; }
+  let d = vec2f(textureDimensions(tWetFar)); let p = (xz - vec2f(FAR_X0, FAR_Z0)) / FAR_RES;
+  if (p.x < 0.0 || p.y < 0.0 || p.x > d.x - 1.0 || p.y > d.y - 1.0) { return 1.0; }
+  return textureSampleLevel(tWetFar, sClamp, (p + 0.5) / d, 0.0).r;
+}
 fn surf(in: V2F, ff: bool) -> Surface {
   var s = surfDefault(vec3f(0.0, 1.0, 0.0));
   let xz = in.wpos.xz; let t = F.wind.w; let dist = wDist(in.wpos);
   let lake = in.col.g;
+  let dry = lake < 0.5 && seaHere(xz) < 0.5;   // (discarded at the end, after the implicit-derivative samples)
   // depth (m): from the town's height map where there is one (the coast is drawn at 2 m), else from the vertex
   var dm = in.col.r * 7.0; if (wmIn(xz) && lake < 0.5) { dm = SEA_LVL - wmHeight(xz); }
   let depth = sat(dm / 7.0);
@@ -31,5 +42,6 @@ fn surf(in: V2F, ff: bool) -> Surface {
   let foam = (1.0 - smoothstep(0.0, 0.035, dm + (w3.b - 0.5) * 0.03)) * smoothstep(0.55, 0.8, w2.b + w3.r * 0.4) * (1.0 - lake) * 0.7 * (1.0 - smoothstep(150.0, 600.0, dist));
   c = mix(c, vec3f(0.55, 0.55, 0.52), foam);
   s.albedo = c; s.rough = mix(0.035, 0.6, foam); s.wet = 1.0 - foam; s.ao = 1.0;
+  if (dry) { discard; }
   return s;
 }

@@ -34,6 +34,8 @@ import argparse, base64, heapq, json, math, os, sys, zlib, urllib.request, colle
 import numpy as np
 from PIL import Image
 import osmium
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # (python3 -I leaves the script's folder off the path)
+import terrain_wsm                                                # 2 m terrain detail, spill levels (the tide)
 
 # ---------------------------------------------------------------- frame and extents
 ORIGIN_LAT, ORIGIN_LON = 51.3486, -2.9822          # Grand Pier entrance on Royal Parade
@@ -1266,6 +1268,15 @@ def main():
                 rd.append((part, 12, w, 1, 0))
     log(f'road polylines: {len(rd)}')
 
+    # ---- terrain detail: 2 m patches over Kewstoke, the Toll Road and Sand Bay (terrain_wsm.py)
+    dij, dtl = np.zeros((0, 2), '<u2'), np.zeros((0,), np.int8)
+    if lidar is not None:
+        dij, dtl, base2 = terrain_wsm.bake_detail(TOWN, Hn, NEAR_RES, NEAR_Q, lidar, [r[0] for r in rd if r[3] & 128], log)
+    else:
+        w2, h2 = terrain_wsm.grid_nodes(TOWN); base2 = terrain_wsm.catrom_up(np.round(Hn / NEAR_Q) * NEAR_Q, NEAR_RES, terrain_wsm.DETAIL_RES, w2, h2)
+    # ---- spill levels on that 2 m heightfield (the tide: the sea reaches only what it can flow to over the ground)
+    spill = terrain_wsm.bake_spill(terrain_wsm.with_detail(base2, dij, dtl), log); del base2
+
     # ---- buildings
     # pier decks: their height from the DSM (the most common level over the deck outline: the deck, not the pavilion)
     decks = []
@@ -1378,6 +1389,9 @@ def main():
     blob = Blob()
     blob.add('near', predict_encode(Hn, NEAR_Q))
     blob.add('far', predict_encode(Hf, FAR_Q))
+    if len(dij):                     # 2 m detail tiles: (tile row, tile column) pairs, int8 residuals (DETAIL_Q m), row by row
+        blob.add('dtlij', np.ascontiguousarray(dij, '<u2').ravel()); blob.add('dtl', np.ascontiguousarray(dtl, np.int8).ravel())
+    blob.add('spill', np.ascontiguousarray(spill, np.uint8).ravel())   # per 2 m node (terrain_wsm.spill_bytes)
     blob.add('cxz', np.round(Q * 100).astype('<i4').ravel())            # circuit centre line, cm
     blob.add('cedge', np.clip(np.round(cedge * 10), 0, 255).astype('u1').ravel())
     blob.add('croom', np.clip(np.round(room * 10), 0, 255).astype('u1').ravel())
@@ -1458,6 +1472,8 @@ def main():
         'v': 1, 'origin': [ORIGIN_LAT, ORIGIN_LON], 'q': QXY, 'town': list(TOWN), 'sea': SEA_LEVEL,
         'near': {'x0': TOWN[0], 'z0': TOWN[1], 'res': NEAR_RES, 'w': nw, 'h': nh, 'q': NEAR_Q},
         'far': {'x0': fx0, 'z0': fz0, 'res': FAR_RES, 'w': fw, 'h': fw, 'q': FAR_Q},
+        'detail': {'res': terrain_wsm.DETAIL_RES, 'ts': terrain_wsm.DETAIL_TS, 'q': terrain_wsm.DETAIL_Q, 'n': int(len(dij))},
+        'tides': terrain_wsm.TIDES, 'spill': {'res': terrain_wsm.DETAIL_RES, 'q': terrain_wsm.SPILL_Q, 'cap': terrain_wsm.SPILL_CAP},
         'circuit': {'n': int(len(Q)), 'length': round(float(clen), 1), 'streets': cseq},
         'counts': {'roads': len(rd), 'buildings': len(bl), 'areas': len(ac), 'trees': len(tp)},
         'arrays': blob.index,

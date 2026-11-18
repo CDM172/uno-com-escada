@@ -20,6 +20,10 @@ const TOWN = {
   walls: [],                             // the sea wall: [ax, az, bx, bz, foot, top] along the landward edge of the beach
   kerb: null,                            // circuit kerbs: per sample, side (-1 left, 1 right, 0 none) and inner distance
 };
+// The tide (?tide=low|mid|high, the menu's Tide buttons; remembered like the map): spring low water (the mud flats Weston is
+// known for), mid tide, or spring high water (the sea against the sea wall and the foot of Sand Bay's dunes, with the
+// fields behind them lower than the sea). Levels in WSM_META.tides (m OD; sources in tools/osm/terrain_wsm.py).
+const TIDESEL = (() => { let t = Q.get('tide'); try { if (t) localStorage.setItem('tide', t); else t = localStorage.getItem('tide'); } catch (e) { } return t === 'low' || t === 'high' ? t : 'mid'; })();
 // surface codes of the 1 m raster; TZZ = game zone (ZONE), TZH = height above the terrain for the physics (kerb stones)
 const TZ = { NONE: 0, ROAD: 1, PAVE: 2, HARD: 3, GRASS: 4, SAND: 5, MUD: 6, WOOD: 7, WATER: 8, KERB: 9, PATH: 10, TRACK: 11, GARDEN: 12, FIELD: 13, BLD: 14, OUT: 15, WALL: 16, DUNE: 17 };
 const TZZ = new Uint8Array([2, 0, 6, 6, 2, 3, 4, 4, 4, 1, 6, 3, 2, 2, 6, 4, 6, 3]);
@@ -60,9 +64,16 @@ async function townLoad() {
   const TA = { i16: Int16Array, u16: Uint16Array, u8: Uint8Array, i32: Int32Array, f32: Float32Array, i8: Int8Array };
   for (const k in M.arrays) { const a = M.arrays[k]; A[k] = new TA[a[0]](buf, a[1], a[2]); }
   const T = TOWN; [T.x0, T.z0, T.x1, T.z1] = M.town; T.sea = M.sea;
+  // the tide: T.sea is the sea's level now (T.seaMid the mid tide the rest of the map was laid out for); T.spill, per 2 m
+  // node, the lowest sea level that reaches it over the ground (bake: 0 = the node's own height, 255 = none below the
+  // cap, else level = byte * q - 10)
+  T.seaMid = M.sea; T.tides = M.tides || { low: -4.6, mid: M.sea, high: 6.2 }; T.tide = TIDESEL; T.sea = T.tides[T.tide];
+  T.spill = A.spill && M.spill ? A.spill : null; T.spillQ = M.spill ? M.spill.q : 0.1;
   const n = M.near, f = M.far;
   T.nw = n.w; T.nh = n.h; T.nres = n.res; T.nx0 = n.x0; T.nz0 = n.z0; T.near = townGrid(A.near, n.w, n.h, n.q);
   T.fw = f.w; T.fh = f.h; T.fres = f.res; T.fx0 = f.x0; T.fz0 = f.z0; T.far = townGrid(A.far, f.w, f.h, f.q);
+  // 2 m detail patches of the terrain (Kewstoke, the Toll Road, Sand Bay): tiles of ts x ts residuals on the 2 m grid
+  const dm = M.detail; T.dtl = dm && dm.n && A.dtl ? { ij: A.dtlij, r: A.dtl, n: dm.n, ts: dm.ts, q: dm.q, res: dm.res } : null;
   const q = M.q;
   T.rd = townPolys(A.rn, A.r0, A.rxz, q); T.rinfo = A.rinfo;
   T.bd = townPolys(A.bn, A.b0, A.bxz, q); T.binfo = A.binfo;
@@ -345,6 +356,7 @@ function townHeightsBuild() {
     const a = Math.max(0, j0 - 1) * w, b = Math.min(nh - 1, j0) * w, c = Math.min(nh - 1, j0 + 1) * w, d = Math.min(nh - 1, j0 + 2) * w;
     for (let i = 0; i < w; i++) D[j * w + i] = tmp[a + i] * c0 + tmp[b + i] * c1 + tmp[c + i] * c2 + tmp[d + i] * c3;
   }
+  townDetailAdd(D, w, h);
   // the outer band blends into the coarse grid (as townH does)
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
     const x = T.x0 + i * res, z = T.z0 + j * res, e = Math.min(x - T.x0, T.x1 - x, z - T.z0, T.z1 - z);
@@ -372,10 +384,45 @@ function townHeightsBuild() {
       s += sl;
     }
   }
+  townWetBuild();
   townRasterBuild();
   townBuildingGrid();
   townSdfBuild();
   townAiRoom();
+}
+// Where the sea is at this tide, for the water's mesh and shader and the terrain's culling: T.wet per 2 m node of the town
+// (255 = sea), from the spill levels; T.wetFar per cell of the far grid, flooded from its edge over cells below the tide
+// and below FAR_SHORE (100 m cells cannot see the dunes and sea banks that keep the Somerset Levels dry: the upper shore
+// stays dry out there, the Levels too)
+const FAR_SHORE = 3.0;
+function townWetBuild() {
+  const T = TOWN, w = HF.w, h = HF.h, D = HF.d, S = T.spill, sq = T.spillQ, wet = T.wet = new Uint8Array(w * h);
+  for (let k = 0; k < w * h; k++) { const b = S ? S[k] : 0; if (b === 255) continue; wet[k] = (b ? b * sq - 10 : D[k]) < T.sea ? 255 : 0; }
+  const fw = T.fw, fh = T.fh, F = T.far, lim = Math.min(T.sea, FAR_SHORE), fwet = T.wetFar = new Uint8Array(fw * fh), st = [];
+  const seed = k => { if (!fwet[k] && F[k] < lim) { fwet[k] = 255; st.push(k); } };
+  for (let i = 0; i < fw; i++) { seed(i); seed((fh - 1) * fw + i); }
+  for (let j = 0; j < fh; j++) { seed(j * fw); seed(j * fw + fw - 1); }
+  while (st.length) { const k = st.pop(), i = k % fw; if (i > 0) seed(k - 1); if (i < fw - 1) seed(k + 1); if (k >= fw) seed(k - fw); if (k < fw * (fh - 1)) seed(k + fw); }
+}
+// is the sea at (x, z) at this tide? (the town's 2 m mask, the far grid's beyond it, the open sea beyond both)
+function townWetAt(x, z) {
+  const T = TOWN, fi = (x - HF.x0) * HF.ir, fj = (z - HF.z0) * HF.ir;
+  if (T.wet && fi >= 0 && fj >= 0 && fi <= HF.w - 1 && fj <= HF.h - 1) return T.wet[Math.round(fj) * HF.w + Math.round(fi)] > 127;
+  const gi = Math.round((x - T.fx0) / T.fres), gj = Math.round((z - T.fz0) / T.fres);
+  if (!T.wetFar || gi < 0 || gj < 0 || gi >= T.fw || gj >= T.fh) return true;
+  return T.wetFar[gj * T.fw + gi] > 127;
+}
+// The 2 m detail patches (tools/osm/terrain_wsm.py): where the 6 m grid rounds off the ground (Sand Bay's dunes and rhynes,
+// the Toll Road's cutting, Kewstoke and Monk's Steps), the EA 1 m DTM's residuals are added node for node (they fade in
+// from each patch's edge in the bake). T.dtlTile marks the tiles (for the terrain mesh's refinement).
+function townDetailAdd(D, w, h) {
+  const T = TOWN, P = T.dtl; if (!P || P.res !== HF.res) return;
+  const ts = P.ts, q = P.q, ij = P.ij, r = P.r, tw = Math.ceil(w / ts), th = Math.ceil(h / ts), mk = T.dtlTile = new Uint8Array(tw * th);
+  T.dtlTw = tw; T.dtlTh = th; T.dtlSize = ts * HF.res;
+  for (let t = 0; t < P.n; t++) {
+    const tj = ij[t * 2], ti = ij[t * 2 + 1], j0 = tj * ts, i0 = ti * ts, o = t * ts * ts; mk[tj * tw + ti] = 1;
+    for (let j = 0; j < ts && j0 + j < h; j++) { const row = (j0 + j) * w + i0, rr = o + j * ts; for (let i = 0; i < ts && i0 + i < w; i++) D[row + i] += r[rr + i] * q; }
+  }
 }
 // The autopilot's room on each side of the circuit, kept a metre inside the carriageway as drawn (the 1 m raster), so its
 // wheels stay off the kerbs (the baked room came from a coarser road mask)
@@ -449,13 +496,19 @@ function townRasterBuild() {
         if ((i - ci) * (i - ci) + (j - cj) * (j - cj) <= rr * rr && Z[j * zw + i] === TZ.NONE) Z[j * zw + i] = TZ.WOOD;
     }
   }
-  // sea: below mid tide on the shore side (mud flats, beach and unmapped ground)
-  const D = HF.d, hw = HF.w;
+  // the sea at the tide's level, over the ground it can flow to (the bake's spill levels: the fields behind Sand Bay's dunes
+  // and the town behind its sea wall stay dry below it); at low tide the sea bed it uncovers is mud, where nothing is mapped
+  const D = HF.d, hw = HF.w, S = T.spill, sq = T.spillQ, open = new Uint8Array(18);
+  for (const c of [TZ.NONE, TZ.MUD, TZ.SAND, TZ.GRASS, TZ.FIELD, TZ.DUNE, TZ.WOOD, TZ.GARDEN, TZ.HARD]) open[c] = 1;
   for (let j = 0; j < zh; j++) for (let i = 0; i < zw; i++) {
-    const o = j * zw + i, c = Z[o]; if (c !== TZ.NONE && c !== TZ.MUD && c !== TZ.SAND) continue;
+    const o = j * zw + i, c = Z[o]; if (!open[c]) continue;
     const fi = (i + 0.5) / HF.res, fj = (j + 0.5) / HF.res, ii = Math.min(hw - 2, fi | 0), jj = Math.min(HF.h - 2, fj | 0), u = fi - ii, v = fj - jj, k = jj * hw + ii;
     const y = (D[k] * (1 - u) + D[k + 1] * u) * (1 - v) + (D[k + hw] * (1 - u) + D[k + hw + 1] * u) * v;
-    if (y < T.sea) Z[o] = TZ.WATER;
+    let lv = y;
+    if (S) { const b = S[Math.min(HF.h - 1, Math.round(fj)) * hw + Math.min(hw - 1, Math.round(fi))]; if (b === 255) continue; if (b) lv = b * sq - 10; }
+    else if (c !== TZ.NONE && c !== TZ.MUD && c !== TZ.SAND) continue;   // (old data without spill levels: as before)
+    if (lv < T.sea) Z[o] = TZ.WATER;
+    else if (c === TZ.NONE && lv < T.seaMid) Z[o] = TZ.MUD;              // (the low tide's mud flats)
   }
   // buildings
   const B = T.bd; for (let b = 0; b < B.n; b++) if (T.binfo[b * 8] !== 8 && T.binfo[b * 8] !== 11) townFill(B, b, b + 1, TZ.BLD, null);
