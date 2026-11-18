@@ -1627,8 +1627,8 @@ function townWorldBuild() {
   const RD = T.rd; for (let r = 0; r < RD.n; r++) { const k = (RD.off[r] + RD.off[r + 1]) >> 1; tiles[tileOf(RD.p[k * 2], RD.p[k * 2 + 1])][0].push(r); }
   const bb = T.bbox; for (let b = 0; b < T.bd.n; b++) tiles[tileOf((bb[b * 4] + bb[b * 4 + 2]) / 2, (bb[b * 4 + 1] + bb[b * 4 + 3]) / 2)][1].push(b);
   const Gr = townRoadGrid(); TOWNW.jobs = new Map();
-  // the architecture kit (35_wsm_arch.js): ?arch=1 until it is declared ready (then on unless ?arch=0)
-  TOWNW.arch = typeof archFromTown === 'function' && Q.get('arch') === '1';
+  // the architecture kit (35_wsm_arch.js): on unless ?arch=0 (the plain buildings)
+  TOWNW.arch = typeof archFromTown === 'function' && Q.get('arch') !== '0';
   for (let k = 0; k < tiles.length; k++) {
     const i0 = mb.ni;
     for (const r of tiles[k][0]) townRoad(mb, r, Gr);
